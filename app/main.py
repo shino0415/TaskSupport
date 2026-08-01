@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI
 
 from app.auth import verify_api_key
 from app.database import init_db
+from app.routers import projects
 
 
 @asynccontextmanager
@@ -31,3 +32,5 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+app.include_router(projects.router)

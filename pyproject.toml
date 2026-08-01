@@ -23,6 +23,8 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# B008: FastAPIのDepends(...)を引数デフォルトで呼び出すのは公式に推奨されるイディオムのため無視する
+ignore = ["B008"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

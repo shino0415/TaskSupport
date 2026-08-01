@@ -21,7 +21,7 @@ def build_engine(database_url: str) -> Engine:
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./app.db")
 engine = build_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 
 
 def init_db(target_engine: Engine | None = None) -> None:

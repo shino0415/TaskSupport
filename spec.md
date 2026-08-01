@@ -276,7 +276,7 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: Project作成・参照・削除エンドポイント
-- status: 未着手
+- status: 完了
 - 概要: 案件の登録、一覧取得（ステータス絞り込み含む）、詳細取得、論理削除ができるようにする。ステータス更新（PATCH）は別タスクで扱う。
 - 受け入れ条件:
   - [ ] 案件を作成すると、その内容がレスポンスに反映される
@@ -285,8 +285,24 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - [ ] 案件詳細取得では自テーブルの情報のみが返り、配下タスクの情報は含まれない
   - [ ] 案件を削除すると is_deleted が true になり、以降の一覧・詳細取得結果に含まれなくなる
   - [ ] 存在しない案件idを指定した場合はエラー（404等）が返る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: 承認（Critical/High/Medium相当の問題なし）。`app/schemas.py`・`app/routers/projects.py`・`app/main.py`（差分）・`app/models.py`・`app/database.py`・`tests/test_projects.py`・`pyproject.toml`（差分）を確認した。
+  - **認証**: `app/main.py`で`FastAPI(dependencies=[Depends(verify_api_key)])`がグローバル依存関係として登録されており、`app.include_router(projects.router)`で追加された`/projects`配下の4エンドポイント（POST/GET一覧/GET詳細/DELETE）は個別の`Depends`を持たずともこのグローバル依存関係を継承するため全て保護される。実際に`grep`でも各ルート定義に個別の認証バイパス（`dependencies=[]`等での上書き）がないことを確認した。`verify_api_key`自体（`app/auth.py`）は前タスクで承認済みのfail-closed設計・`secrets.compare_digest`による定数時間比較のままで変更なし。`test_endpoints_require_api_key`でAPI Keyなしの`GET /projects`が401になることをテストで確認済み（POST/GET詳細/DELETEは個別テストはないが、グローバル依存関係という実装方式上、全エンドポイントに一様に効く）。
+  - **mass assignment**: `app/schemas.py`の`ProjectCreate`に`id`・`is_deleted`フィールドが含まれていないことを確認した。`create_project`は`models.Project(**payload.model_dump())`で`ProjectCreate`にないフィールドはそもそもdictに現れないため二重に安全。Pydantic v2のデフォルト（`extra`未指定＝`ignore`）により、リクエストボディに`is_deleted: true`や`id`を含めても無視されることを`test_create_project_rejects_mass_assignment_of_is_deleted`で実地検証済み（実行してpassを確認）。リクエスト用スキーマ（`ProjectCreate`）とレスポンス用スキーマ（`ProjectRead`、`from_attributes=True`）が分離されている。
+  - **論理削除の徹底**: `list_projects`・`_get_active_project_or_404`（`get_project`/`delete_project`が共通利用）とも`models.Project.is_deleted.is_(False)`でフィルタしており、削除済みデータの漏洩経路はない。`delete_project`は`project.is_deleted = True; db.commit()`のみで物理削除（`DELETE FROM`相当）は行っていない。`test_list_projects_excludes_deleted`・`test_get_project_detail_not_found_after_deletion`・`test_delete_project_marks_is_deleted_and_excludes_from_list`・`test_delete_project_is_idempotent_not_found_on_second_call`で実地検証済み。
+  - **インジェクション**: 全クエリがSQLAlchemy ORMの`db.query(...).filter(...)`経由でパラメータ化されており、生SQL文字列結合は一切ない。`status`クエリパラメータ（`project_status`）も`models.Project.status == project_status`というORM比較でバインドパラメータ化されるため、SQLインジェクションの余地はない。ユーザー入力（`platform`・`memo`等のTEXTカラム）がログ出力や外部コマンドに渡っている箇所もない。
+  - **エラーハンドリング**: 404は`HTTPException(status_code=404, detail="Project not found")`という固定文字列のみで、スタックトレース・SQLクエリ文字列・内部パス等の漏洩はない。`app/database.py`のengineも`echo`未設定（デフォルトFalse）で、FastAPIアプリも`debug`モードを有効化していない。
+  - **CORS**: 本タスクの差分（`app/main.py`は`include_router`追加のみ）にCORS関連の変更はなく、`CORSMiddleware`自体がプロジェクト全体で未導入。spec.mdではフロントエンドが別オリジンから叩かれる想定でCORS設定が必要と記載されているが、現時点でCORSヘッダーが一切返らないことはブラウザからのクロスオリジンアクセスをデフォルトで拒否する安全側の状態であり、`allow_origins=["*"]`かつ`allow_credentials=True`のような危険な組み合わせも存在しないため、本タスクを差し戻す理由にはならない（参考: spec.mdの実装タスク一覧にCORS設定を対象とする独立タスクが見当たらないため、将来的に追加を検討してもよい）。
+  - **シークレット管理**: 本タスクの差分にAPIキー・DB接続情報のハードコードはなく、テストコードの`TEST_API_KEY = "test-secret-key"`はテスト専用の値で`monkeypatch.setenv`経由のみに使われログ出力もない。`.gitignore`（前タスクで確認済み）や本番用のシークレット管理方針に変更はない。
+  - `uv run pytest -v`は52件全てpass（新規`tests/test_projects.py`10件含む、既存への回帰なし）、`uv run ruff check`も違反なし。`pyproject.toml`の差分（ruffの`B008`無視設定）はFastAPIの`Depends(...)`イディオムに対する公式に妥当な設定でセキュリティ上の懸念なし。
+- 性能エバリュエーターのフィードバック: 承認。`uv run pytest -v`は52件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なし。`app/schemas.py`・`app/routers/projects.py`・`app/main.py`・`tests/test_projects.py`を確認し、受け入れ条件6点それぞれについて対応するテストが存在し実際にパスしていることを確認した。
+  - 「案件を作成すると、その内容がレスポンスに反映される」: `test_create_project_reflects_input_in_response`でリクエストペイロードの全フィールドがレスポンスと一致すること、`is_deleted=False`・`id`が整数で採番されることまで検証済み。
+  - 「案件一覧取得では is_deleted=false の案件のみが返る」: `test_list_projects_excludes_deleted`で削除済みIDが一覧に含まれず未削除IDが含まれることを検証済み。
+  - 「案件一覧をステータスで絞り込むと、該当ステータスの案件のみが返る」: `test_list_projects_filters_by_status`で異なるステータスの案件を2件作成し、絞り込み後の結果が全て指定ステータスであること・対象IDが含まれることを検証済み（フィルタが効いていなければ`all(...)`が失敗する構成になっており実効性がある）。
+  - 「案件詳細取得では自テーブルの情報のみが返り、配下タスクの情報は含まれない」: `test_get_project_detail_does_not_include_child_task_info`で`"tasks" not in body`を確認済み。`app/models.py`のProjectにrelationshipが定義されておらず（Task CRUDは別タスクで未実装）、`ProjectRead`スキーマも自テーブルのフィールドのみで構成されているため、現時点の実装スコープと整合している。
+  - 「案件を削除すると is_deleted が true になり、以降の一覧・詳細取得結果に含まれなくなる」: `test_delete_project_marks_is_deleted_and_excludes_from_list`（一覧側）と`test_get_project_detail_not_found_after_deletion`（詳細側）の組み合わせで両方検証済み。`test_delete_project_is_idempotent_not_found_on_second_call`で2回目のDELETEが404になることも確認されており、`delete_project`が`_get_active_project_or_404`経由で削除済みレコードを再取得できない実装と整合する。
+  - 「存在しない案件idを指定した場合はエラー（404等）が返る」: `test_get_project_detail_not_found_for_unknown_id`（GET詳細）・`test_delete_project_not_found_for_unknown_id`（DELETE）で検証済み。
+  - 境界値・エッジケースの確認: 本タスクはCRUD基本4エンドポイントのみでステータス警告ロジック・WorkLog・時給換算は対象外（該当タスクは別途`未着手`）のため、それらの境界値確認は本タスクの評価範囲外と判断した。論理削除の除外確認・親詳細エンドポイントの子情報非包含は上記の通り確認済み。
+  - 不足・懸念点は見当たらなかった。受け入れ条件6点全てが対応するテストで裏付けられており、pytest・ruffともに全通過。コード変更は行っていない（確認のみ）。
 - 差し戻し回数: 0
 
 ### タスク: Projectステータス更新エンドポイント
@@ -410,6 +426,15 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - [ ] テストに失敗があるとワークフローが失敗する
   - [ ] Dockerマルチステージビルドでイメージが正常にビルドできる
   - [ ] 実デプロイのステップは含まれない
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
+- 差し戻し回数: 0
+
+### タスク: フロントエンド実装（仮）とCORS設定
+- status: 未着手
+- 概要: 現時点では仮タスクとしてまとめて置いておく。バックエンド（案件系・選考系の全エンドポイント）が完成した段階で、フロントエンドの実装方針（使用スタック、デプロイ先、実際に許可するオリジン等）を改めて検討し、細かいタスクに分割する。このタスク自体は着手せず、分割待ちのプレースホルダーとして扱う。
+- 受け入れ条件:
+  - [ ] （分割前のプレースホルダーのため未定義。バックエンド完成後、フロントエンドの実装タスクとCORS設定タスクに分割してから着手する）
 - セキュリティエバリュエーターのフィードバック: (未評価)
 - 性能エバリュエーターのフィードバック: (未評価)
 - 差し戻し回数: 0
