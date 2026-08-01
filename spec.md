@@ -254,7 +254,7 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 1
 
 ### タスク: ステータス遷移警告ロジックとその単体テスト
-- status: 未着手
+- status: 完了
 - 概要: 「## ステータス遷移の警告ロジック」で確定した状態遷移グラフ方式に基づき、逆行遷移を検知して警告メッセージを返す共通ロジック（`check_backward_transition`と到達可能性判定）を実装する。4つの適用箇所（Project.status, Task.status, InterviewStep.prep_status, InterviewStep.result）すべてのグラフ定義を対象に、境界値を網羅したpytestテストを整備する。
 - 受け入れ条件:
   - [ ] 同一ステータスへの変更では警告が発生しない
@@ -263,8 +263,16 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - [ ] 明確な逆行遷移では警告メッセージが返る
   - [ ] 枝分かれ先同士の無関係な遷移（例: Project.statusの完了→見送り）では警告が発生しない
   - [ ] 上記5パターンがProject.status・Task.status・InterviewStep.prep_status・InterviewStep.resultそれぞれについて（該当するパターンのみ）pytestでテストされ、全て通過する
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: 問題なし（Critical/High/Mediumなし）。確認観点と結果は以下の通り。
+  - DoS/無限ループ: `_is_reachable`はBFSで`visited`集合により訪問済みノードを除外しているため、仮にグラフに循環が持ち込まれても無限ループしない。現行4グラフはいずれも非巡回で、ノード数も5以下と小さくDoS要因なし。
+  - グラフ定義の矛盾: 4グラフとも、edgeの遷移先が全てそのグラフ自身のキーとして定義されており、到達不能な宙ぶらりんノードや矛盾は見当たらない。
+  - 外部入力を辞書キーに使う際のKeyError耐性: `_is_reachable`は`forward_edges[current]`ではなく`forward_edges.get(current, [])`を使用しており、`from_status`/`to_status`が将来エンドポイント経由でグラフに存在しない未知の文字列であってもKeyErrorを送出せず、単に「到達不可」＝警告なしとして安全にフォールバックする設計になっている。
+  - 参考（設計メモ、ブロッキングではない）: 警告メッセージは`from_status`/`to_status`をf-stringでそのまま埋め込んでいる。現状はJSON APIのプレーンテキストとして返す想定でHTML描画は行わないため問題ないが、将来フロントエンドで生HTMLとして描画する経路を作る場合はエスケープを検討すること。また`PROJECT_STATUS_GRAPH`等のモジュールグローバルなdictは`_is_reachable`内では読み取りのみで変更されておらず、現時点で共有可変状態の破損リスクはない。
+  - 純粋関数のみでDB/HTTPアクセスなしのため、認証・SQLインジェクション・mass assignment・論理削除・CORS・シークレット管理の観点は本タスクの対象外（該当なし）。
+- 性能エバリュエーターのフィードバック: 承認。`app/status_transitions.py`・`tests/test_status_transitions.py`を確認し、`uv run pytest -v`で41件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なしを確認した。
+  - 受け入れ条件6点全てについて対応するテストが存在し実際にパスしていることを確認した。「同一ステータス」「隣接遷移」「明確な逆行遷移」は`Project.status`/`Task.status`/`InterviewStep.prep_status`/`InterviewStep.result`の4グラフ全てで検証済み。「複数段飛び越え遷移」は`Project.status`/`Task.status`/`InterviewStep.prep_status`の3グラフで検証済みで、`InterviewStep.result`は深さ2のグラフで隣接遷移と区別がつかないため対象外（テストのdocstringに根拠が明記されておりspec.md 144行目の記述とも整合、妥当な除外と判断）。「枝分かれ先同士の無関係な遷移」は`Project.status`（完了⇄見送り）と`InterviewStep.result`（通過⇄不通過）で検証済みで、`Task.status`/`InterviewStep.prep_status`は線形グラフで分岐が存在しないため対象外（妥当）。
+  - `_is_reachable`のBFS実装が単純なindex比較ではなくグラフ上の到達可能性判定になっていること、`.get(current, [])`によるKeyError耐性、4グラフの定義がspec.md「## ステータス遷移の警告ロジック」の確定内容と一致していることも確認した。純粋関数でDB/HTTPアクセスがないため負荷・性能上の懸念はない。
+  - 参考（ブロッキングではない）: Task/prep_status/resultの逆行遷移テストは`is not None`のみを確認しており、Projectのように警告メッセージの内容（from/to両方の文字列を含むこと）までは検証していない。また`_is_reachable`が未知のステータス文字列を渡された場合の単体テストはない。いずれも受け入れ条件には含まれておらず、差し戻し理由にはしない。
 - 差し戻し回数: 0
 
 ### タスク: Project作成・参照・削除エンドポイント
