@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI
 
 from app.auth import verify_api_key
 from app.database import init_db
-from app.routers import projects, tasks
+from app.routers import projects, tasks, work_logs
 
 
 @asynccontextmanager
@@ -35,3 +35,4 @@ app = FastAPI(
 
 app.include_router(projects.router)
 app.include_router(tasks.router)
+app.include_router(work_logs.router)

@@ -4,7 +4,7 @@ mass assignment対策として、作成用スキーマには is_deleted 等の�
 操作すべきでないフィールドを含めない。
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -122,3 +122,14 @@ class TaskUpdate(BaseModel):
 
 class TaskPatchResponse(TaskRead):
     warning: str | None = None
+
+
+class WorkLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    memo: str | None = None
+    is_deleted: bool

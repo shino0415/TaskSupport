@@ -393,7 +393,7 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: WorkLog計測系エンドポイント
-- status: 未着手
+- status: 完了
 - 概要: タスクの稼働時間計測（開始・終了）、稼働ログ一覧取得、誤操作時の取り消し（論理削除）ができるようにする。同一タスク内の多重start、案件間・タスク間の同時進行を許可する。
 - 受け入れ条件:
   - [ ] タスクに対して計測を開始すると、新規の稼働ログが作成され、開始時刻が記録される
@@ -402,8 +402,35 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - [ ] タスクの稼働ログ一覧取得では is_deleted=false のログのみが返る
   - [ ] 稼働ログを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる
   - [ ] 存在しないタスクid・稼働ログidを指定した場合はエラー（404等）が返る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`app/routers/work_logs.py`（新規）・`app/schemas.py`（`WorkLogRead`追加分）・`app/main.py`（差分）・`tests/test_work_logs.py`（新規）・`app/models.py`（`WorkLog`定義、既存）を確認し、`uv run pytest -v`（108件全てpass、既存への回帰なし）・`uv run ruff check`（違反なし）で裏付けを取った。
+  - **認証**: `app/main.py`で`app.include_router(work_logs.router)`が追加されているが、`work_logs.router = APIRouter(tags=["work-logs"])`は個別の`dependencies`指定を持たず、`FastAPI(dependencies=[Depends(verify_api_key)])`というグローバル依存関係をそのまま継承する。`grep`で`app/routers/work_logs.py`全体に`dependencies=`によるバイパス・上書きがないことを確認した。`test_endpoints_require_api_key`でAPI KeyなしのGET一覧が401になることを確認済み。`verify_api_key`自体（fail-closed設計・`secrets.compare_digest`による定数時間比較）に変更はない。
+  - **mass assignment**: 本タスクの設計上の特徴として、`POST /tasks/{id}/work-logs/start`・`PATCH /work-logs/{id}/stop`はいずれもリクエストボディ用のPydanticスキーマを持たず、パスパラメータ（`task_id`／`work_log_id`）のみを受け取る関数シグネチャになっている（`def start_work_log(task_id: int, db: Session = Depends(get_db))`／`def stop_work_log(work_log_id: int, db: Session = Depends(get_db))`）。FastAPIは宣言されていないリクエストボディを解析対象にしないため、クライアントがボディに`started_at`・`ended_at`・`task_id`・`is_deleted`等をどう詰め込んでも一切読み取られず、`started_at`はサーバー側で`datetime.now()`により、`ended_at`も`stop`時にサーバー側で`datetime.now()`により設定される。mass assignmentの入力経路自体が存在しない設計であり、Project/TaskのようなPATCH用スキーマの`id`/`is_deleted`混入検証テストは本タスクの構造上不要と判断した（該当スキーマが存在しないため）。レスポンス用の`WorkLogRead`（`from_attributes=True`）もリクエスト入力とは独立している。
+  - **インジェクション**: 全クエリが`db.query(...).filter(...)`によるSQLAlchemy ORM経由でパラメータ化されており、生SQL文字列結合は一切ない。`memo`カラムは本タスクの新規エンドポイントからは書き込まれておらず（`start_work_log`は`task_id`と`started_at`のみを設定）、ユーザー入力がログ出力や外部コマンドに渡っている箇所もない。
+  - **論理削除の徹底**: `_get_active_task_or_404`・`_get_active_work_log_or_404`はいずれも対象自身の`is_deleted.is_(False)`でフィルタしている。`start_work_log`・`list_work_logs`は`_get_active_task_or_404`経由で親タスクが削除済みの場合404になる（`test_start_work_log_not_found_for_deleted_task`・`test_list_work_logs_not_found_for_deleted_task`で実地検証済み）。`stop_work_log`・`delete_work_log`は`_get_active_work_log_or_404`経由でログ自身が削除済みの場合404になる（`test_stop_work_log_not_found_after_deletion`・`test_delete_work_log_is_idempotent_not_found_on_second_call`で確認済み）。`list_work_logs`も`models.WorkLog.is_deleted.is_(False)`でフィルタしており削除済みログの漏洩経路はない（`test_list_work_logs_excludes_deleted`で確認済み）。`delete_work_log`は`work_log.is_deleted = True; db.commit()`のみで物理削除（`DELETE FROM`相当）は行っていない。
+  - **エラーハンドリング**: 404は`HTTPException(status_code=404, detail="Task not found")`／`"WorkLog not found"`、409は`detail="WorkLog already stopped"`という固定文字列のみで、スタックトレース・SQLクエリ文字列・内部パス・タイムスタンプ等の内部状態の漏洩はない。
+  - **[設計判断の確認] 既に終了済みログへの再stopを409 Conflictとする設計**: 妥当と判断する。理由は以下の通り。
+    - 情報漏洩の観点: レスポンスボディは固定文字列`"WorkLog already stopped"`のみで、既存の`ended_at`の値やその他の内部状態は一切含まれない。認証済み本人のみがアクセスできる前提のため、既に終了済みであるという事実自体を返すこと自体も情報漏洩に該当しない。
+    - 不整合な状態遷移の防止という観点: 実装（`if work_log.ended_at is not None: raise HTTPException(409, ...)`）により、2回目以降の`stop`呼び出しで`ended_at`が上書きされることはなく、最初の計測終了時刻が保持される。稼働時間は`ended_at - started_at`で都度計算する設計（spec.md該当箇所）のため、`ended_at`が意図せず上書きされることはデータの正確性を損なう（実際の稼働時間より不当に長い／短い時間が記録される）リスクに直結する。409によるブロックはこのリスクを防ぐ安全側の設計であり、Project/TaskのPATCHにおける「ステータス変更はブロックしない」という方針（ユーザーの入力ミス訂正を妨げないため）とは対象が異なる（あちらは業務ステータスの遷移可否の警告、こちらは一度確定した計測終了時刻の不可逆性を守るための衝突検知）ため、方針の矛盾はないと判断した。
+    - べき等性に関する参考情報（ブロッキングではない）: 2回目の`stop`が200ではなく409を返す設計はRESTのべき等性の一般的な期待（同じ操作を複数回行っても同じ結果になる）とは厳密には一致しないが、受け入れ条件にはこの点への言及がなく、業務要件（誤って2回stopボタンを押しても最初の終了時刻を保護したい）を優先した意図的な設計と解釈できるため、セキュリティ上の欠陥として差し戻す理由にはしない。
+  - **[設計判断の確認] DELETEを2回呼んだ場合に2回目が404になる設計**: Project/Taskの既存パターン（`_get_active_*_or_404`が`is_deleted=false`のレコードのみを対象にするため、既に削除済みのレコードは「存在しない」ものとして扱われる）を踏襲しており一貫性がある。物理削除ではなく論理削除フラグの二重設定を防ぐだけの結果であり、データ破壊・情報漏洩のいずれにも該当しない。`test_delete_work_log_is_idempotent_not_found_on_second_call`で実地検証済み。
+  - **CORS・シークレット管理**: 本タスクの差分にCORS関連の変更はなく、`CORSMiddleware`は引き続き未導入（安全側のデフォルト、既存タスクでの評価から変化なし）。APIキー・DB接続情報のハードコードはなく、`tests/test_work_logs.py`の`TEST_API_KEY = "test-secret-key"`はテスト専用値で`monkeypatch.setenv`経由のみに使われログ出力もない。
+  - コード変更は行っていない（確認・実地検証のみ）。
+- 性能エバリュエーターのフィードバック: 承認。`uv run pytest -v`は108件全てpass（新規`tests/test_work_logs.py`14件含む、既存への回帰なし）、`uv run ruff check`も違反なし。`app/routers/work_logs.py`・`app/schemas.py`（`WorkLogRead`）・`app/main.py`・`tests/test_work_logs.py`を確認し、受け入れ条件6点それぞれについて対応するテストが存在し実際にパスしていることを確認した。
+  - 「タスクに対して計測を開始すると、新規の稼働ログが作成され、開始時刻が記録される」: `test_start_work_log_creates_record_with_started_at`で201・`task_id`一致・`started_at`が設定済み・`ended_at`が`None`・`is_deleted=False`・`id`整数採番まで確認済み。
+  - 「既に進行中（終了時刻未設定）のログがある状態で再度計測を開始しても、別レコードとして作成される」: `test_start_work_log_allows_multiple_running_logs_for_same_task`で2回startして両方201・IDが異なり・一覧取得で両方のIDが含まれることまで確認済み。
+  - 「進行中の稼働ログに対して計測終了を行うと、終了時刻が記録される」: `test_stop_work_log_records_ended_at`で200・`ended_at`が設定されることを確認済み。
+  - 「タスクの稼働ログ一覧取得では is_deleted=false のログのみが返る」: `test_list_work_logs_excludes_deleted`で削除済みログIDが一覧から除外され未削除IDが含まれることを確認済み。
+  - 「稼働ログを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる」: `test_delete_work_log_marks_is_deleted_and_excludes_from_list`で204・一覧からの除外を確認済み。
+  - 「存在しないタスクid・稼働ログidを指定した場合はエラー（404等）が返る」: タスクid側は`test_start_work_log_not_found_for_unknown_task_id`・`test_start_work_log_not_found_for_deleted_task`・`test_list_work_logs_not_found_for_unknown_task_id`・`test_list_work_logs_not_found_for_deleted_task`、稼働ログid側は`test_stop_work_log_not_found_for_unknown_id`・`test_stop_work_log_not_found_after_deletion`・`test_delete_work_log_not_found_for_unknown_id`・`test_delete_work_log_is_idempotent_not_found_on_second_call`で網羅されている。
+  - 境界値・エッジケース確認（本役割の観点）:
+    - ステータス警告ロジックの4パターン（同一/隣接/飛び越え/逆行）: WorkLogにはstatusフィールド自体が存在せず（テーブル設計にも無い）、本タスクの評価対象外と判断した。
+    - 論理削除のDELETE後の除外: 一覧取得からの除外を確認済み（`GET /work-logs/{id}`という単体詳細取得エンドポイント自体がspec.mdのエンドポイント一覧に存在しないため、一覧除外の確認で受け入れ条件を満たすと判断）。
+    - 親詳細エンドポイントが子情報を含まないか: WorkLogに親にあたる「詳細取得」対象はTask/Projectだが、Task自体にGET単体エンドポイントが存在せず、`GET /projects/{id}`は既存タスクで検証済み（子task情報を含まないことを確認済み）。本タスクの差分に親詳細エンドポイントの変更はないため対象外。
+    - 同一タスク内の多重start: `test_start_work_log_allows_multiple_running_logs_for_same_task`で確認済み。
+    - 複数タスク・複数案件の同時進行: `test_start_work_log_allows_concurrent_logs_across_tasks_and_projects`で、別々の案件配下の別々のタスクに対してほぼ同時にstartしても両方201になることを確認済み。
+    - `ended_at`が`NULL`の間は稼働時間計算が「進行中」として扱われるか: 本タスクのスコープには稼働時間の計算・表示ロジック自体が含まれていない（`WorkLogRead`は`started_at`/`ended_at`の生値をそのまま返すのみで、経過時間・duration・進行中フラグ等の派生フィールドを持たない）。稼働時間計算は次タスク「時給換算エンドポイント」（現status: 未着手）の受け入れ条件「進行中（終了時刻未設定）のログの扱いが一貫している」で扱われる範囲であり、本タスクの受け入れ条件6点にも稼働時間計算への言及はないため、本タスクでは評価対象外と判断した（次タスクのレビュー時に重点確認する）。
+  - セキュリティエバリュエーターが検討した2つの設計判断（既に終了済みログへの再stopで409、DELETE2回目が404）はいずれも実装・テストと整合しており、業務要件（計測終了時刻の不可逆性を守る／論理削除の一貫性）に照らして妥当と判断する。追加の懸念はない。
+  - 不足・懸念点: 受け入れ条件6点全てが対応するテストで裏付けられている。コード変更は行っていない（確認・実地検証のみ）。
 - 差し戻し回数: 0
 
 ### タスク: 時給換算エンドポイント
