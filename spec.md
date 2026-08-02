@@ -351,7 +351,7 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: Task CRUD一式
-- status: 未着手
+- status: 完了
 - 概要: 案件配下のタスクの作成・一覧取得・更新（ステータス逆行警告含む）・論理削除ができるようにする。Task.statusの順序（未着手→処理中→完了）は確定済みのため決定待ちなしで実装できる。
 - 受け入れ条件:
   - [ ] 案件配下にタスクを作成できる
@@ -361,8 +361,35 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - [ ] 順当な遷移では警告フィールドは含まれない
   - [ ] タスクを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる
   - [ ] 存在しない案件id・タスクidを指定した場合はエラー（404等）が返る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`app/schemas.py`（`TaskStatus`・`TaskBase`/`TaskCreate`/`TaskRead`/`TaskUpdate`/`TaskPatchResponse`）、`app/routers/tasks.py`（新規）、`app/main.py`（差分）、`tests/test_tasks.py`（新規）を確認し、`uv run pytest -v`・`uv run ruff check`を実行して裏付けを取った。
+  - **認証**: `app/main.py`の`app.include_router(tasks.router)`で追加された`/projects/{project_id}/tasks`（POST/GET）・`/tasks/{task_id}`（PATCH/DELETE）は個別の`dependencies`指定を持たず、`FastAPI(dependencies=[Depends(verify_api_key)])`というグローバル依存関係をそのまま継承する。`grep`で`app/`配下に個別ルートの認証バイパス（空の`dependencies=[]`等での上書き）が存在しないことを確認した。`test_endpoints_require_api_key`でAPI KeyなしのGET一覧が401になることを確認済み（POST/PATCH/DELETEの個別401テストはないが、認証がグローバル依存関係で実装されている以上バイパス経路が生まれる余地はなく、Project CRUDタスクと同じ判断で問題としない）。`verify_api_key`自体（fail-closed設計・`secrets.compare_digest`）に変更はない。
+  - **mass assignment**: `TaskCreate`（`name`/`memo`/`status`）・`TaskUpdate`（`name`/`status`/`memo`）とも`id`・`project_id`・`is_deleted`を含まない。`create_task`は`models.Task(project_id=project_id, **payload.model_dump())`で、`project_id`はパスパラメータから明示的に渡し`TaskCreate`側には定義がないため、リクエストボディに`project_id`や`is_deleted`を含めても二重に無視される（Pydantic v2の`extra`デフォルト`ignore`＋そもそも`model_dump()`にキーが現れない）。`test_create_task_rejects_mass_assignment_of_is_deleted`で実地検証済み。`update_task`も`payload.model_dump(exclude_unset=True)`のキーが`TaskUpdate`で定義された3フィールドに限定されるため、`id`/`project_id`/`is_deleted`をPATCHボディに含めても`setattr`ループの対象にならない（スキーマ構造上安全。ただしProjectタスクにあったような「PATCHボディに`id`/`is_deleted`を混入させて実地検証する」専用テストは`tests/test_tasks.py`には無く、この点はテストカバレッジの軽微な差分として後述）。リクエスト用（`TaskCreate`/`TaskUpdate`）とレスポンス用（`TaskRead`/`TaskPatchResponse`、`from_attributes=True`）のスキーマも分離されている。
+  - **インジェクション**: 全クエリが`db.query(...).filter(...)`によるSQLAlchemy ORM経由でパラメータ化されており、生SQL文字列結合は一切ない。`name`・`memo`等のユーザー入力がログ出力や外部コマンドに渡っている箇所もない。
+  - **論理削除の徹底**: `list_tasks`は`models.Task.project_id == project_id, models.Task.is_deleted.is_(False)`で、`_get_active_task_or_404`（`update_task`/`delete_task`が共通利用）は`models.Task.is_deleted.is_(False)`でフィルタしており、削除済みタスクの漏洩経路はない。`delete_task`は`task.is_deleted = True; db.commit()`のみで物理削除（`DELETE FROM`相当）は行っていない。`create_task`・`list_tasks`はいずれも`_get_active_project_or_404`を経由するため、親案件が削除済みの場合はタスク作成・一覧取得ともに404になる（`test_create_task_not_found_for_deleted_project`・`test_list_tasks_not_found_for_deleted_project`で実地検証済み）。`test_list_tasks_excludes_deleted`・`test_delete_task_marks_is_deleted_and_excludes_from_list`・`test_delete_task_is_idempotent_not_found_on_second_call`も確認した。
+  - **状態遷移警告ロジックの再利用**: `check_backward_transition(TASK_STATUS_GRAPH, task.status, update_data["status"])`は、DBから読み込んだ更新前の`task.status`と新しい`status`を正しい順序で渡しており、`setattr`によるフィールド更新より前に呼び出されているため、比較対象が意図せず新値同士になる不具合はない。`status`が更新データに含まれない、または新旧同一の場合は呼び出し自体をスキップしている。`test_update_task_status_backward_transition_returns_warning`（完了→処理中）・`test_update_task_status_forward_transition_has_no_warning`（同一/隣接/飛び越えの3パターン）・`test_update_task_without_status_change_has_no_warning`で境界値が実地検証されている。`TASK_STATUS_GRAPH`はspec.mdの確定グラフ（未着手→処理中→完了の線形）と一致している。
+  - **必須フィールドのnull送信422パターン**: `_TASK_REQUIRED_UPDATE_FIELDS = ("name", "status")`は`app/models.py`の`Task`モデルで`nullable=False`と定義されている`name`/`status`と一致しており（`project_id`はTaskUpdateに存在しないため対象外で妥当）、`memo`（`nullable=True`）は対象外でnullクリアが許可される。`test_update_task_rejects_explicit_null_for_required_field`（name/statusをparametrize）・`test_update_task_can_clear_nullable_memo`で実地検証済み。Projectで確立した「明示的なnullは`model_validator(mode="after")`でValueError→FastAPIが自動的に422に変換」というパターンが正しく踏襲されている。
+  - **エラーハンドリング**: 404は`HTTPException(status_code=404, detail="Project not found")`／`"Task not found"`という固定文字列のみで、スタックトレース・SQLクエリ文字列・内部パス等の漏洩はない。422のバリデーションエラーもPydanticの`value_error`メッセージのみでDB内部情報は含まない。
+  - **CORS・シークレット管理**: 本タスクの差分（`app/main.py`は`include_router`追加のみ）にCORS・シークレット関連の変更はなく、既存タスクでの評価から状態は変わっていない。
+  - **[設計判断の検討] PATCH/DELETE `/tasks/{task_id}`が親案件（project）のis_deleted状態を見ない実装について**: 実装（`_get_active_task_or_404`はタスク自身の`is_deleted`のみをフィルタし、親projectの状態は一切参照しない）を確認した。この設計を以下の観点で検討した。
+    - **信頼境界の観点**: 本システムは単一の認証済み本人専用ツールであり、API Key認証は「本人か否か」のみを区別する（マルチテナントでのIDOR・権限昇格のような、別ユーザーのリソースに対する不正アクセスの懸念は存在しない）。したがって親案件が削除済みであっても、それを更新・削除できるタスクの`task_id`を知っているのは本人のみであり、この実装によって新たな認可バイパスや情報漏洩（他者のデータへのアクセス）が生じるわけではない。
+    - **エンドポイント設計との整合性**: spec.mdの「タスク系（Task）」表では、`PATCH /tasks/{id}`・`DELETE /tasks/{id}`は`project_id`をパスに含まない設計になっており（案件配下であることを示すのはPOST/GETのみ）、実装（`update_task`/`delete_task`が`task_id`のみを受け取り、親projectを経由しない）はこの表と整合している。受け入れ条件にも「親案件が削除済みの場合にPATCH/DELETEが404になること」は含まれていない。
+    - **情報漏洩の観点**: `TaskRead`/`TaskPatchResponse`は自テーブルの情報（`project_id`含む）のみを返し、親project自体の詳細情報（`name`・`client_name`等）を含まない。親が削除済みでも、レスポンスから新たに漏洩する情報はない。
+    - **結論**: この設計は、本タスクの受け入れ条件・spec.mdのエンドポイント設計表と矛盾せず、単一ユーザー前提の信頼境界においてCritical/High相当のセキュリティ上の欠陥ではないと判断する。ただし業務ロジック・データ一貫性の観点（削除済み案件配下のタスクが更新・削除操作の対象として生き続けること、削除済み案件を復元する手段がないため「孤立したタスク」が事実上永続する可能性があること）は論点として残るため、性能エバリュエーター・将来のgeneratorの参考情報として記録する（差し戻し理由にはしない）。
+  - **[参考、ブロッキングではない] PATCHでのmass assignment実地検証テストの欠落**: Projectタスクでは`PATCH`ボディに`{"id": ..., "is_deleted": true, ...}`を混入させて実際に無視されることを検証するテストがあったが、`tests/test_tasks.py`には`update_task`（PATCH）に対する同様のテストがない（POST側の`test_create_task_rejects_mass_assignment_of_is_deleted`のみ存在）。`TaskUpdate`スキーマに`id`/`project_id`/`is_deleted`フィールドが定義されていないためコード構造上は安全（本レビューでも`app/schemas.py`を確認しフィールド不在を確認済み）だが、Projectタスクとのテストカバレッジの一貫性の観点で、同様のPATCH実地検証テストの追加を推奨する。差し戻し理由にはしない。
+  - `uv run pytest -v`は92件全てpass（新規`tests/test_tasks.py`20件含む、既存への回帰なし）、`uv run ruff check`も違反なし。コード変更は行っていない（確認・実地検証のみ）。
+- 性能エバリュエーターのフィードバック: 承認。`uv run pytest -v`は92件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なし。`app/schemas.py`・`app/routers/tasks.py`・`app/main.py`・`tests/test_tasks.py`を確認し、受け入れ条件7点それぞれについて対応するテストが存在し実際にパスしていることを確認した。
+  - 「案件配下にタスクを作成できる」: `test_create_task_reflects_input_in_response`でリクエストペイロード全項目がレスポンスに反映され、`project_id`が正しく設定され、`is_deleted=False`・`id`が整数採番されることまで検証済み。
+  - 「案件配下のタスク一覧取得では is_deleted=false のタスクのみが返る」: `test_list_tasks_excludes_deleted`で削除済みタスクIDが一覧に含まれず未削除IDが含まれることを検証済み。
+  - 「タスクの各項目（ステータス含む）を更新できる」: `test_update_task_updates_fields`（name・memoの同時更新、未更新項目statusが元の値のまま保持）と、後述のstatus遷移テスト群（status単独更新）を合わせて、name/status/memoの全項目が更新可能であることを確認した。
+  - 「ステータスを逆行させて更新すると、200とともに警告フィールドが返る」: `test_update_task_status_backward_transition_returns_warning`（完了→処理中）で200・`warning`にfrom/to両方の文字列（完了・処理中）が含まれることまで検証済み。
+  - 「順当な遷移では警告フィールドは含まれない」: `test_update_task_status_forward_transition_has_no_warning`のparametrizeで、同一ステータス（未着手→未着手）・隣接（未着手→処理中）・飛び越え（未着手→完了）の3パターン全てで`warning`が含まれない（None）ことを確認済み。Task.statusは線形3段グラフで枝分かれが存在しないため「枝分かれ先同士の遷移」パターンは該当なし（spec.md「## ステータス遷移の警告ロジック」の記述と整合、妥当な除外）。
+  - 「タスクを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる」: `test_delete_task_marks_is_deleted_and_excludes_from_list`で一覧からの除外を確認済み。Task系にはGET詳細エンドポイント（`GET /tasks/{id}`）自体がspec.mdのエンドポイント一覧に存在しない（一覧取得のみ）ため、一覧除外の確認で受け入れ条件を満たすと判断した。
+  - 「存在しない案件id・タスクidを指定した場合はエラー（404等）が返る」: 案件id側は`test_create_task_not_found_for_unknown_project_id`・`test_list_tasks_not_found_for_unknown_project_id`（および削除済み案件を対象にした`test_create_task_not_found_for_deleted_project`・`test_list_tasks_not_found_for_deleted_project`）、タスクid側は`test_update_task_not_found_for_unknown_id`・`test_update_task_not_found_after_deletion`・`test_delete_task_not_found_for_unknown_id`・`test_delete_task_is_idempotent_not_found_on_second_call`で網羅されている。
+  - 境界値・エッジケース確認（本役割の観点）: ステータス警告ロジックの4パターンのうち「同一ステータス」「隣接遷移」「飛び越え遷移」「逆行遷移」はTask.status（線形3段グラフ）の範囲内で全て検証済み（「飛び越えて逆行」に相当するケースは3段グラフのため隣接逆行と同一になり別途のテストは不要と判断）。論理削除については一覧からの除外を確認済み（詳細取得エンドポイントが存在しないため対象外）。親詳細エンドポイントの子情報混入については、Task自体に詳細取得エンドポイントがなく`TaskRead`/`TaskPatchResponse`も自テーブルのフィールドのみで構成されているため該当なし。WorkLog・時給換算は別タスク（未着手）のため本タスクの評価範囲外とした。
+  - セキュリティエバリュエーターが参考情報として挙げた2点について確認した。
+    - 「PATCH/DELETE /tasks/{id}が親案件のis_deleted状態を見ない設計」: spec.mdのエンドポイント設計表（`PATCH /tasks/{id}`・`DELETE /tasks/{id}`はパスに`project_id`を含まない）と実装（`_get_active_task_or_404`はタスク自身の`is_deleted`のみを見る）は整合しており、本タスクの受け入れ条件にも「親案件削除済み時にPATCH/DELETEが404になること」は含まれていない。したがって受け入れ条件未達には該当せず、差し戻し理由にはしない。データ一貫性上の論点（削除済み案件配下のタスクが操作対象として残り続ける点）は将来のgenerator向け参考情報として引き続き記録するに留める。
+    - 「PATCHでのmass assignment実地検証テストの欠落」: `TaskUpdate`スキーマ（`app/schemas.py`）に`id`/`project_id`/`is_deleted`フィールドが定義されていないことを確認し、構造上安全であると判断した。本タスクの受け入れ条件にmass assignment検証は含まれておらず、Projectタスクとのテストカバレッジの一貫性という観点での軽微な指摘に留まるため、差し戻し理由にはしない（generatorが今後追加を検討してもよい）。
+  - 不足・懸念点: 受け入れ条件7点全てが対応するテストで裏付けられている。上記2点は参考情報としての記録に留め、差し戻し理由とはしない。コード変更は行っていない（確認・実地検証のみ）。
 - 差し戻し回数: 0
 
 ### タスク: WorkLog計測系エンドポイント
