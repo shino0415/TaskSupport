@@ -36,3 +36,18 @@ class ProjectRead(ProjectBase):
     id: int
     status: str
     is_deleted: bool
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    client_name: str | None = None
+    status: ProjectStatus | None = None
+    reward: int | None = None
+    applied_date: date | None = None
+    deadline: date | None = None
+    platform: str | None = None
+    memo: str | None = None
+
+
+class ProjectPatchResponse(ProjectRead):
+    warning: str | None = None

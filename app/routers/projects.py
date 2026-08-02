@@ -1,14 +1,18 @@
-"""案件（Project）の作成・参照・削除エンドポイント。
-
-ステータス更新（PATCH）は別タスクで扱うため、ここには含めない。
-"""
+"""案件（Project）の作成・参照・更新・削除エンドポイント。"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
-from app.schemas import ProjectCreate, ProjectRead, ProjectStatus
+from app.schemas import (
+    ProjectCreate,
+    ProjectPatchResponse,
+    ProjectRead,
+    ProjectStatus,
+    ProjectUpdate,
+)
+from app.status_transitions import PROJECT_STATUS_GRAPH, check_backward_transition
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -46,6 +50,30 @@ def list_projects(
 @router.get("/{project_id}", response_model=ProjectRead)
 def get_project(project_id: int, db: Session = Depends(get_db)) -> models.Project:
     return _get_active_project_or_404(db, project_id)
+
+
+@router.patch("/{project_id}", response_model=ProjectPatchResponse)
+def update_project(
+    project_id: int, payload: ProjectUpdate, db: Session = Depends(get_db)
+) -> ProjectPatchResponse:
+    project = _get_active_project_or_404(db, project_id)
+
+    # exclude_unsetにより、リクエストに含まれなかったフィールドと明示的なnull
+    # （deadline/memoのクリア）を区別する。
+    update_data = payload.model_dump(exclude_unset=True)
+
+    warning = None
+    if "status" in update_data and update_data["status"] != project.status:
+        warning = check_backward_transition(
+            PROJECT_STATUS_GRAPH, project.status, update_data["status"]
+        )
+
+    for field, value in update_data.items():
+        setattr(project, field, value)
+    db.commit()
+    db.refresh(project)
+
+    return ProjectPatchResponse(**ProjectRead.model_validate(project).model_dump(), warning=warning)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

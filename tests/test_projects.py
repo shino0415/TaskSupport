@@ -161,6 +161,98 @@ def test_delete_project_is_idempotent_not_found_on_second_call(client):
     assert second_delete.status_code == 404
 
 
+# --- PATCH /projects/{id} ---
+
+
+def test_update_project_updates_fields(client):
+    project_id = create_project(client)
+
+    response = client.patch(
+        f"/projects/{project_id}",
+        json={"name": "更新後の案件名", "reward": 80000},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "更新後の案件名"
+    assert body["reward"] == 80000
+    # 更新していない項目は元の値のまま
+    assert body["client_name"] == "テストクライアント"
+
+
+def test_update_project_can_clear_nullable_field(client):
+    project_id = create_project(client, deadline="2026-03-01")
+
+    response = client.patch(
+        f"/projects/{project_id}", json={"deadline": None}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["deadline"] is None
+
+
+def test_update_project_not_found_for_unknown_id(client):
+    response = client.patch("/projects/99999", json={"name": "x"}, headers=AUTH_HEADERS)
+    assert response.status_code == 404
+
+
+def test_update_project_status_backward_transition_returns_warning(client):
+    project_id = create_project(client, status="納品済み")
+
+    response = client.patch(
+        f"/projects/{project_id}", json={"status": "契約中"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "契約中"
+    assert body["warning"] is not None
+    assert "納品済み" in body["warning"]
+    assert "契約中" in body["warning"]
+
+
+@pytest.mark.parametrize(
+    "from_status,to_status",
+    [
+        ("提案中", "提案中"),  # 同一ステータス
+        ("提案中", "契約中"),  # 隣接遷移
+        ("提案中", "納品済み"),  # 飛び越え遷移
+        ("提案中", "見送り"),  # 分岐への遷移
+        ("契約中", "見送り"),  # 分岐への遷移
+    ],
+)
+def test_update_project_status_forward_transition_has_no_warning(client, from_status, to_status):
+    project_id = create_project(client, status=from_status)
+
+    response = client.patch(
+        f"/projects/{project_id}", json={"status": to_status}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == to_status
+    assert body.get("warning") is None
+
+
+def test_update_project_status_branch_to_branch_transition_has_no_warning(client):
+    project_id = create_project(client, status="完了")
+
+    response = client.patch(
+        f"/projects/{project_id}", json={"status": "見送り"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "見送り"
+    assert body.get("warning") is None
+
+
+def test_update_project_without_status_change_has_no_warning(client):
+    project_id = create_project(client)
+
+    response = client.patch(
+        f"/projects/{project_id}", json={"memo": "更新メモ"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json().get("warning") is None
+
+
 # --- 認証 ---
 
 

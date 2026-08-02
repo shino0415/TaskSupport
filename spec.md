@@ -306,15 +306,31 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: Projectステータス更新エンドポイント
-- status: 未着手
+- status: 完了
 - 概要: 案件のステータスを含む各項目更新と、Project.statusの状態遷移グラフ（提案中→契約中→納品済み→完了、見送りは提案中・契約中から分岐）に基づく逆行遷移時の警告付与を実装する。
 - 受け入れ条件:
   - [ ] 案件の各項目（ステータス含む）を更新できる
   - [ ] 状態遷移グラフに基づき明確な逆行と判定される変更を行うと、200とともに警告フィールドが返る
   - [ ] 順当な遷移（隣接・飛び越え・見送りへの分岐を含む）では警告フィールドは含まれない（またはnull）
   - [ ] 完了→見送りのような枝分かれ先同士の遷移では警告フィールドは含まれない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`app/schemas.py`（`ProjectUpdate`・`ProjectPatchResponse`）、`app/routers/projects.py`（`PATCH /projects/{project_id}`）、`tests/test_projects.py`（PATCH関連テスト）を確認し、実際に`TestClient`で複数のペイロードを送信して挙動を実地検証した。
+  - **認証**: `PATCH /projects/{project_id}`は個別の`dependencies`指定を持たず、`app/main.py`の`FastAPI(dependencies=[Depends(verify_api_key)])`というグローバル依存関係をそのまま継承する。`grep`で本エンドポイントを含む`app/routers/projects.py`全体に認証バイパス（空の`dependencies=[]`等での上書き）がないことを確認した。PATCH固有の401テストは`tests/test_projects.py`に追加されていないが（既存の`test_endpoints_require_api_key`はGET一覧のみ対象）、認証がルーター単位ではなくアプリ全体のグローバル依存関係として実装されている以上、個別エンドポイントごとにバイパス経路が生まれる余地はなく、前タスク（Project作成・参照・削除）と同じ判断で問題としない。
+  - **mass assignment**: `ProjectUpdate`に`id`・`is_deleted`フィールドは含まれていない。実際に`PATCH`リクエストボディへ`{"id": 99999, "is_deleted": true, "name": "変更後"}`を送信して検証したところ、レスポンス・DB上とも`id`は変わらず`is_deleted`も`False`のままで、`name`のみが更新されることを確認した（Pydantic v2のデフォルト`extra="ignore"`により、スキーマ未定義フィールドはそもそも`model_dump()`に現れないため）。`update_data`は`payload.model_dump(exclude_unset=True)`で作られ、`setattr`のループもこの辞書のキー（`ProjectUpdate`で定義された8フィールドのみ）に限定されているため、二重の意味で安全。リクエスト用（`ProjectUpdate`）とレスポンス用（`ProjectRead`を継承した`ProjectPatchResponse`）のスキーマも分離されている。
+  - **SQLインジェクション**: 新規コードもすべて`db.query(...)`（`_get_active_project_or_404`の再利用）とORMの`setattr`によるものであり、生SQL文字列結合は一切ない。`status`等のユーザー入力がログ出力や外部コマンドに渡っている箇所もない。
+  - **論理削除の徹底**: `update_project`は`_get_active_project_or_404`（既存の一覧・詳細・削除エンドポイントと共通）を経由しており、`is_deleted=true`の案件はPATCH対象として取得できず404になる。物理削除相当の操作はこのエンドポイントには含まれない。
+  - **状態遷移警告ロジックの再利用**: `check_backward_transition(PROJECT_STATUS_GRAPH, project.status, update_data["status"])`は、DBから読み込んだ更新前の`project.status`と、リクエストの新しい`status`を正しい順序で渡しており、`setattr`によるフィールド更新より前に呼び出されているため、比較対象が意図せず新値同士になるような不具合はない。`status`が更新データに含まれない場合や新旧が同一の場合は呼び出し自体をスキップしており、`tests/test_projects.py`の`test_update_project_status_backward_transition_returns_warning`・`test_update_project_status_forward_transition_has_no_warning`（同一/隣接/飛び越え/分岐遷移）・`test_update_project_status_branch_to_branch_transition_has_no_warning`・`test_update_project_without_status_change_has_no_warning`で境界値が一通り実地検証されている。
+  - **エラーハンドリング**: 404は既存の固定文字列`"Project not found"`のみを再利用しており新規の情報漏洩経路はない。
+  - **CORS・シークレット管理**: 本タスクの差分に該当する変更はなく、既存タスクでの評価から変化なし。
+  - **[Medium/参考、ブロッキングではない] `ProjectUpdate`のフィールド型が実DBのNOT NULL制約と一致していない**: `app/schemas.py`の`ProjectUpdate`は`name`・`client_name`・`status`・`reward`・`applied_date`・`platform`（DB上はいずれも`nullable=False`）も含め全フィールドを`X | None = None`として定義している。`exclude_unset=True`によって「未指定」と「明示的なnull」を区別する設計自体は`deadline`・`memo`（DB上`nullable=True`）については適切だが、他の必須フィールドについても同じ型定義になっているため、クライアントが例えば`{"name": null}`や`{"reward": null}`を送るとPydanticバリデーションは通過し、`setattr(project, "name", None)`後の`db.commit()`でSQLAlchemyの`IntegrityError`（`NOT NULL constraint failed`）が捕捉されずに送出される。実際に`TestClient`で検証したところ、この場合APIは`HTTPException`ではなく未処理の例外としてHTTP 500を返した。ただし`app/main.py`は`debug`モードを有効化しておらず、レスポンスボディは`"Internal Server Error"`という固定文字列のみでスタックトレース・SQL文字列・内部パス等は一切含まれず、認証済みの本人操作の範囲内でDBの整合性が崩れることもない（コミット前にエラーとなるため書き込みは反映されない）ため、情報漏洩・データ破壊・認可バイパスのいずれにも該当しない。従って本タスクを差し戻す理由にはしないが、クリーンな422/400を返せるよう、必須フィールドは`ProjectUpdate`側で「送られたら空にできない」ことを表現する（例: 該当フィールドを`str | None`ではなく非Optionalにする、または`IntegrityError`を捕捉して400番台に変換する）ことを推奨する。
+  - `uv run pytest -v`は63件全てpass（新規`tests/test_projects.py`のPATCH関連8件含む、既存への回帰なし）、`uv run ruff check`も違反なし。コード変更は行っていない（確認・実地検証のみ）。
+- 性能エバリュエーターのフィードバック: 承認。`uv run pytest -v`は63件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なし。`app/schemas.py`・`app/routers/projects.py`・`tests/test_projects.py`を確認し、受け入れ条件4点それぞれについて対応するテストが存在し実際にパスしていることを確認した。
+  - 「案件の各項目（ステータス含む）を更新できる」: `test_update_project_updates_fields`（name・rewardの複数フィールド同時更新、未更新項目が元の値のまま保持されること）、`test_update_project_can_clear_nullable_field`（deadlineをnullでクリア）、`test_update_project_without_status_change_has_no_warning`（memo単独更新）、および各種status更新テストで、statusを含む複数フィールドが更新可能なことが確認できている。実装（`update_data = payload.model_dump(exclude_unset=True)`をループして`setattr`）はフィールド非依存の汎用ロジックであり、代表的なフィールドでの検証で妥当と判断した。
+  - 「状態遷移グラフに基づき明確な逆行と判定される変更を行うと、200とともに警告フィールドが返る」: `test_update_project_status_backward_transition_returns_warning`（納品済み→契約中）で200・`warning`にfrom/to両方の文字列が含まれることまで検証済み。
+  - 「順当な遷移（隣接・飛び越え・見送りへの分岐を含む）では警告フィールドは含まれない」: `test_update_project_status_forward_transition_has_no_warning`のparametrizeで、同一ステータス（提案中→提案中）・隣接（提案中→契約中）・飛び越え（提案中→納品済み）・分岐（提案中→見送り、契約中→見送り）の5パターン全てで`warning`が含まれない（または`None`）ことを確認済み。
+  - 「完了→見送りのような枝分かれ先同士の遷移では警告フィールドは含まれない」: `test_update_project_status_branch_to_branch_transition_has_no_warning`（完了→見送り）で確認済み。
+  - 境界値確認: `check_backward_transition`への呼び出し順序（更新前`project.status`→新`status`）が`setattr`より前であること、`status`が更新対象に含まれない場合・新旧同一の場合に呼び出し自体がスキップされること（`test_update_project_without_status_change_has_no_warning`、および同一ステータスのparametrizeケース）を実装・テスト両面で確認した。
+  - セキュリティエバリュエーターがMedium/参考事項として指摘した「`ProjectUpdate`の必須フィールド（name等）にnullを渡すとIntegrityErrorが捕捉されずHTTP 500になる」点について、`TestClient`（`raise_server_exceptions=False`）で実際に`PATCH /projects/{id}`へ`{"name": null}`を送信して再現確認した。レスポンスは`500 Internal Server Error`（本文`"Internal Server Error"`固定文字列のみ）であり、セキュリティエバリュエーターの指摘内容と一致する。ただし本タスクの受け入れ条件4点はいずれもこの必須フィールドnull送信のケースを対象としておらず、既存のテストスイートにもこのケースをカバーするテストは存在しないが、受け入れ条件外であるため今回はテスト不足として差し戻しの理由にはしない。セキュリティエバリュエーター同様、情報漏洩やデータ破壊（コミット前にIntegrityErrorとなるため書き込みは反映されない）には該当しないと判断した。クリーンな422/400を返すための対応（非Optional化またはIntegrityErrorの捕捉）を推奨する点はセキュリティエバリュエーターの提言に同意する。
+  - 不足・懸念点: 受け入れ条件4点はすべて対応するテストで裏付けられている。上記の必須フィールドnull送信の挙動は受け入れ条件外の参考情報として記録するに留める。コード変更は行っていない（確認・実地検証のみ）。
 - 差し戻し回数: 0
 
 ### タスク: Task CRUD一式
