@@ -140,3 +140,18 @@ class HourlyRateRead(BaseModel):
     reward: int
     total_work_hours: float
     hourly_rate: float | None = None
+
+
+class CompanyBase(BaseModel):
+    name: str
+
+
+class CompanyCreate(CompanyBase):
+    pass
+
+
+class CompanyRead(CompanyBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    is_deleted: bool

@@ -468,7 +468,7 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: Company CRUD一式
-- status: 未着手
+- status: 完了
 - 概要: 選考先企業の登録・一覧取得・詳細取得・論理削除ができるようにする。
 - 受け入れ条件:
   - [ ] 企業を登録できる
@@ -476,8 +476,25 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - [ ] 企業詳細取得では自テーブルの情報のみが返り、配下の選考ステップ情報は含まれない
   - [ ] 企業を削除すると is_deleted が true になり、以降の一覧・詳細取得結果に含まれなくなる
   - [ ] 存在しない企業idを指定した場合はエラー（404等）が返る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`git diff`/`git status`で変更範囲が`app/routers/companies.py`（新規）・`app/schemas.py`（`CompanyBase`/`CompanyCreate`/`CompanyRead`追加）・`app/main.py`（`companies.router`追加のみ）・`tests/test_companies.py`（新規）であることを確認したうえで、以下を検証した。
+  - **認証**: `app/main.py`で`verify_api_key`がFastAPIアプリ全体のグローバル依存関係として登録されており、`companies.router`はその後に`include_router`されているだけで独自の認証バイパス経路は追加していない。実際に`test_endpoints_require_api_key`（APIキー無しで401）がpassすることを`pytest`実行で確認済み。`verify_api_key`自体（`app/auth.py`）は前タスクから変更なく、`secrets.compare_digest`による定数時間比較・fail closed設計のまま。
+  - **mass assignment**: `CompanyCreate(CompanyBase)`は`name`のみを持ち、`id`・`is_deleted`は含まれない。`create_company`は`models.Company(**payload.model_dump())`でモデルを生成しており、`is_deleted`はDBカラムのデフォルト（`default=False, server_default=false()`）に委ねられextra入力から上書きされない。`test_create_company_rejects_mass_assignment_of_is_deleted`で`is_deleted=True`を送っても`False`のまま生成されることを確認済み。`CompanyRead`は独立した出力スキーマであり、入力スキーマ（`CompanyCreate`）とは分離されている。
+  - **SQLインジェクション**: `app/routers/companies.py`は生SQL文字列結合を一切使わず、全クエリが`db.query(models.Company).filter(...)`のSQLAlchemy ORM経由。ユーザー入力（`name`）をログ出力・外部コマンドに渡す箇所もない。
+  - **論理削除の徹底**: 一覧（`list_companies`）・詳細（`_get_active_company_or_404`経由の`get_company`）ともに`models.Company.is_deleted.is_(False)`フィルタが存在し、`delete_company`も`company.is_deleted = True`のみでレコードを物理削除する`db.delete()`等は使われていない。`test_list_companies_excludes_deleted`・`test_get_company_detail_not_found_after_deletion`・`test_delete_company_marks_is_deleted_and_excludes_from_list`・`test_delete_company_is_idempotent_not_found_on_second_call`がいずれもpassし、削除済み企業が一覧・詳細のどちらからも参照できないことを確認済み。
+  - **詳細取得の情報漏洩（配下の選考ステップ）**: `models.Company`に`relationship`は定義されておらず（`app/models.py`のdocstring通りProject系/選考系ドメインは意図的に無関係）、`CompanyRead`のフィールドも`name`/`id`/`is_deleted`のみで`interview_steps`等は含まれない。`get_company`のSQLも`Company`単体へのクエリでJOINは行っていない。`test_get_company_detail_does_not_include_child_interview_step_info`がpassすることを確認済み。
+  - **エラーハンドリング**: 存在しない/削除済みIDに対しては`HTTPException(404, detail="Company not found")`のみを返し、スタックトレースや内部パス、SQLクエリ文字列は含まれない。FastAPIの`debug`モードやSQLAlchemy engineの`echo=True`も有効化されていない（前タスクからの評価と変化なし）。
+  - **既存パターンからの逸脱有無**: `app/routers/projects.py`と1対1で比較し、`_get_active_project_or_404`と同型の`_get_active_company_or_404`ヘルパー、`response_model`の使い分け、POST/GET一覧/GET詳細/DELETEの実装構造いずれも既存パターンを踏襲しており、認証・論理削除・スキーマ分離の観点で逸脱は見られなかった。
+  - **CORS・シークレット管理**: 本タスクの差分にCORS関連の変更はなく、`CORSMiddleware`は引き続き未導入（既存タスクからの評価と同じく安全側のデフォルト、フロントエンド/CORS設定は別タスクで対応予定）。APIキー・DB接続情報のハードコードはなく、`tests/test_companies.py`の`TEST_API_KEY = "test-secret-key"`はテスト専用値で`monkeypatch.setenv`経由のみに使われログ出力もない。
+  - `pytest tests/test_companies.py`を実行し10件すべてpassすることを確認済み。
+- 性能エバリュエーターのフィードバック: 承認。`uv run pytest -v`で126件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なしを確認した。`app/routers/companies.py`・`app/schemas.py`（`CompanyBase`/`CompanyCreate`/`CompanyRead`）・`app/main.py`（`companies.router`のinclude_router）・`tests/test_companies.py`（10件）を確認し、受け入れ条件5点それぞれに対応するテストが存在し実際にパスしていることを確認した。
+  - 「企業を登録できる」: `test_create_company_reflects_input_in_response`でPOST→201・name反映・`is_deleted=False`・id採番を確認済み。
+  - 「企業一覧取得ではis_deleted=falseの企業のみが返る」: `test_list_companies_excludes_deleted`で削除済みIDが一覧から除外され未削除IDのみ含まれることを確認済み。
+  - 「企業詳細取得では自テーブルの情報のみが返り、配下の選考ステップ情報は含まれない」: `test_get_company_detail_does_not_include_child_interview_step_info`でレスポンスボディに`interview_steps`キーが存在しないことを確認済み。`models.Company`に`relationship`定義がなくJOINも行われておらず実装とも整合している。
+  - 「企業を削除するとis_deletedがtrueになり、以降の一覧・詳細取得結果に含まれなくなる」: `test_delete_company_marks_is_deleted_and_excludes_from_list`（一覧から除外）と`test_get_company_detail_not_found_after_deletion`（詳細取得404）の2テストで一覧・詳細両方の除外を確認済み。加えて`test_delete_company_is_idempotent_not_found_on_second_call`で2回目のDELETEも404になることを確認済み。
+  - 「存在しない企業idを指定した場合はエラー（404等）が返る」: `test_get_company_detail_not_found_for_unknown_id`・`test_delete_company_not_found_for_unknown_id`で確認済み。
+  - 認証: `test_endpoints_require_api_key`でAPIキーなしのGET一覧が401になることを確認済み。グローバル依存関係（`Depends(verify_api_key)`）の仕組み自体は`tests/test_auth.py`で網羅済みであり、既存承認済みタスク（Project CRUD等）と同一の検証パターンを踏襲しているため妥当と判断した。
+  - mass assignment: `test_create_company_rejects_mass_assignment_of_is_deleted`で`is_deleted=True`を入力してもDBデフォルトの`False`のまま生成されることを確認済み。
+  - 不足・懸念点は見当たらなかった。受け入れ条件5点はすべて対応するテストで裏付けられており、pytest・ruffともに全通過。
 - 差し戻し回数: 0
 
 ### タスク: InterviewStep作成・参照・削除エンドポイント
