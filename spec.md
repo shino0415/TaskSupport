@@ -434,15 +434,37 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: 時給換算エンドポイント
-- status: 未着手
+- status: 完了
 - 概要: 案件の固定報酬額を配下タスクの合計稼働時間で割った時給換算値を返せるようにする。
 - 受け入れ条件:
-  - [ ] 案件の時給換算結果が、報酬額と配下タスクの合計稼働時間から算出されて返る
-  - [ ] is_deleted=true のタスク・稼働ログは合計稼働時間の計算対象に含まれない
-  - [ ] 配下タスクの合計稼働時間が0の場合でも、エラーで落ちずに一貫したレスポンスが返る
-  - [ ] 進行中（終了時刻未設定）のログの扱いが一貫している
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 案件の時給換算結果が、報酬額と配下タスクの合計稼働時間から算出されて返る
+  - [x] is_deleted=true のタスク・稼働ログは合計稼働時間の計算対象に含まれない
+  - [x] 配下タスクの合計稼働時間が0の場合でも、エラーで落ちずに一貫したレスポンスが返る
+  - [x] 進行中（終了時刻未設定）のログの扱いが一貫している
+- 実装メモ（技術判断とその理由）:
+  - **進行中ログ（ended_at IS NULL）の扱い**: 合計稼働時間の集計対象から除外する（現在時刻までの経過時間としては計算しない）。理由: 終了時刻が確定していないログを「現在時刻までの経過」として含めると、同じ案件に対するGETのたびに時給換算値が変動し続け、一覧のキャッシュや比較が困難になる。また稼働時間は「`ended_at - started_at`で都度計算する」という既存方針（WorkLogテーブル設計）と平仄を合わせ、両者が確定しているログのみを信頼できる実績として扱う方が一貫性がある。
+  - **合計稼働時間が0の場合の`hourly_rate`の値**: `null`を返す（0円/時ではなく、無限大でもない）。理由: 0で割ると数学的に未定義であり、`0`を返すと「時給0円」という誤った実績を示すことになる。無限大はJSONの数値型として表現できず文字列化するとクライアント側の型処理が複雑になる。`null`は「まだ計算不能（稼働実績なし）」であることを明確に表せる。
+  - レスポンススキーマ（`HourlyRateRead`）は`project_id`・`reward`・`total_work_hours`・`hourly_rate`の4項目とした。
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`app/routers/projects.py`（`get_hourly_rate`差分）・`app/schemas.py`（`HourlyRateRead`追加分）・`app/models.py`・`app/auth.py`・`app/main.py`・`tests/test_hourly_rate.py`（新規）を確認し、`uv run pytest -v`（116件全てpass、既存への回帰なし）・`uv run ruff check`（違反なし）で裏付けを取った。
+  - **認証**: `get_hourly_rate`は`projects.router`（`prefix="/projects"`）に定義されており、`app/main.py`の`FastAPI(dependencies=[Depends(verify_api_key)])`というグローバル依存関係をそのまま継承する。エンドポイント自体・ルーター自体に個別`dependencies`によるバイパス・上書きはない（grep差分で確認）。`test_hourly_rate_requires_api_key`でAPI KeyなしのGETが401になることを実地確認済み。`verify_api_key`自体（fail-closed・`secrets.compare_digest`による定数時間比較）に変更はない。
+  - **インジェクション**: `db.query(models.WorkLog).join(models.Task, models.WorkLog.task_id == models.Task.id).filter(...)`はSQLAlchemy ORM経由で完全にパラメータ化されており、生SQL文字列結合は一切ない。ユーザー入力（`project_id`のパスパラメータのみ）がログ出力や外部コマンドに渡っている箇所もなく、`platform`・`memo`等のTEXTカラムはこのエンドポイントで参照すらされていない。
+  - **mass assignment**: 本エンドポイントはGET専用でリクエストボディ用スキーマを持たず、レスポンススキーマ`HourlyRateRead`（`project_id`/`reward`/`total_work_hours`/`hourly_rate`の4フィールドのみ、`from_attributes`指定もなくコンストラクタ引数として明示的に値を渡している）は入力とは独立している。mass assignmentの入力経路自体が存在しない。
+  - **論理削除の徹底**: JOINクエリのfilterに`models.Task.is_deleted.is_(False)`と`models.WorkLog.is_deleted.is_(False)`の両方が含まれており、親プロジェクトも`_get_active_project_or_404`（`Project.is_deleted.is_(False)`）で判定される。`test_hourly_rate_excludes_deleted_tasks_and_work_logs`で「同一タスク内の削除済みログ」「削除済みタスク配下の（削除フラグの立っていない）ログ」の両方が集計から除外され、合計が1時間・時給10000円になることを実地検証済み。DELETE相当の操作はこのエンドポイントには存在せず（GETのみ）、物理削除の懸念もない。
+  - **情報漏洩**: レスポンス（`HourlyRateRead`）は`project_id`・`reward`・`total_work_hours`・`hourly_rate`という集計値4項目のみを返し、配下タスクのid・name・status・memoや稼働ログの`started_at`/`ended_at`/`memo`等の個別明細は一切含まれない。親案件詳細取得（`GET /projects/{id}`）が配下task情報を含まない設計と同様、集計エンドポイントとしても子リソースの詳細情報を漏らさない設計になっている。
+  - **0除算・null処理**: `hourly_rate = project.reward / total_work_hours if total_work_hours > 0 else None`により、`total_work_hours == 0`の場合は除算自体を行わず`None`を返すため`ZeroDivisionError`は発生しない。`total_seconds = sum(... for log in completed_logs if log.started_at is not None)`により、万一`started_at`が`NULL`のレコードが混入していても`TypeError`（`None`と`datetime`の減算）は起きず単に加算対象から除外される（フェイルセーフ）。例外が発生してスタックトレースやSQLがレスポンスに漏れる経路はない。`test_hourly_rate_zero_total_hours_returns_consistent_response_without_error`・`test_hourly_rate_zero_total_hours_when_no_tasks`で200・`hourly_rate=None`のレスポンスを実地確認済み。
+  - **エラーハンドリング**: 存在しない/削除済みプロジェクトIDに対しては`_get_active_project_or_404`が固定文字列`detail="Project not found"`の404を返すのみで、内部パス・SQLクエリ文字列・スタックトレースの漏洩はない。`test_hourly_rate_not_found_for_unknown_project_id`・`test_hourly_rate_not_found_for_deleted_project`で確認済み。
+  - **[技術判断の確認] 進行中ログ（ended_at IS NULL）を合計稼働時間の集計から除外する設計**: セキュリティ上の懸念はないと判断する。除外対象の判定は`WorkLog.is_deleted.is_(False)`という既存の論理削除フィルタと独立した条件（`ended_at.isnot(None)`）であり、論理削除の徹底を弱めるものではない。またこの判断によって非表示になるのは「進行中ログの経過時間」という集計上の一値のみで、個別ログの内容（`started_at`等）が別経路で漏れるわけでもない。`test_hourly_rate_running_log_excluded_from_total`で実地検証済み。
+  - **[技術判断の確認] 合計稼働時間0の場合に`hourly_rate`をnullで返す設計**: セキュリティ上の懸念はないと判断する。0や無限大を返す代替案と比較して、`null`はクライアント側の型処理を複雑にせず、かつ「時給0円」という誤情報を示すこともない。数値型の不正な値（`Infinity`等、JSON非準拠）がレスポンスに混入するリスクを避けている点でむしろ堅牢な設計。
+  - **CORS・シークレット管理**: 本タスクの差分にCORS関連の変更はなく、`CORSMiddleware`は引き続き未導入（既存タスクからの評価と同じく安全側のデフォルト）。APIキー・DB接続情報のハードコードはなく、`tests/test_hourly_rate.py`の`TEST_API_KEY = "test-secret-key"`はテスト専用値で`monkeypatch.setenv`経由のみに使われログ出力もない。
+  - コード変更は行っていない（確認・実地検証のみ）。
+- 性能エバリュエーターのフィードバック: 承認。`uv run pytest -v`は116件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なし。`app/schemas.py`（`HourlyRateRead`）・`app/routers/projects.py`（`get_hourly_rate`）・`tests/test_hourly_rate.py`を確認し、受け入れ条件4点それぞれについて対応するテストが存在し実際にパスしていることを確認した。
+  - 「案件の時給換算結果が、報酬額と配下タスクの合計稼働時間から算出されて返る」: `test_hourly_rate_computed_from_reward_and_total_task_hours`でreward=10000・1時間の稼働ログ2件（合計2時間）から`total_work_hours=2.0`・`hourly_rate=5000.0`が算出されることを確認済み。
+  - 「is_deleted=true のタスク・稼働ログは合計稼働時間の計算対象に含まれない」: `test_hourly_rate_excludes_deleted_tasks_and_work_logs`で、(a) 有効なタスク内の削除済みWorkLog（3時間）、(b) 削除済みタスク配下の（フラグ自体は立っていない）WorkLog（5時間）の両パターンが除外され、有効な1時間分のみが集計される（`total_work_hours=1.0`・`hourly_rate=10000.0`）ことを確認済み。
+  - 「配下タスクの合計稼働時間が0の場合でも、エラーで落ちずに一貫したレスポンスが返る」: `test_hourly_rate_zero_total_hours_returns_consistent_response_without_error`（タスクはあるが稼働ログなし）・`test_hourly_rate_zero_total_hours_when_no_tasks`（タスク自体なし）の両方で200・`total_work_hours=0`・`hourly_rate=None`が返ることを確認済み。実装（`hourly_rate = reward / total_work_hours if total_work_hours > 0 else None`）は0除算を発生させない構造になっており、セキュリティエバリュエーターが承認した技術判断（0円という誤情報を避けるためnullを返す）と整合している。
+  - 「進行中（終了時刻未設定）のログの扱いが一貫している」: `test_hourly_rate_running_log_excluded_from_total`で、完了済み1時間ログ＋進行中ログ（`ended_at`未設定）が混在する場合でも`total_work_hours`が1.0のまま変化しないことを確認済み。実装は`WorkLog.ended_at.isnot(None)`で進行中ログをクエリ段階から除外しており、GETのたびに値が変動する不安定な挙動にならないことをコードレベルでも確認した。セキュリティエバリュエーターが承認した技術判断（進行中ログは集計から除外）とも整合している。
+  - 境界値・エッジケース確認（本役割の観点）: 論理削除の除外は「同一タスク内の削除ログ」「削除済みタスク配下のログ」の2パターンともテストされている。時給換算エンドポイントに親子関係の詳細情報混入はない（`HourlyRateRead`は`project_id`/`reward`/`total_work_hours`/`hourly_rate`の集計値4項目のみで、配下タスク・稼働ログの個別明細を含まない）ことをスキーマ定義から確認した。認証（`test_hourly_rate_requires_api_key`）・404（`test_hourly_rate_not_found_for_unknown_project_id`・`test_hourly_rate_not_found_for_deleted_project`）も確認済み。
+  - 参考（ブロッキングではない軽微な指摘）: 「進行中ログのみが存在し完了済みログが0件」という組み合わせ（`total_work_hours`が0になる具体的な原因の一つとして依頼元から名指しされたパターン）を単体で明示的に検証するテストケースは存在しない。ただし、これは「進行中ログは集計から除外される」（`test_hourly_rate_running_log_excluded_from_total`で検証済み）と「完了済みログが0件なら合計は0でnullを返す」（`test_hourly_rate_zero_total_hours_returns_consistent_response_without_error`で検証済み）という既にテスト済みの2つの挙動から論理的に導かれる帰結であり、新たなコードパスを踏むものではないため、差し戻し理由にはしない。テストカバレッジの一貫性向上のため、余裕があれば専用ケースの追加を推奨する程度に留める。
+  - 不足・懸念点: 受け入れ条件4点全てが対応するテストで裏付けられている。上記の軽微な指摘を除き懸念なし。コード変更は行っていない（確認・実地検証のみ）。
 - 差し戻し回数: 0
 
 ### タスク: Company CRUD一式

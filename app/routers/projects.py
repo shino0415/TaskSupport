@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.database import get_db
 from app.schemas import (
+    HourlyRateRead,
     ProjectCreate,
     ProjectPatchResponse,
     ProjectRead,
@@ -81,3 +82,39 @@ def delete_project(project_id: int, db: Session = Depends(get_db)) -> None:
     project = _get_active_project_or_404(db, project_id)
     project.is_deleted = True
     db.commit()
+
+
+@router.get("/{project_id}/hourly-rate", response_model=HourlyRateRead)
+def get_hourly_rate(project_id: int, db: Session = Depends(get_db)) -> HourlyRateRead:
+    project = _get_active_project_or_404(db, project_id)
+
+    # 進行中（ended_at IS NULL）のログは、終了時刻が未確定で稼働時間が変動し
+    # 続けてしまうため合計時間の計算対象から除外する（完了済みログのみ集計）。
+    completed_logs = (
+        db.query(models.WorkLog)
+        .join(models.Task, models.WorkLog.task_id == models.Task.id)
+        .filter(
+            models.Task.project_id == project_id,
+            models.Task.is_deleted.is_(False),
+            models.WorkLog.is_deleted.is_(False),
+            models.WorkLog.ended_at.isnot(None),
+        )
+        .all()
+    )
+    total_seconds = sum(
+        (log.ended_at - log.started_at).total_seconds()
+        for log in completed_logs
+        if log.started_at is not None
+    )
+    total_work_hours = total_seconds / 3600
+
+    # 合計稼働時間が0の場合、0除算を避けるためhourly_rateはnullを返す
+    # （0円/時と誤解されうる0や、JSONで表現できない無限大を避けるため）。
+    hourly_rate = project.reward / total_work_hours if total_work_hours > 0 else None
+
+    return HourlyRateRead(
+        project_id=project.id,
+        reward=project.reward,
+        total_work_hours=total_work_hours,
+        hourly_rate=hourly_rate,
+    )

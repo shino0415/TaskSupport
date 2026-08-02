@@ -133,3 +133,10 @@ class WorkLogRead(BaseModel):
     ended_at: datetime | None = None
     memo: str | None = None
     is_deleted: bool
+
+
+class HourlyRateRead(BaseModel):
+    project_id: int
+    reward: int
+    total_work_hours: float
+    hourly_rate: float | None = None
