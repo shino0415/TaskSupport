@@ -180,14 +180,41 @@ def test_update_project_updates_fields(client):
     assert body["client_name"] == "テストクライアント"
 
 
-def test_update_project_can_clear_nullable_field(client):
-    project_id = create_project(client, deadline="2026-03-01")
+@pytest.mark.parametrize(
+    "field,initial_value",
+    [
+        ("deadline", "2026-03-01"),
+        ("memo", "初期メモ"),
+    ],
+)
+def test_update_project_can_clear_nullable_field(client, field, initial_value):
+    project_id = create_project(client, **{field: initial_value})
 
     response = client.patch(
-        f"/projects/{project_id}", json={"deadline": None}, headers=AUTH_HEADERS
+        f"/projects/{project_id}", json={field: None}, headers=AUTH_HEADERS
     )
     assert response.status_code == 200
-    assert response.json()["deadline"] is None
+    assert response.json()[field] is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", None),
+        ("client_name", None),
+        ("status", None),
+        ("reward", None),
+        ("applied_date", None),
+        ("platform", None),
+    ],
+)
+def test_update_project_rejects_explicit_null_for_required_field(client, field, value):
+    project_id = create_project(client)
+
+    response = client.patch(
+        f"/projects/{project_id}", json={field: value}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 422
 
 
 def test_update_project_not_found_for_unknown_id(client):

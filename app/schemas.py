@@ -5,15 +5,26 @@ mass assignment対策として、作成用スキーマには is_deleted 等の�
 """
 
 from datetime import date
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.status_transitions import PROJECT_STATUS_GRAPH
 
 # ステータス集合はapp.status_transitionsのグラフ定義を単一の情報源とする
 # （ここで独自に列挙すると、グラフ側だけ更新された際に不整合が起きるため）。
 ProjectStatus = Literal[*PROJECT_STATUS_GRAPH]
+
+# DB上nullable=FalseなProjectのカラム（PATCHで明示的なnullを許可しない項目）。
+# deadline/memoはnullable=TrueのためPATCHでのnullクリアを許可する。
+_PROJECT_REQUIRED_UPDATE_FIELDS = (
+    "name",
+    "client_name",
+    "status",
+    "reward",
+    "applied_date",
+    "platform",
+)
 
 
 class ProjectBase(BaseModel):
@@ -47,6 +58,20 @@ class ProjectUpdate(BaseModel):
     deadline: date | None = None
     platform: str | None = None
     memo: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_for_required_fields(self) -> Self:
+        # 未指定（exclude_unset対象外）は許可するが、必須項目（DB nullable=False）
+        # に明示的なnullを送った場合はIntegrityError(500)ではなく422で弾く。
+        null_required_fields = [
+            field
+            for field in _PROJECT_REQUIRED_UPDATE_FIELDS
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if null_required_fields:
+            fields = ", ".join(null_required_fields)
+            raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
+        return self
 
 
 class ProjectPatchResponse(ProjectRead):
