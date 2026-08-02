@@ -5,16 +5,24 @@ mass assignment対策として、作成用スキーマには is_deleted 等の�
 """
 
 from datetime import date, datetime
+from datetime import date as _Date
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from app.status_transitions import PROJECT_STATUS_GRAPH, TASK_STATUS_GRAPH
+from app.status_transitions import (
+    INTERVIEW_STEP_PREP_STATUS_GRAPH,
+    INTERVIEW_STEP_RESULT_GRAPH,
+    PROJECT_STATUS_GRAPH,
+    TASK_STATUS_GRAPH,
+)
 
 # ステータス集合はapp.status_transitionsのグラフ定義を単一の情報源とする
 # （ここで独自に列挙すると、グラフ側だけ更新された際に不整合が起きるため）。
 ProjectStatus = Literal[*PROJECT_STATUS_GRAPH]
 TaskStatus = Literal[*TASK_STATUS_GRAPH]
+InterviewStepPrepStatus = Literal[*INTERVIEW_STEP_PREP_STATUS_GRAPH]
+InterviewStepResult = Literal[*INTERVIEW_STEP_RESULT_GRAPH]
 
 # DB上nullable=FalseなProjectのカラム（PATCHで明示的なnullを許可しない項目）。
 # deadline/memoはnullable=TrueのためPATCHでのnullクリアを許可する。
@@ -154,4 +162,30 @@ class CompanyRead(CompanyBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    is_deleted: bool
+
+
+class InterviewStepBase(BaseModel):
+    type: str
+    # フィールド名が"date"のため、素の`date`型を直接注釈に使うと、クラス本体の
+    # 実行順序（値の代入 → 注釈評価の順）でフィールド名自身が型名を上書きしてしまい
+    # `date | None`評価時にTypeErrorになる。別名importの`_Date`で回避する。
+    date: _Date | None = None
+    memo: str | None = None
+
+
+class InterviewStepCreate(InterviewStepBase):
+    # 新規追加される選考ステップは、常にグラフの起点（未着手の状態）から始まる
+    # のが自然なため、デフォルト値を設定しクライアントに毎回の指定を求めない。
+    prep_status: InterviewStepPrepStatus = "準備中"
+    result: InterviewStepResult = "未定"
+
+
+class InterviewStepRead(InterviewStepBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_id: int
+    prep_status: str
+    result: str
     is_deleted: bool
