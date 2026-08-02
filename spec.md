@@ -535,16 +535,38 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 1
 
 ### タスク: InterviewStep更新エンドポイント
-- status: 未着手
+- status: 完了
 - 概要: 選考ステップの項目更新と、prep_status・result双方の状態遷移グラフに基づく逆行遷移時の警告付与を実装する（resultは未定→通過・不通過の分岐構造）。
 - 受け入れ条件:
-  - [ ] 選考ステップの各項目を更新できる
-  - [ ] prep_statusを逆行させて更新すると、200とともに警告フィールドが返る
-  - [ ] resultを未定より前に戻すような明確な逆行を行うと、200とともに警告フィールドが返る
-  - [ ] 通過→不通過のような枝分かれ先同士の遷移では警告フィールドは含まれない
-  - [ ] 順当な遷移では警告フィールドは含まれない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 選考ステップの各項目を更新できる
+  - [x] prep_statusを逆行させて更新すると、200とともに警告フィールドが返る
+  - [x] resultを未定より前に戻すような明確な逆行を行うと、200とともに警告フィールドが返る
+  - [x] 通過→不通過のような枝分かれ先同士の遷移では警告フィールドは含まれない
+  - [x] 順当な遷移では警告フィールドは含まれない
+- 実装メモ（技術判断とその理由）:
+  - **1つのPATCHでprep_status・resultの2つの状態遷移グラフを独立判定する実装（確定: 個別に判定し、複数警告時は1つのwarning文字列に結合）**: `app/routers/interview_steps.py`の`update_interview_step`で、`INTERVIEW_STEP_PREP_STATUS_GRAPH`・`INTERVIEW_STEP_RESULT_GRAPH`それぞれに対し`check_backward_transition`を個別に呼び出し、両方が警告を返した場合は`" / "`で連結して単一の`warning: str | None`フィールドに格納する。`ProjectPatchResponse`・`TaskPatchResponse`が既に`warning: str | None`という単一文字列の型で確立されているため、InterviewStepだけ`list[str] | None`等の別型にするとクライアント側のレスポンス処理が項目ごとに分岐して煩雑になる（既存PatchResponse群との一貫性を優先）。将来的にwarningの発生源（prep_status由来かresult由来か）をクライアントが機械的に区別する要件が生じた場合は、`prep_status_warning`・`result_warning`のような個別フィールドへの分割が代替案になりうるが、現時点の受け入れ条件はwarningフィールドの有無のみを要求しており、文字列内にfrom/to両方のステータス名が含まれていればテストで十分検証できるため、シンプルさを優先し単一文字列結合とした。
+  - 既存の`app/routers/projects.py`（`update_project`）・`app/routers/tasks.py`（`update_task`）のPATCHパターン（`ProjectUpdate`/`TaskUpdate`の`model_validator`による必須フィールド明示null拒否、`exclude_unset=True`によるPATCHセマンティクス、`check_backward_transition`の呼び出し順序）をそのまま踏襲した。`InterviewStepUpdate`の必須項目（DB上`nullable=False`）は`type`/`prep_status`/`result`、nullクリア許可項目は`date`/`memo`。
+  - `tests/test_interview_steps.py`にPATCH関連テスト18件を追加（全項目更新、date/memoのnullクリア、必須項目への明示null送信で422、存在しないid、prep_status単独の逆行/順当/同一遷移、result単独の逆行/順当/分岐遷移、prep_status・result同時逆行時の警告文字列結合、ステータス変更なしでwarningなし）。
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`git diff`で変更範囲が`app/schemas.py`（`InterviewStepUpdate`/`InterviewStepPatchResponse`追加）・`app/routers/interview_steps.py`（`update_interview_step`追加）・`tests/test_interview_steps.py`（テスト18件追加）・`spec.md`のみであることを確認したうえで、以下を検証した。
+  - **認証**: `PATCH /interview-steps/{id}`は個別のdependenciesを持たないが、`app/main.py`で`verify_api_key`が`FastAPI(dependencies=[Depends(verify_api_key)])`としてアプリ全体のグローバル依存関係に登録されており、新規追加された本エンドポイントも自動的に対象になる（実地検証: `X-API-Key`ヘッダーなしでPATCHを送信し401を確認）。`verify_api_key`自体は`secrets.compare_digest`による定数時間比較を継続使用しており、単純な`==`比較への後退はない。
+  - **mass assignment**: `InterviewStepUpdate`スキーマに`id`・`company_id`・`is_deleted`フィールドは定義されておらず、ルータ側も`payload.model_dump(exclude_unset=True)`で得たキーのみを`setattr`しているため、これらのフィールドはPydantic側で黙って無視される。実地検証として`{"id": 999, "company_id": 88888, "is_deleted": True, "type": "改ざん"}`をPATCHで送信したところ、`type`のみ反映され`id`・`company_id`・`is_deleted`は元の値のまま変化しなかったことを確認した。レスポンススキーマも`InterviewStepPatchResponse`（`InterviewStepRead`を継承）として出力専用に分離されており、入力スキーマと混同していない。
+  - **SQLインジェクション**: `update_interview_step`はSQLAlchemy ORM（`db.query`によるフィルタ、`setattr`によるモデル属性更新、`db.commit`）のみを使用しており生SQL文字列結合はない。`memo`に`'; DROP TABLE interview_step; --`のような文字列を送信して実地検証したところ、単なるTEXTデータとして保存され、後続の一覧取得・テーブル状態に異常は見られなかった。
+  - **論理削除の徹底**: 更新対象の取得は`_get_active_interview_step_or_404`経由で`is_deleted.is_(False)`フィルタを通っており、論理削除済みレコードをPATCHで復活・改ざんできない。PATCH自体は`is_deleted`を操作しない（上記mass assignment項目参照）。
+  - **必須フィールドへの明示null送信**: `InterviewStepUpdate`の`model_validator`が`type`/`prep_status`/`result`への明示的null送信を422で拒否することを確認（テスト3件+実地検証、DBの`nullable=False`カラムと整合）。`date`/`memo`はnullable=Trueカラムに対応し、nullクリアが許可される設計も`app/models.py`の列定義と一致している。
+  - **状態遷移警告ロジック**: `prep_status`・`result`それぞれについて、更新データに当該フィールドが含まれかつ現在値と異なる場合にのみ`check_backward_transition`を個別に呼び出しており、既存の`INTERVIEW_STEP_PREP_STATUS_GRAPH`・`INTERVIEW_STEP_RESULT_GRAPH`（`app/status_transitions.py`で確定済み、本タスクでの変更なし）を正しく再利用している。2グラフが完全に独立して判定されるため、一方の判定がもう一方に影響しない設計を確認した。
+  - **" / "区切りの警告結合について**: 情報表現として妥当と判断する。結合対象の`from_status`/`to_status`は`InterviewStepPrepStatus`/`InterviewStepResult`という固定Literal型（`INTERVIEW_STEP_PREP_STATUS_GRAPH`/`INTERVIEW_STEP_RESULT_GRAPH`のキー由来）に制約されており、自由入力の`type`/`memo`のような任意文字列は警告メッセージに含まれない。そのため区切り文字` / `自体が万一ステータス名に含まれていて2つの警告の境界が曖昧になる、といったログ偽装・メッセージ混入系のリスクはない。またこの警告文字列はクライアントへの表示用メッセージであり、認可判定や後続のロジック分岐に使われるトークンでもないため、単一文字列への結合は情報漏洩やなりすましのリスクを生まない。既存`ProjectPatchResponse`/`TaskPatchResponse`との型的一貫性を優先する設計判断も、セキュリティ上のトレードオフは伴わない。
+  - **エラーハンドリング**: 存在しないidへのPATCHは404、不正なLiteral値（例: `prep_status`に未定義の文字列）は422で、いずれもFastAPI標準のバリデーションエラー形式のみを返し、スタックトレースや内部パス、SQLクエリ文字列の漏洩は確認されなかった。
+  - **CORS・シークレット管理**: 本タスクの差分にCORS関連の変更はなく、`CORSMiddleware`は引き続き未導入（既存タスクからの評価と同じく安全側のデフォルト、フロントエンド/CORS設定は別タスクで対応予定）。APIキー・DB接続情報のハードコードはなく、`tests/test_interview_steps.py`の`TEST_API_KEY = "test-secret-key"`はテスト専用値で`monkeypatch.setenv`経由のみに使われログ出力もない。
+  - `uv run pytest tests/test_interview_steps.py`で31件全てpassすることを確認済み。
+- 性能エバリュエーターのフィードバック: 承認する。`uv run pytest -v`は157件全てpass（既存テストへの回帰なし）、`uv run ruff check`も違反なし。`app/schemas.py`（`InterviewStepUpdate`/`InterviewStepPatchResponse`）、`app/routers/interview_steps.py`（`update_interview_step`）、`tests/test_interview_steps.py`（PATCH関連18件、作成・一覧含め全体31件）を確認し、受け入れ条件5点を以下の通りテストで裏付け済みと判断した。
+  - 「各項目を更新できる」: `test_update_interview_step_updates_fields`（type/memo）、`test_update_interview_step_can_clear_nullable_field`（date/memoのnullクリア）、各status系テストでのprep_status/result更新で網羅。
+  - 「prep_status逆行でwarning付き200」: `test_update_interview_step_prep_status_backward_transition_returns_warning`（完了→準備中）で確認。
+  - 「result逆行でwarning付き200」: `test_update_interview_step_result_backward_transition_returns_warning`（通過→未定）で確認。
+  - 「通過⇔不通過など枝分かれ先同士でwarningなし」: `test_update_interview_step_result_branch_to_branch_transition_has_no_warning`（通過→不通過）で確認。逆方向（不通過→通過）は純粋関数レベルの`tests/test_status_transitions.py::test_result_unrelated_branch_no_warning`で両方向とも確認済み。
+  - 「順当な遷移でwarningなし」: prep_status（同一/隣接/飛び越え）・result（同一/分岐先1/分岐先2）を`parametrize`で網羅。
+  - 境界値（同一・隣接・飛び越え・逆行・枝分かれ）はエンドポイントレベルでも概ね網羅されており、純粋関数レベルでも別途カバーされている。論理削除済みレコードへのPATCHが404になることは既存の`_get_active_interview_step_or_404`経由の挙動として妥当（本タスクの差分に新規の論理削除周りの変更はなく、既存の企業/選考ステップ論理削除テストと矛盾なし）。
+  - **指摘事項（非ブロッキング）**: `test_update_interview_step_both_prep_status_and_result_backward_returns_combined_warning`は、prep_status・result同時逆行時に`body["warning"]`へ4つのステータス名（完了/準備中/通過/未定）が全て含まれることをsubstringアサーションで検証しているが、承認済みの結合仕様である`" / "`区切り自体を直接検証するアサーション（例: `" / " in body["warning"]`や`body["warning"].split(" / ")`の要素数確認）が無い。そのため、仮に実装が区切り文字なしで連結する、または別の区切り文字（例: `", "`）に変わる退行が起きても、4つの部分文字列が引き続き含まれる限りこのテストはpassしてしまい、区切り文字の退行を検知できない。ただし本項目は正式な受け入れ条件そのものではなく実装メモレベルの技術判断（結合仕様）であり、結合機能自体（両警告のfrom/to情報が失われず反映されること）は検証されているため、完了のブロッカーとはしない。将来テストを追加する際は`" / "`区切りの厳密な検証を推奨する（テストコード自体の追加はgeneratorの役割のため本評価では追記しない）。
+  - **追記（軽微な追加修正）**: 上記指摘を受け、`test_update_interview_step_both_prep_status_and_result_backward_returns_combined_warning`を`body["warning"] == f"{expected_prep_status_warning} / {expected_result_warning}"`という完全一致アサーションに変更し、`" / "`区切り自体の退行を検知できるようにした。実装コード（`app/routers/interview_steps.py`・`app/schemas.py`）の変更はなくテスト強化のみのため、セキュリティ・性能評価のやり直しは不要と判断した。
 - 差し戻し回数: 0
 
 ### タスク: 選考ステップ横断一覧エンドポイント（upcoming）

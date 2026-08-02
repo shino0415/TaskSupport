@@ -175,6 +175,200 @@ def test_list_interview_steps_not_found_for_deleted_company(client):
     assert response.status_code == 404
 
 
+# --- PATCH /interview-steps/{id} ---
+
+
+def test_update_interview_step_updates_fields(client):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id)
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"type": "二次面接", "memo": "更新後メモ"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "二次面接"
+    assert body["memo"] == "更新後メモ"
+    # 更新していない項目は元の値のまま
+    assert body["date"] == "2026-03-01"
+
+
+@pytest.mark.parametrize("field", ["date", "memo"])
+def test_update_interview_step_can_clear_nullable_field(client, field):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id)
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}", json={field: None}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()[field] is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("type", None),
+        ("prep_status", None),
+        ("result", None),
+    ],
+)
+def test_update_interview_step_rejects_explicit_null_for_required_field(client, field, value):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id)
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}", json={field: value}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 422
+
+
+def test_update_interview_step_not_found_for_unknown_id(client):
+    response = client.patch(
+        "/interview-steps/99999", json={"type": "二次面接"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 404
+
+
+def test_update_interview_step_prep_status_backward_transition_returns_warning(client):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id, prep_status="完了")
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"prep_status": "準備中"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prep_status"] == "準備中"
+    assert body["warning"] is not None
+    assert "完了" in body["warning"]
+    assert "準備中" in body["warning"]
+
+
+@pytest.mark.parametrize(
+    "from_status,to_status",
+    [
+        ("準備中", "準備中"),  # 同一
+        ("準備中", "準備万端"),  # 隣接
+        ("準備中", "完了"),  # 飛び越え
+    ],
+)
+def test_update_interview_step_prep_status_forward_transition_has_no_warning(
+    client, from_status, to_status
+):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id, prep_status=from_status)
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"prep_status": to_status},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prep_status"] == to_status
+    assert body.get("warning") is None
+
+
+def test_update_interview_step_result_backward_transition_returns_warning(client):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id, result="通過")
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}", json={"result": "未定"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"] == "未定"
+    assert body["warning"] is not None
+    assert "通過" in body["warning"]
+    assert "未定" in body["warning"]
+
+
+@pytest.mark.parametrize(
+    "from_result,to_result",
+    [
+        ("未定", "未定"),  # 同一
+        ("未定", "通過"),  # 分岐先1
+        ("未定", "不通過"),  # 分岐先2
+    ],
+)
+def test_update_interview_step_result_forward_transition_has_no_warning(
+    client, from_result, to_result
+):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id, result=from_result)
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"result": to_result},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"] == to_result
+    assert body.get("warning") is None
+
+
+def test_update_interview_step_result_branch_to_branch_transition_has_no_warning(client):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id, result="通過")
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"result": "不通過"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"] == "不通過"
+    assert body.get("warning") is None
+
+
+def test_update_interview_step_both_prep_status_and_result_backward_returns_combined_warning(
+    client,
+):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(
+        client, company_id, prep_status="完了", result="通過"
+    )
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"prep_status": "準備中", "result": "未定"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["warning"] is not None
+    # prep_status・result両方の逆行警告メッセージが" / "区切りで結合されていることを
+    # 直接検証する（区切り文字自体の退行を検知するため、部分一致だけに頼らない）
+    expected_prep_status_warning = (
+        "完了 から 準備中 への変更です。意図的な変更か確認してください。"
+    )
+    expected_result_warning = (
+        "通過 から 未定 への変更です。意図的な変更か確認してください。"
+    )
+    assert body["warning"] == f"{expected_prep_status_warning} / {expected_result_warning}"
+
+
+def test_update_interview_step_without_status_change_has_no_warning(client):
+    company_id = create_company(client)
+    interview_step_id = create_interview_step(client, company_id)
+
+    response = client.patch(
+        f"/interview-steps/{interview_step_id}",
+        json={"memo": "更新メモ"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json().get("warning") is None
+
+
 # --- DELETE /interview-steps/{id} ---
 
 

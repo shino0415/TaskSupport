@@ -189,3 +189,32 @@ class InterviewStepRead(InterviewStepBase):
     prep_status: str
     result: str
     is_deleted: bool
+
+
+# DB上nullable=FalseなInterviewStepのカラム（PATCHで明示的なnullを許可しない項目）。
+# date/memoはnullable=TrueのためPATCHでのnullクリアを許可する。
+_INTERVIEW_STEP_REQUIRED_UPDATE_FIELDS = ("type", "prep_status", "result")
+
+
+class InterviewStepUpdate(BaseModel):
+    type: str | None = None
+    date: _Date | None = None
+    prep_status: InterviewStepPrepStatus | None = None
+    result: InterviewStepResult | None = None
+    memo: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_for_required_fields(self) -> Self:
+        null_required_fields = [
+            field
+            for field in _INTERVIEW_STEP_REQUIRED_UPDATE_FIELDS
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if null_required_fields:
+            fields = ", ".join(null_required_fields)
+            raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
+        return self
+
+
+class InterviewStepPatchResponse(InterviewStepRead):
+    warning: str | None = None

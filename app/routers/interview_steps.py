@@ -1,14 +1,21 @@
-"""選考ステップ（InterviewStep）の作成・参照・削除エンドポイント。
-
-更新（PATCH、prep_status/resultの逆行遷移警告含む）は別タスクで扱う。
-"""
+"""選考ステップ（InterviewStep）の作成・参照・更新・削除エンドポイント。"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
-from app.schemas import InterviewStepCreate, InterviewStepRead
+from app.schemas import (
+    InterviewStepCreate,
+    InterviewStepPatchResponse,
+    InterviewStepRead,
+    InterviewStepUpdate,
+)
+from app.status_transitions import (
+    INTERVIEW_STEP_PREP_STATUS_GRAPH,
+    INTERVIEW_STEP_RESULT_GRAPH,
+    check_backward_transition,
+)
 
 router = APIRouter(tags=["interview-steps"])
 
@@ -70,6 +77,48 @@ def list_interview_steps(
             models.InterviewStep.is_deleted.is_(False),
         )
         .all()
+    )
+
+
+@router.patch("/interview-steps/{interview_step_id}", response_model=InterviewStepPatchResponse)
+def update_interview_step(
+    interview_step_id: int, payload: InterviewStepUpdate, db: Session = Depends(get_db)
+) -> InterviewStepPatchResponse:
+    interview_step = _get_active_interview_step_or_404(db, interview_step_id)
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    # prep_status・resultは独立した2つの状態遷移グラフを持つため、それぞれ
+    # 個別に警告判定する。両方が同時に逆行した場合、警告メッセージを" / "区切りで
+    # 1つのwarning文字列にまとめる（他のPatchResponseとの一貫性のためwarningの型は
+    # str | Noneのまま維持し、list型に変えない技術判断。詳細はspec.md参照）。
+    warnings: list[str] = []
+    if (
+        "prep_status" in update_data
+        and update_data["prep_status"] != interview_step.prep_status
+    ):
+        prep_status_warning = check_backward_transition(
+            INTERVIEW_STEP_PREP_STATUS_GRAPH,
+            interview_step.prep_status,
+            update_data["prep_status"],
+        )
+        if prep_status_warning is not None:
+            warnings.append(prep_status_warning)
+    if "result" in update_data and update_data["result"] != interview_step.result:
+        result_warning = check_backward_transition(
+            INTERVIEW_STEP_RESULT_GRAPH, interview_step.result, update_data["result"]
+        )
+        if result_warning is not None:
+            warnings.append(result_warning)
+    warning = " / ".join(warnings) if warnings else None
+
+    for field, value in update_data.items():
+        setattr(interview_step, field, value)
+    db.commit()
+    db.refresh(interview_step)
+
+    return InterviewStepPatchResponse(
+        **InterviewStepRead.model_validate(interview_step).model_dump(), warning=warning
     )
 
 
