@@ -570,14 +570,55 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: 選考ステップ横断一覧エンドポイント（upcoming）
-- status: 未着手
+- status: 完了
 - 概要: 全企業を横断して、日付が近い順に選考ステップを一覧できるようにし、締切管理を可能にする。
 - 受け入れ条件:
-  - [ ] 全企業の選考ステップが、予定日の近い順（昇順）に並んで返る
-  - [ ] is_deleted=true の選考ステップは含まれない
-  - [ ] 予定日が未設定の選考ステップの扱いが一貫している
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 全企業の選考ステップが、予定日の近い順（昇順）に並んで返る
+  - [x] is_deleted=true の選考ステップは含まれない
+  - [x] 予定日が未設定の選考ステップの扱いが一貫している
+- 実装メモ（技術判断とその理由）:
+  - **予定日（date）が未設定の選考ステップの扱い（確定: 除外せず、一覧の末尾にまとめて含める）**: 締切管理という目的上、日付未設定のステップは「近い将来の締切」ではないため先頭には来ないが、除外してしまうと「まだ日程未定だが対応が必要な選考」がこの横断一覧から一切見えなくなり、締切管理ツールとしての網羅性が損なわれる。そのためSQLレベルで`ORDER BY (date IS NULL), date ASC`とし、日付ありのステップを昇順で先に並べたうえで、日付未設定のステップを（順序内で互いの前後関係は問わず）末尾にまとめて含める方式を採用した。
+  - `GET /interview-steps/upcoming`は既存の`app/routers/interview_steps.py`に追加し、レスポンススキーマは既存の`InterviewStepRead`をそのまま再利用した（一覧専用の新規スキーマは不要と判断）。
+  - **ルート定義順序について**: 本エンドポイントはGETのみで、既存の`/interview-steps/{interview_step_id}`はPATCH・DELETEのみが定義されておりGETは存在しないため、HTTPメソッドが異なり実際にはパスの競合は発生しない（FastAPIはメソッド単位でルートを解決するため）。念のため`list_upcoming_interview_steps`は既存のPATCH/DELETEより前の位置（`list_interview_steps`の直後）に定義し、可読性・保守性の観点でも固定パスを動的パスより前に置く慣習に沿わせた。
+  - `tests/test_interview_steps.py`に5件追加（予定日昇順ソート、複数企業を横断すること、論理削除済みステップの除外、日付未設定ステップが末尾に含まれること、認証必須）。
+- セキュリティエバリュエーターのフィードバック: Critical/High相当の問題なし。承認する。`git diff`で変更範囲が`app/routers/interview_steps.py`（`list_upcoming_interview_steps`追加のみ）・`tests/test_interview_steps.py`（テスト5件追加）であることを確認したうえで、以下を検証した。
+  - **認証**: `list_upcoming_interview_steps`は個別の`dependencies`指定を持たず、`app/main.py`の`FastAPI(dependencies=[Depends(verify_api_key)])`というグローバル依存関係をそのまま継承する（他の`interview_steps.router`配下エンドポイントと同型）。実地検証として`uv run pytest tests/test_interview_steps.py -v`を実行し、新規`test_upcoming_interview_steps_requires_api_key`（APIキーなしで401）を含む36件全てpassすることを確認した。`app/auth.py`の`verify_api_key`自体は前タスクから変更なく、fail-closed設計・`secrets.compare_digest`による定数時間比較・`/docs`等の無効化も維持されている。
+  - **ルート定義順序（生成者の報告の裏付け）**: `grep`で`app/routers/interview_steps.py`・`app/routers/companies.py`配下の全ルートデコレータを確認したところ、`GET /interview-steps/{interview_step_id}`という単体取得エンドポイント自体がそもそも存在せず（PATCH/DELETEのみ定義）、`GET /interview-steps/upcoming`とHTTPメソッドが重複するルートは存在しないことを確認した。FastAPI/Starletteはメソッドとパスの組み合わせで個別にルートを解決するため、パスセグメント`upcoming`が動的パラメータ`{interview_step_id}`と文字列として一致する可能性自体は問題にならない（GETという同一メソッドでの競合が存在しない以上、定義順序に依らず期待通りに解決される）。generatorの報告は正確と判断した。念のため実際に`uv run pytest`でエンドポイントが期待通り200を返すことも確認済み。
+  - **SQLインジェクション**: `list_upcoming_interview_steps`は`db.query(models.InterviewStep).filter(models.InterviewStep.is_deleted.is_(False)).order_by(models.InterviewStep.date.is_(None), models.InterviewStep.date.asc()).all()`という実装で、`ORDER BY`句を含め生SQL文字列結合は一切なく、全てSQLAlchemyのORM式（`Column.is_()`/`.asc()`）経由でパラメータ化されている。ユーザー入力を受け取るパラメータは存在しない（クエリパラメータ・パスパラメータともになし）ため、この観点でのインジェクション経路はそもそも存在しない。
+  - **論理削除の徹底**: `models.InterviewStep.is_deleted.is_(False)`フィルタが存在し、`test_upcoming_interview_steps_excludes_deleted`で論理削除済みステップが一覧から除外されることを実地検証済み（`uv run pytest`でpass）。物理削除（`DELETE FROM`相当）は本エンドポイントに存在しない（読み取り専用）。
+  - **予定日未設定（NULL）ステップを除外せず末尾に含める設計判断について**: 情報漏洩や意図しないデータ露出には該当しないと判断した。理由は次の2点。(1) 本APIは本人専用ツールであり、全企業・全選考ステップは同一ユーザーの所有データである。このエンドポイントは`is_deleted=false`の自身のデータのみを返しており、他ユーザーのデータや本来非公開であるべき情報を露出させるものではない。(2) 除外せず含める設計は、企業配下の一覧取得エンドポイント（`GET /companies/{company_id}/interview-steps`）で元々アクセス可能な情報（日付未設定のステップも含む）を、横断的に集約して見せているだけであり、新たな情報の露出経路を追加するものではない。`spec.md`の実装メモに記載された設計判断・トレードオフも一貫しており、受け入れ条件「予定日が未設定の選考ステップの扱いが一貫している」を満たす。
+  - **レスポンススキーマ**: 既存の`InterviewStepRead`（`id`/`company_id`/`type`/`date`/`prep_status`/`result`/`memo`/`is_deleted`）をそのまま再利用しており、新規フィールドの追加・スキーマの緩和は無い。mass assignmentの懸念は無い（本エンドポイントは読み取り専用でリクエストボディも受け取らない）。
+  - **エラーハンドリング**: 本エンドポイントは404等の分岐を持たず、常に200・空配列を含むリストを返す実装であり、スタックトレースや内部パス、SQLクエリ文字列がレスポンスに含まれる経路はない。
+  - **CORS・シークレット管理**: 本タスクの差分にCORS関連の変更はなく、`CORSMiddleware`は引き続き未導入（安全側のデフォルト、フロントエンド/CORS設定は別タスクで対応予定）。APIキー・DB接続情報のハードコードや新規のログ出力もない。
+  - **補足（非ブロッキングの参考情報）**: 本エンドポイントは`Company.is_deleted`を一切チェックせず`InterviewStep`単体のみをクエリしているため、実地検証（`uv run pytest`外での手動テストコードによる検証、コード変更なし）したところ、企業を論理削除（`DELETE /companies/{id}`）した後もその企業配下の選考ステップ（`is_deleted=false`のまま）は本エンドポイントの一覧に引き続き表示されることを確認した。一方`GET /companies/{company_id}/interview-steps`は親企業が削除済みだと404になり、同じステップへ企業経由ではアクセスできなくなる。両者の間に「企業を削除した後もその配下データが別経路（横断一覧）では見え続ける」という一貫性の欠如があるが、(1) 本人専用ツールで同一所有者のデータであり認可バイパスではない、(2) 受け入れ条件「is_deleted=trueの選考ステップは含まれない」自体は満たしている、(3) 企業削除後に配下ステップを個別に整理するかは運用判断の余地があるため、Critical/High相当の問題とはしない。ただし「企業を削除したのに選考ステップの締切管理一覧には出続ける」という直感に反する挙動になりうるため、将来的に`join(models.Company).filter(models.Company.is_deleted.is_(False))`を追加する、または意図的な仕様として`spec.md`に明記することを推奨する。
+  - `uv run pytest tests/test_interview_steps.py -v`で36件全てpass（新規5件含む、既存への回帰なし）。
+- 性能エバリュエーターのフィードバック: 合格。実際に`uv run pytest -v`（プロジェクト全体）を実行し162件全てpass、warning出力は1件もないことを確認した（pyproject.tomlのpytest設定に`filterwarnings`指定は無く、warningが発生していれば通常表示されるはずだが該当なし）。既存テストへの回帰もなし。`uv run ruff check`も`All checks passed!`。受け入れ条件3点を実際にテストを実行して個別に確認した。
+  - 「全企業の選考ステップが予定日の近い順（昇順）に並んで返る」: `test_upcoming_interview_steps_sorted_by_date_ascending`（1企業内3件の日付昇順）と`test_upcoming_interview_steps_spans_multiple_companies`（2企業を横断した日付昇順）の両方でPASS。
+  - 「is_deleted=trueの選考ステップは含まれない」: `test_upcoming_interview_steps_excludes_deleted`でPASS。実装の`filter(models.InterviewStep.is_deleted.is_(False))`と一致。
+  - 「予定日が未設定の選考ステップの扱いが一貫している」: `test_upcoming_interview_steps_with_unset_date_are_included_at_the_end`で、日付未設定ステップが除外されず日付ありステップより後ろに位置することを確認しPASS。実装の`ORDER BY (date IS NULL), date ASC`および実装メモの技術判断と整合している。
+  - 認証必須（`test_upcoming_interview_steps_requires_api_key`）もPASS。
+  - テスト件数も報告通り（`tests/test_interview_steps.py`合計36件、うち`upcoming`関連新規5件）であることを`-v`出力で確認した。
+  - セキュリティエバリュエーターから参考情報として挙がっていた「企業を論理削除してもその配下の選考ステップがupcoming一覧に表示され続ける（`Company.is_deleted`未チェック）」という点は、本タスクの受け入れ条件3点（予定日昇順／論理削除ステップの除外／予定日未設定の扱いの一貫性）のいずれにも該当せず、かつセキュリティエバリュエーター自身も「本人専用ツールで認可バイパスに当たらずCritical/High相当ではない」と既に判定済みの非ブロッキング事項であるため、今回は差し戻し理由とはしなかった。将来的に企業横断の一貫性を仕様として明確にしたい場合は別タスク・別の受け入れ条件として扱うことを推奨する。
+  - 受け入れ条件が全てテストで裏付けられ、pytest・ruffともに問題なしのため、statusを「完了」に更新する。
+- 修正依頼への対応（企業論理削除後の一貫性の是正）: セキュリティエバリュエーターが「補足（非ブロッキングの参考情報）」として指摘していた、企業を論理削除（`DELETE /companies/{id}`）した後もその配下の選考ステップが`upcoming`一覧に表示され続ける問題について、`GET /companies/{company_id}/interview-steps`（親企業削除済みなら404）との一貫性を取るための修正依頼を受け対応した。
+  - `app/routers/interview_steps.py`の`list_upcoming_interview_steps`のクエリに`models.Company`とのJOIN（`InterviewStep.company_id == Company.id`）を追加し、`Company.is_deleted.is_(False)`のフィルタを`InterviewStep.is_deleted.is_(False)`と併せて適用するように変更した。これにより論理削除済み企業配下の選考ステップは`upcoming`一覧から除外される。
+  - `tests/test_interview_steps.py`に`test_upcoming_interview_steps_excludes_steps_of_deleted_company`を追加し、企業削除後にその配下ステップが一覧から除外され、他の有効な企業のステップは引き続き含まれることを検証した。
+  - `uv run pytest -v`は163件（新規1件含む）全てpass、warning出力なし。`uv run ruff check`も`All checks passed!`。既存テストへの回帰なし。
+  - statusをセキュリティ評価待ちに戻す。
+- セキュリティエバリュエーターのフィードバック（修正対応の再評価）: Critical/High相当の問題なし。承認する。`git diff`で今回の変更範囲が`app/routers/interview_steps.py`の`list_upcoming_interview_steps`への`models.Company`とのJOIN追加・`Company.is_deleted.is_(False)`フィルタ追加、および`tests/test_interview_steps.py`へのテスト1件追加のみであることを確認したうえで、以下を検証した。
+  - **JOINクエリのパラメータ化**: `db.query(models.InterviewStep).join(models.Company, models.InterviewStep.company_id == models.Company.id).filter(models.InterviewStep.is_deleted.is_(False), models.Company.is_deleted.is_(False))`はSQLAlchemyのORM式のみで構成されており、生SQL文字列結合は一切ない。パス・クエリパラメータともに存在せず、ユーザー入力を受け取る箇所自体が無いため、この観点でのSQLインジェクション経路はそもそも存在しない。
+  - **JOINによる行の重複・消失リスク**: `app/models.py`で`InterviewStep.company_id`は`ForeignKey("company.id")`かつ`nullable=False`、`Company.id`はPKであるため、この結合は各`InterviewStep`行に対して`Company`行がちょうど1件対応する多対1関係であり、fan-outによる行の重複や意図しない行消失は起こり得ない。
+  - **既存の論理削除フィルタ（`InterviewStep.is_deleted`）の継続動作**: 変更前と同じ条件式のまま`.filter()`内に維持されており、新規の`Company.is_deleted.is_(False)`とAND結合されている。既存の`test_upcoming_interview_steps_excludes_deleted`（ステップ単体の論理削除）と新規の`test_upcoming_interview_steps_excludes_steps_of_deleted_company`（企業の論理削除経由、他の有効企業のステップは引き続き含まれることも検証）の両方が実際に`uv run pytest`でpassすることを確認し、2つのフィルタが独立して機能していることを裏付けた。
+  - **受け入れ条件・他エンドポイントへの影響**: 3つの受け入れ条件（昇順ソート・is_deleted除外・日付未設定の扱い）を検証する既存テスト（`test_upcoming_interview_steps_sorted_by_date_ascending`／`test_upcoming_interview_steps_spans_multiple_companies`／`test_upcoming_interview_steps_with_unset_date_are_included_at_the_end`）は全てpassしたままで退行なし。`GET /companies/{company_id}/interview-steps`等の他エンドポイントのコードは今回の差分に含まれておらず無変更。今回の修正は、前回のセキュリティレビューで指摘した「企業削除後もupcoming一覧にはその配下ステップが表示され続ける」という一貫性の欠如を是正するものであり、退行ではなく改善と判断した。
+  - **認証・レスポンススキーマ・エラーハンドリング・CORS・シークレット管理**: 今回の差分に変更なし。`app/main.py`のグローバル`dependencies=[Depends(verify_api_key)]`は健在で、`list_upcoming_interview_steps`は個別`dependencies`指定なしでこれを継承する（`app/main.py`・`app/auth.py`を確認）。CORS関連コードもこの差分には含まれていない。
+  - `uv run pytest -v`（プロジェクト全体）で163件全てpass（新規1件含む、既存への回帰なし）、`uv run ruff check .`も`All checks passed!`であることを実地確認した。
+  - statusを「性能評価待ち」に更新する。
+- 性能エバリュエーターのフィードバック（修正対応の再評価）: 合格。`git diff`ではなく実行環境そのものを対象に、`uv run pytest -v`（プロジェクト全体）を実行し163件全てpass、pytestの出力にwarnings summaryセクションは無く（DeprecationWarning等を含め）warning出力は1件も無いことを確認した（出力中に"warning"という文字列を含む行は`test_..._returns_warning`という既存のステータス警告ロジック検証用テスト名のみで、実際のwarning発生ではないことをgrepで裏付けた）。`uv run ruff check`も`All checks passed!`。
+  - 既存の受け入れ条件3点への回帰無し: `test_upcoming_interview_steps_sorted_by_date_ascending`・`test_upcoming_interview_steps_spans_multiple_companies`（予定日昇順）、`test_upcoming_interview_steps_excludes_deleted`（is_deleted除外）、`test_upcoming_interview_steps_with_unset_date_are_included_at_the_end`（予定日未設定の扱い）の4件がいずれもPASSすることを`-k upcoming`指定で個別実行して確認した。
+  - 今回の修正意図（削除済み企業配下の選考ステップがupcoming一覧から除外されること）: `test_upcoming_interview_steps_excludes_steps_of_deleted_company`がPASSしており、削除済み企業配下のステップ（`id_orphaned`）が一覧から除外される一方、別の有効な企業配下のステップ（`id_active`）は引き続き含まれることの両方を検証している。境界を無効側・有効側の両方でカバーしており、テストとして十分である。
+  - 実装（`app/routers/interview_steps.py`の`list_upcoming_interview_steps`）を確認し、`join(models.Company, models.InterviewStep.company_id == models.Company.id)`と`Company.is_deleted.is_(False)`フィルタが`InterviewStep.is_deleted.is_(False)`と併せてANDで適用されていることを実装メモ・セキュリティエバリュエーターの指摘通りと確認した。
+  - `uv run pytest tests/test_interview_steps.py -v -k upcoming`で6件（既存4件・新規1件・認証必須1件）全てPASS。
+  - 受け入れ条件が全てテストで裏付けられ、pytest・ruffともに問題なし、warningも無いため、statusを「完了」に更新する。
 - 差し戻し回数: 0
 
 ### タスク: 稼働ログ横断一覧エンドポイント（running）

@@ -175,6 +175,81 @@ def test_list_interview_steps_not_found_for_deleted_company(client):
     assert response.status_code == 404
 
 
+# --- GET /interview-steps/upcoming ---
+
+
+def test_upcoming_interview_steps_sorted_by_date_ascending(client):
+    company_id = create_company(client)
+    id_far = create_interview_step(client, company_id, type="最終面接", date="2026-05-01")
+    id_near = create_interview_step(client, company_id, type="書類選考", date="2026-03-10")
+    id_mid = create_interview_step(client, company_id, type="一次面接", date="2026-04-01")
+
+    response = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [s["id"] for s in response.json()]
+    assert ids.index(id_near) < ids.index(id_mid) < ids.index(id_far)
+
+
+def test_upcoming_interview_steps_spans_multiple_companies(client):
+    company_a = create_company(client, name="A社")
+    company_b = create_company(client, name="B社")
+    id_a = create_interview_step(client, company_a, date="2026-03-10")
+    id_b = create_interview_step(client, company_b, date="2026-03-01")
+
+    response = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [s["id"] for s in response.json()]
+    assert id_a in ids
+    assert id_b in ids
+    assert ids.index(id_b) < ids.index(id_a)
+
+
+def test_upcoming_interview_steps_excludes_deleted(client):
+    company_id = create_company(client)
+    id_deleted = create_interview_step(client, company_id, date="2026-01-01")
+    id_active = create_interview_step(client, company_id, date="2026-02-01")
+    client.delete(f"/interview-steps/{id_deleted}", headers=AUTH_HEADERS)
+
+    response = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [s["id"] for s in response.json()]
+    assert id_deleted not in ids
+    assert id_active in ids
+
+
+def test_upcoming_interview_steps_with_unset_date_are_included_at_the_end(client):
+    company_id = create_company(client)
+    id_no_date = create_interview_step(client, company_id, date=None)
+    id_dated = create_interview_step(client, company_id, date="2026-06-01")
+
+    response = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [s["id"] for s in response.json()]
+    assert id_no_date in ids
+    assert id_dated in ids
+    assert ids.index(id_dated) < ids.index(id_no_date)
+
+
+def test_upcoming_interview_steps_excludes_steps_of_deleted_company(client):
+    company_id = create_company(client)
+    id_orphaned = create_interview_step(client, company_id, date="2026-01-01")
+    client.delete(f"/companies/{company_id}", headers=AUTH_HEADERS)
+
+    other_company_id = create_company(client)
+    id_active = create_interview_step(client, other_company_id, date="2026-02-01")
+
+    response = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [s["id"] for s in response.json()]
+    assert id_orphaned not in ids
+    assert id_active in ids
+
+
+def test_upcoming_interview_steps_requires_api_key(client):
+    response = client.get("/interview-steps/upcoming")
+    assert response.status_code == 401
+
+
 # --- PATCH /interview-steps/{id} ---
 
 

@@ -80,6 +80,25 @@ def list_interview_steps(
     )
 
 
+@router.get("/interview-steps/upcoming", response_model=list[InterviewStepRead])
+def list_upcoming_interview_steps(db: Session = Depends(get_db)) -> list[models.InterviewStep]:
+    # 予定日(date)が未設定のステップは、締切管理という目的上「日程が近いもの」
+    # ではないため除外はせず、一覧の末尾にまとめて含める（並び順の一貫性のため、
+    # NULLかどうかを第一キー、dateを第二キーにして昇順ソートする）。
+    # 親企業が論理削除済みの場合、企業経由(GET /companies/{id}/interview-steps)では
+    # 404となり参照不能になるため、一貫性のため本エンドポイントでも除外する。
+    return (
+        db.query(models.InterviewStep)
+        .join(models.Company, models.InterviewStep.company_id == models.Company.id)
+        .filter(
+            models.InterviewStep.is_deleted.is_(False),
+            models.Company.is_deleted.is_(False),
+        )
+        .order_by(models.InterviewStep.date.is_(None), models.InterviewStep.date.asc())
+        .all()
+    )
+
+
 @router.patch("/interview-steps/{interview_step_id}", response_model=InterviewStepPatchResponse)
 def update_interview_step(
     interview_step_id: int, payload: InterviewStepUpdate, db: Session = Depends(get_db)
