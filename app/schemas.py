@@ -6,23 +6,18 @@ mass assignment対策として、作成用スキーマには is_deleted 等の�
 
 from datetime import date, datetime
 from datetime import date as _Date
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+# ステータス集合はapp.status_transitionsで定義したEnumを単一の情報源とする
+# （ここで独自に列挙すると、Enum側だけ更新された際に不整合が起きるため）。
 from app.status_transitions import (
-    INTERVIEW_STEP_PREP_STATUS_GRAPH,
-    INTERVIEW_STEP_RESULT_GRAPH,
-    PROJECT_STATUS_GRAPH,
-    TASK_STATUS_GRAPH,
+    InterviewStepPrepStatus,
+    InterviewStepResult,
+    ProjectStatus,
+    TaskStatus,
 )
-
-# ステータス集合はapp.status_transitionsのグラフ定義を単一の情報源とする
-# （ここで独自に列挙すると、グラフ側だけ更新された際に不整合が起きるため）。
-ProjectStatus = Literal[*PROJECT_STATUS_GRAPH]
-TaskStatus = Literal[*TASK_STATUS_GRAPH]
-InterviewStepPrepStatus = Literal[*INTERVIEW_STEP_PREP_STATUS_GRAPH]
-InterviewStepResult = Literal[*INTERVIEW_STEP_RESULT_GRAPH]
 
 # DB上nullable=FalseなProjectのカラム（PATCHで明示的なnullを許可しない項目）。
 # deadline/memoはnullable=TrueのためPATCHでのnullクリアを許可する。
@@ -197,8 +192,8 @@ class InterviewStepBase(BaseModel):
 class InterviewStepCreate(InterviewStepBase):
     # 新規追加される選考ステップは、常にグラフの起点（未着手の状態）から始まる
     # のが自然なため、デフォルト値を設定しクライアントに毎回の指定を求めない。
-    prep_status: InterviewStepPrepStatus = "準備中"
-    result: InterviewStepResult = "未定"
+    prep_status: InterviewStepPrepStatus = InterviewStepPrepStatus.準備中
+    result: InterviewStepResult = InterviewStepResult.未定
 
 
 class InterviewStepRead(InterviewStepBase):

@@ -675,3 +675,38 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - セキュリティエバリュエーターのフィードバック: (未評価)
 - 性能エバリュエーターのフィードバック: (未評価)
 - 差し戻し回数: 0
+
+## 型安全性リファクタリング（実装タスク一覧の外）
+
+新規のspec.mdタスクではなく、既存の完了済みタスク群（状態遷移警告ロジック、Project/Task/InterviewStepのステータス更新エンドポイント）を横断する型安全性の改善依頼として実施。
+
+- 背景: `app/schemas.py`で`ProjectStatus = Literal[*PROJECT_STATUS_GRAPH]`のように、状態遷移グラフ（辞書）のキーを`Literal[*...]`でアンパックして動的生成していたため、実行時（Pydanticバリデーション）は正しく動作する一方、静的型チェッカー（Pylance/Pyright）が「Literalの中身に変数は使えない」旨の警告を出し、`ProjectStatus`等を使う全箇所に警告が伝播していた。
+- 変更概要:
+  - `app/status_transitions.py`: `ProjectStatus`/`TaskStatus`/`InterviewStepPrepStatus`/`InterviewStepResult`の4つを`StrEnum`（`enum.StrEnum`）として新規定義し、`PROJECT_STATUS_GRAPH`等の既存4グラフはこれらのEnumをキー・値とする辞書に置き換えた（グラフの中身・遷移関係は変更していない、文字列リテラル→Enumメンバーへの置き換えのみ）。`check_backward_transition`/`_is_reachable`は、Enumキーの辞書・素の文字列どちらの引数でも動作するよう、PEP 695のジェネリック構文（`str`境界の型パラメータ）に変更した。
+    - 技術判断: 依頼文面では`class XxxStatus(str, Enum)`という多重継承が例示されていたが、その形だと（a）Python 3.11以降`str(member)`/`f"{member}"`が`"ProjectStatus.提案中"`のような表記になり警告メッセージの組み立てで問題になる、（b）プロジェクトのruff設定（`UP`ルール）が同パターンを検出し`enum.StrEnum`への置き換えを推奨する、という2点から、外部から観測できない実装の細部としてスタンダードライブラリの`StrEnum`（`class X(str, Enum)`と機能的に同等で、`__str__`が値をそのまま返す）を採用した。値・API契約・振る舞いに変更はない。
+  - `app/schemas.py`: `Literal[*GRAPH]`によるエイリアス定義を削除し、`app.status_transitions`で定義した4つのEnumをそのままimportして`ProjectStatus`等として使用する形に変更した。`InterviewStepCreate`のデフォルト値（`prep_status`/`result`）も、文字列リテラルからEnumメンバー（例: `InterviewStepPrepStatus.準備中`）に変更した。
+  - `app/models.py`: `Project.status`/`Task.status`/`InterviewStep.prep_status`/`InterviewStep.result`の型注釈を`Mapped[str]`から対応する`Mapped[ProjectStatus]`等に変更した。DB上のカラム型は従来通り`String`のままで、`sqlalchemy.Enum`型（CHECK制約が追加され挙動が変わる）には変更していない。あくまで型チェッカー向けの注釈変更のみで、DBスキーマ・マイグレーション・保存される値は変更なし。
+  - `app/routers/*.py`は変更なし（Enum(str)はDB書き込み・比較・JSON直列化のいずれにおいてもplain strと透過的に扱えることをテストで確認済み）。
+- 確認結果:
+  - `uv run pytest -v`: 既存170件全てpass、warning 0件。
+  - `uv run ruff check`: `All checks passed!`。
+  - `uvx pyright`で`app/schemas.py`・`app/status_transitions.py`・`app/routers/*.py`・`app/models.py`を静的チェックし、`Literal[*...]`に起因する警告が解消されたことを確認（残存する2件のエラーはこのリファクタリング以前から存在する無関係な既知事項: `InterviewStep.date`カラム名がPythonの`date`型と同名で型推論が自己参照になる件、`get_hourly_rate`内の`ended_at - started_at`の`Optional`演算に関する件）。
+  - 既存タスクの受け入れ条件・statusはこの変更により変えていない。
+- セキュリティエバリュエーターのフィードバック（横断的リファクタリングレビュー、Critical/High相当の問題なし）:
+  - 対象: `app/status_transitions.py`・`app/schemas.py`・`app/models.py`の変更差分（`git diff`）を確認し、`app/routers/projects.py`・`tasks.py`・`interview_steps.py`（Project/Task/InterviewStepの作成・更新エンドポイント）への影響を実機（`TestClient` + 生SQLite接続での確認）で検証した。
+  - **StrEnumのシリアライズ/DB永続化**: `enum.StrEnum`は`str`のサブクラスであり、`__str__`・f-string展開・`json.dumps`のいずれも`repr()`形式（`ProjectStatus.提案中`等）ではなく素の値（`提案中`）を返すことを確認した。実際に`POST /projects`→`PATCH /projects/{id}`（ステータス変更、逆行遷移含む）をTestClient経由で実行し、(1) JSONレスポンスの`status`フィールドとwarningメッセージ（`f"{from_status} から {to_status} への変更です..."`）がいずれも素の日本語文字列であり内部Enum表現が漏れていないこと、(2) SQLiteに直接接続してカラムの生値を確認し、DBに保存される値も`typeof=text`の素の文字列（`見送り`等）でありEnum表現が紛れ込んでいないこと、をそれぞれ確認した。
+  - **等価性・ハッシュ・辞書ルックアップ**: `StrEnum`メンバーは`str`と同じ`__eq__`/`__hash__`を持つため、DBから読み出した素の`str`（SQLAlchemyカラムは引き続き`String`型でEnum型に変更されていない）とPydanticが生成した`Enum`メンバーが混在しても、`PROJECT_STATUS_GRAPH`等のグラフ辞書のキー引きや`check_backward_transition`の比較（`to_status == from_status`等）が期待通り動作することを確認した（`GET /projects?status=...`のクエリパラメータでのフィルタ、`PATCH`時の`project.status`との比較のいずれも実機で正常動作を確認）。
+  - **認証・mass assignment・論理削除・CORS・生SQL**: この変更は型注釈とEnum定義のみで、`app/routers/*.py`・`app/auth.py`・`app/main.py`は無変更であることを`git diff --stat`で確認済み。認証は引き続きグローバル依存関係（`Depends(verify_api_key)`）が全ルーターに適用されたまま、Create/Update/Read各スキーマの分離（mass assignment対策）・`is_deleted=false`フィルタ・論理削除方式にも変更なし。生SQL文字列結合は導入されていない。
+  - **DB型注釈の妥当性**: `app/models.py`で`Mapped[ProjectStatus]`等に変更した一方、`mapped_column`自体は`String`型のままで`sqlalchemy.Enum`（CHECK制約付き）には変更していない点を確認した。これにより、DBレベルでの値の妥当性強制は導入時と変わらず（アプリケーション層のPydanticバリデーションのみに依存）だが、既存の設計・挙動を変更しないという今回のリファクタリングの目的（型チェッカー警告解消のみ）とは整合しており、新たな脆弱性の導入はない。
+  - `uv run pytest -v`（170 passed）・`uv run ruff check`（All checks passed!）を再実行し、generatorの報告内容を再現確認した。
+  - 総評: 型注釈のみの変更であり、認証・インジェクション・mass assignment・論理削除・CORS・シークレット管理のいずれの観点でも劣化は確認されなかった。Critical/High相当の指摘なし。既存タスクのstatusはこの評価により変更しない（横断的リファクタリングのレビューのため）。
+- 性能エバリュエーターのフィードバック（横断的リファクタリングの動作検証、合格）:
+  - 【判定】合格。`uv run pytest -v`・`uv run ruff check`いずれも問題なく、既存の受け入れ条件（ステータス遷移警告ロジックの5パターン、論理削除、親詳細の子情報非包含等）に回帰は無いことを確認した。既存タスクのstatusはこの評価により変更しない（横断的リファクタリングのレビューのため）。
+  - **pytest**: `uv run pytest -v`で170件全てPASSしたことを確認した。加えて新しい運用ルール（warning 1件でも差し戻し）に基づき`uv run pytest -v 2>&1 | grep -iE "warning"`で全出力を確認したが、ヒットしたのは`test_..._returns_warning`/`test_..._has_no_warning`/`test_..._backward_transition_returns_warning`等のテスト名文字列のみで、`warnings summary`セクション自体が出力されておらず、DeprecationWarning等の実際のwarningは1件も発生していないことを確認した（StrEnum化・PEP 695ジェネリック構文はいずれもPython 3.12ネイティブ機能であり、非推奨API由来のwarningを生む要素ではないことも`app/status_transitions.py`のソースで確認済み）。
+  - **ruff**: `uv run ruff check`で`All checks passed!`を確認した。`pyproject.toml`の`target-version = "py312"`・`requires-python = ">=3.12"`とPEP 695ジェネリック構文（`def f[StatusT: str](...)`）・`enum.StrEnum`の使用は整合しており、`select = ["E", "F", "I", "UP", "B"]`のいずれのルールにも抵触していない。
+  - **ステータス遷移警告ロジックの5パターン回帰確認（個別）**: `tests/test_status_transitions.py`が引数にEnum型ではなく素の文字列リテラル（例: `"提案中"`）を渡して`PROJECT_STATUS_GRAPH`等（キーが`ProjectStatus`等のEnumメンバー）を引いていることを確認した。これは`StrEnum`が`str`と同じ`__eq__`/`__hash__`を持つため辞書ルックアップが文字列・Enumメンバーどちらでも透過的に成立することの実証にもなっており、リファクタリング後もこのテストファイルの17件（Project: 同一/隣接/飛び越え/逆行/枝分かれ5パターン、Task・InterviewStep.prep_status: 分岐なしのため同一/隣接/飛び越え/逆行4パターン、InterviewStep.result: 深さ2のため同一/隣接/逆行/枝分かれ4パターン、それぞれグラフ構造上該当しないパターンは対象外という設計方針は既存タスクのフィードバックと同一）が全てPASSしていることを確認した。
+    - さらにルーター経由（実際のPATCHエンドポイント）でも、`tests/test_projects.py`の`test_update_project_status_forward_transition_has_no_warning`（同一・隣接・飛び越え相当をパラメータ化）・`test_update_project_status_backward_transition_returns_warning`・`test_update_project_status_branch_to_branch_transition_has_no_warning`・`test_update_project_without_status_change_has_no_warning`、`tests/test_tasks.py`・`tests/test_interview_steps.py`の同種テスト（prep_status/resultそれぞれの逆行・分岐先同士の遷移、および両方同時逆行時の複合warningメッセージ`test_update_interview_step_both_prep_status_and_result_backward_returns_combined_warning`）が全てPASSしていることを確認し、Enum化前と同じ5パターンの挙動が担保されていることを確かめた。
+  - **DB永続化・シリアライズの実挙動確認（コード変更なしの手動確認、テストへの追加要求ではなく念のための実機確認）**: スクラッチパッド上でテスト用一時SQLite DBを作成し、`POST /projects`→`PATCH /projects/{id}`（提案中→見送り→提案中の逆行を含む）をTestClient経由で実行した上で、DBファイルに直接`sqlite3`で接続し`typeof(status)`を確認したところ`text`型の素の文字列（`提案中`）が格納されており、`StrEnum`の`repr`（`ProjectStatus.提案中`等）がDBやJSONレスポンスに紛れ込んでいないことを確認した。警告メッセージも`"見送り から 提案中 への変更です。意図的な変更か確認してください。"`と、Enum表現ではなく素の日本語文字列で組み立てられていることを確認した。
+  - **論理削除・親詳細の子情報非包含・WorkLog・時給換算エンドポイントの回帰確認**: これらのテスト（`test_delete_*_marks_is_deleted_and_excludes_from_list`系、`test_get_*_detail_does_not_include_child_*_info`系、`test_start_work_log_allows_multiple_running_logs_for_same_task`・`test_start_work_log_allows_concurrent_logs_across_tasks_and_projects`、`test_hourly_rate_zero_total_hours_*`系等）はこのリファクタリングの変更範囲（`app/status_transitions.py`・`app/schemas.py`・`app/models.py`のステータス関連の型注釈のみ、`app/routers/*.py`は無変更）と直接関係しないが、`git diff --stat HEAD`で変更ファイルを確認した上で170件全件PASSにこれらが含まれていることを個別にログで確認し、意図しない副作用が無いことを確かめた。
+  - **不足の指摘**: 無し。今回のリファクタリングは型注釈・Enum定義のみで振る舞いの変更を伴わないため、新規に必要となるテストケースは見当たらない。
+  - コードは変更していない（`Read`のみで`Edit`は使用していない）。

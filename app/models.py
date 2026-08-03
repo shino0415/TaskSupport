@@ -10,6 +10,12 @@ from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Tex
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.status_transitions import (
+    InterviewStepPrepStatus,
+    InterviewStepResult,
+    ProjectStatus,
+    TaskStatus,
+)
 
 
 class Project(Base):
@@ -18,7 +24,9 @@ class Project(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     client_name: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False)
+    # DB上は素のTEXT/String型のまま（sqlalchemy.Enum型に変えるとCHECK制約が追加され
+    # 挙動が変わるため使わない）。Mapped[ProjectStatus]はあくまで型チェッカー向けの注釈。
+    status: Mapped[ProjectStatus] = mapped_column(String, nullable=False)
     reward: Mapped[int] = mapped_column(Integer, nullable=False)
     applied_date: Mapped[date] = mapped_column(Date, nullable=False)
     deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -37,7 +45,7 @@ class Task(Base):
         Integer, ForeignKey("project.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[TaskStatus] = mapped_column(String, nullable=False)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
@@ -76,8 +84,8 @@ class InterviewStep(Base):
     )
     type: Mapped[str] = mapped_column(String, nullable=False)
     date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    prep_status: Mapped[str] = mapped_column(String, nullable=False)
-    result: Mapped[str] = mapped_column(String, nullable=False)
+    prep_status: Mapped[InterviewStepPrepStatus] = mapped_column(String, nullable=False)
+    result: Mapped[InterviewStepResult] = mapped_column(String, nullable=False)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
