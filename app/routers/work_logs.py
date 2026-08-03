@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
-from app.schemas import WorkLogRead
+from app.schemas import RunningWorkLogRead, WorkLogRead
 
 router = APIRouter(tags=["work-logs"])
 
@@ -73,6 +73,38 @@ def list_work_logs(task_id: int, db: Session = Depends(get_db)) -> list[models.W
         .filter(models.WorkLog.task_id == task_id, models.WorkLog.is_deleted.is_(False))
         .all()
     )
+
+
+@router.get("/work-logs/running", response_model=list[RunningWorkLogRead])
+def list_running_work_logs(db: Session = Depends(get_db)) -> list[RunningWorkLogRead]:
+    # 進行中ログ自身の論理削除だけでなく、親Task・親Projectの論理削除も
+    # チェックする（upcomingエンドポイントで発覚した既知の教訓を踏まえた実装）。
+    rows = (
+        db.query(models.WorkLog, models.Task.name, models.Project.id, models.Project.name)
+        .join(models.Task, models.WorkLog.task_id == models.Task.id)
+        .join(models.Project, models.Task.project_id == models.Project.id)
+        .filter(
+            models.WorkLog.is_deleted.is_(False),
+            models.WorkLog.ended_at.is_(None),
+            models.Task.is_deleted.is_(False),
+            models.Project.is_deleted.is_(False),
+        )
+        .all()
+    )
+    return [
+        RunningWorkLogRead(
+            id=work_log.id,
+            task_id=work_log.task_id,
+            task_name=task_name,
+            project_id=project_id,
+            project_name=project_name,
+            started_at=work_log.started_at,
+            ended_at=work_log.ended_at,
+            memo=work_log.memo,
+            is_deleted=work_log.is_deleted,
+        )
+        for work_log, task_name, project_id, project_name in rows
+    ]
 
 
 @router.delete("/work-logs/{work_log_id}", status_code=status.HTTP_204_NO_CONTENT)

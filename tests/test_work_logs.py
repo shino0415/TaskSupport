@@ -241,6 +241,86 @@ def test_delete_work_log_is_idempotent_not_found_on_second_call(client):
     assert second_delete.status_code == 404
 
 
+# --- GET /work-logs/running ---
+
+
+def test_list_running_work_logs_returns_only_unstopped_logs(client):
+    project_id = create_project(client)
+    task_id = create_task(client, project_id)
+    running_id = start_work_log(client, task_id).json()["id"]
+    stopped_id = start_work_log(client, task_id).json()["id"]
+    client.patch(f"/work-logs/{stopped_id}/stop", headers=AUTH_HEADERS)
+
+    response = client.get("/work-logs/running", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [w["id"] for w in response.json()]
+    assert running_id in ids
+    assert stopped_id not in ids
+
+
+def test_list_running_work_logs_spans_multiple_projects_and_tasks(client):
+    project_id1 = create_project(client)
+    project_id2 = create_project(client)
+    task_id1 = create_task(client, project_id1)
+    task_id2 = create_task(client, project_id2)
+    running_id1 = start_work_log(client, task_id1).json()["id"]
+    running_id2 = start_work_log(client, task_id2).json()["id"]
+
+    response = client.get("/work-logs/running", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    ids = [w["id"] for w in response.json()]
+    assert running_id1 in ids
+    assert running_id2 in ids
+
+
+def test_list_running_work_logs_includes_task_and_project_identifiers(client):
+    project_id = create_project(client, name="横断テスト案件")
+    task_id = create_task(client, project_id, name="横断テストタスク")
+    running_id = start_work_log(client, task_id).json()["id"]
+
+    response = client.get("/work-logs/running", headers=AUTH_HEADERS)
+    body = next(w for w in response.json() if w["id"] == running_id)
+    assert body["task_id"] == task_id
+    assert body["task_name"] == "横断テストタスク"
+    assert body["project_id"] == project_id
+    assert body["project_name"] == "横断テスト案件"
+
+
+def test_list_running_work_logs_excludes_deleted_work_log(client):
+    project_id = create_project(client)
+    task_id = create_task(client, project_id)
+    running_id = start_work_log(client, task_id).json()["id"]
+    client.delete(f"/work-logs/{running_id}", headers=AUTH_HEADERS)
+
+    response = client.get("/work-logs/running", headers=AUTH_HEADERS)
+    assert running_id not in [w["id"] for w in response.json()]
+
+
+def test_list_running_work_logs_excludes_logs_of_deleted_task(client):
+    project_id = create_project(client)
+    task_id = create_task(client, project_id)
+    running_id = start_work_log(client, task_id).json()["id"]
+    client.delete(f"/tasks/{task_id}", headers=AUTH_HEADERS)
+
+    response = client.get("/work-logs/running", headers=AUTH_HEADERS)
+    assert running_id not in [w["id"] for w in response.json()]
+
+
+def test_list_running_work_logs_excludes_logs_of_deleted_project(client):
+    project_id = create_project(client)
+    task_id = create_task(client, project_id)
+    running_id = start_work_log(client, task_id).json()["id"]
+    client.delete(f"/projects/{project_id}", headers=AUTH_HEADERS)
+
+    response = client.get("/work-logs/running", headers=AUTH_HEADERS)
+    assert running_id not in [w["id"] for w in response.json()]
+
+
+def test_list_running_work_logs_requires_api_key(client):
+    response = client.get("/work-logs/running")
+    assert response.status_code == 401
+
+
 # --- 認証 ---
 
 

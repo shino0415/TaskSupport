@@ -622,13 +622,36 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: 稼働ログ横断一覧エンドポイント（running）
-- status: 未着手
+- status: 完了
 - 概要: 全案件・全タスクを横断して、現在進行中の稼働ログを一覧できるようにする。
 - 受け入れ条件:
-  - [ ] 終了時刻未設定かつ is_deleted=false の稼働ログが、全案件・全タスク横断で一覧取得できる
-  - [ ] 各ログがどのタスク・案件に属するかが結果から判別できる
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 終了時刻未設定かつ is_deleted=false の稼働ログが、全案件・全タスク横断で一覧取得できる
+  - [x] 各ログがどのタスク・案件に属するかが結果から判別できる
+- 実装メモ（技術判断とその理由）:
+  - **論理削除の3段チェック（確定: 直前タスクの教訓を最初から反映）**: `upcoming`エンドポイントで後から発覚した「親の論理削除状態を見ておらず削除済み親配下のデータが横断一覧に残り続ける」というバグを繰り返さないため、`list_running_work_logs`は最初から`WorkLog.is_deleted.is_(False)` かつ `WorkLog.ended_at.is_(None)` に加え、`Task`・`Project`それぞれとJOINして両方の`is_deleted.is_(False)`を同時にフィルタする実装にした。
+  - **レスポンス構造（確定: 新規スキーマ`RunningWorkLogRead`を新設し、task_id/project_idに加えtask_name/project_nameも含める）**: 「各ログがどのタスク・案件に属するかが結果から判別できる」という受け入れ条件を満たす最小要件はtask_id・project_idのID2つで足りるが、横断一覧という性質上、呼び出し側がIDだけを頼りに個別に`GET /tasks/{id}/work-logs`等へ追加問い合わせをして名前を引く手間を減らせるよう、既存の`WorkLogRead`のフィールド（id/task_id/started_at/ended_at/memo/is_deleted）に`task_name`・`project_id`・`project_name`を加えた専用スキーマ`RunningWorkLogRead`を`app/schemas.py`に新設した。`WorkLog`・`Task`・`Project`をJOINした複数カラムのタプル結果を単一のORMオブジェクトとして`from_attributes`で変換できないため、専用スキーマ側はJOIN結果からフィールドを手動で組み立てる実装とした。
+  - `GET /work-logs/running`は既存の`app/routers/work_logs.py`に追加した。ルート定義順序について、既存の動的パスは`PATCH /work-logs/{work_log_id}/stop`と`DELETE /work-logs/{work_log_id}`のみで、`GET /work-logs/{work_log_id}`（単体取得）自体が定義されていないため、`GET /work-logs/running`とHTTPメソッド単位で競合するルートはそもそも存在しない。念のため`list_running_work_logs`は既存のタスク別一覧`list_work_logs`の直後、動的パスの`delete_work_log`より前の位置に定義し、固定パスを動的パスより前に置く慣習に沿わせた。
+  - `tests/test_work_logs.py`に7件追加（進行中ログのみ返ること、複数案件・複数タスクを横断すること、レスポンスにtask_id/task_name/project_id/project_nameが含まれること、稼働ログ自体の論理削除の除外、削除済みタスク配下ログの除外、削除済み案件配下ログの除外、認証必須）。
+  - `uv run pytest`は170件全てpass（新規7件含む、既存への回帰なし）、`uv run ruff check`も`All checks passed!`。
+- セキュリティエバリュエーターのフィードバック:
+  - 【評価結果】Critical/High相当の問題なし。以下の観点を確認済み。
+    - **認証**: `GET /work-logs/running`は`work_logs.router`経由で`app.include_router`されており、`app.main`の`FastAPI(dependencies=[Depends(verify_api_key)])`によりアプリ全体にグローバル適用される`verify_api_key`の対象。個別routeにdependencyを明示していないが漏れではない。`verify_api_key`自体もヘッダー未指定・環境変数未設定はfail closed、比較は`secrets.compare_digest`で定数時間比較になっており妥当。`test_list_running_work_logs_requires_api_key`で401を確認するテストも追加されており実挙動と一致。
+    - **インジェクション**: 生SQL文字列結合は無く、`db.query(...).join(...).filter(...)`とSQLAlchemy ORMのみで完結。`platform`/`memo`等のユーザー入力もこのエンドポイントは受け取っておらず（パラメータなしGET）、注入経路は無い。
+    - **論理削除の徹底**: `WorkLog.is_deleted.is_(False)`に加え、`Task`・`Project`双方を`join`した上で`Task.is_deleted.is_(False)`・`Project.is_deleted.is_(False)`も同時にfilterしており、直前の`upcoming`タスクで発覚した「親の論理削除チェック漏れ」と同種の問題は無い。`delete_project`/`delete_task`の実装（`project.is_deleted = True; db.commit()`、`task.is_deleted = True; db.commit()`）も物理削除ではなくフラグ更新のみであることをソースで確認し、テスト`test_list_running_work_logs_excludes_logs_of_deleted_task`/`_deleted_project`/`_deleted_work_log`の3件がこの3段チェックを実際に検証している。
+    - **情報漏洩**: レスポンススキーマ`RunningWorkLogRead`は`id`/`task_id`/`task_name`/`project_id`/`project_name`/`started_at`/`ended_at`/`memo`/`is_deleted`のみで、`Project`の`client_name`・`reward`・`platform`・`memo`や`Task`側の`memo`など、このエンドポイントの目的（進行中ログがどのタスク・案件に属するか判別できること）に不要な項目は含まれておらず、既存の`WorkLogRead`と同等の`memo`（WorkLog自身のもの）以上の追加情報漏洩は無い。
+    - **mass assignment**: GET専用エンドポイントでリクエストボディ・更新系スキーマは存在せず該当なし。
+    - **ルート定義順序**: 既存ルートに`GET /work-logs/{work_log_id}`（単体取得）は存在せず、`GET /work-logs/running`と衝突しうる動的パスは無いことをソースで確認。念のため固定パスを動的パスより前に定義する配置になっている点も適切。
+    - **エラーハンドリング**: このエンドポイントは404/例外を投げるパスが無く（クエリが空でも200で空配列を返す設計）、スタックトレースや内部情報を露出する箇所は無い。
+  - 【軽微な所感（Critical/High未満、指摘としては計上しない）】`memo`カラムは自由記述のTEXTであり、将来的にこのAPIの結果をそのまま別ツールへ転記・ログ出力するような使い方をする場合はエスケープに注意（現状のFastAPI/JSONレスポンスとしては問題なし）。
+- 性能エバリュエーターのフィードバック: 合格。`uv run pytest -v`（プロジェクト全体）を実行し170件全てpass、既存テストへの回帰なしを確認した。pytestの出力にwarnings summaryセクションは無く、DeprecationWarning等を含め実際のwarning出力は1件も無かった（出力中の"warning"文字列を含む行は全て`test_..._returns_warning`/`test_..._has_no_warning`というステータス警告ロジック検証用の既存テスト名のみで、実際のwarning発生ではないことをgrepで確認済み）。`uv run ruff check`も`All checks passed!`。
+  - 受け入れ条件1（終了時刻未設定かつis_deleted=falseの稼働ログが全案件・全タスク横断で一覧取得できる）: `test_list_running_work_logs_returns_only_unstopped_logs`（進行中ログのみ返り停止済みログは除外）と`test_list_running_work_logs_spans_multiple_projects_and_tasks`（複数案件・複数タスクの進行中ログが両方含まれる）の2件がPASSしており裏付けられている。
+  - 受け入れ条件2（各ログがどのタスク・案件に属するかが結果から判別できる）: `test_list_running_work_logs_includes_task_and_project_identifiers`がPASSしており、レスポンスに`task_id`/`task_name`/`project_id`/`project_name`の4項目全てが含まれ、かつ値が実際のタスク名・案件名と一致することを検証している。
+  - 実装メモに記載された「論理削除の3段チェック」（WorkLog自身・Task・Project）は、`test_list_running_work_logs_excludes_deleted_work_log`／`test_list_running_work_logs_excludes_logs_of_deleted_task`／`test_list_running_work_logs_excludes_logs_of_deleted_project`の3件がそれぞれ独立して検証しており、直前の`upcoming`タスクで発覚した「親の論理削除チェック漏れ」の再発は無いことをテストで裏付け済み。`app/routers/work_logs.py`の`list_running_work_logs`実装（`models.Task`・`models.Project`とのJOIN＋`is_deleted.is_(False)`を3テーブル分AND条件でfilter）も実装メモ・テスト内容と一致していることをソースで確認した。
+  - `test_list_running_work_logs_requires_api_key`で認証必須（未指定時401）もPASSしており、既存の`test_endpoints_require_api_key`（他エンドポイント群）との重複ではなく`/work-logs/running`固有の確認として妥当。
+  - `git status --short`で今回の変更が`app/routers/work_logs.py`・`app/schemas.py`・`tests/test_work_logs.py`（および本spec.md）のみであることを確認し、それ以外の既存ファイルへの意図しない変更が無いことも確認した。
+  - `uv run pytest tests/test_work_logs.py -v -k running`で新規7件（既存の`test_start_work_log_allows_multiple_running_logs_for_same_task`を含め計8件マッチ）全てPASSすることも個別に確認した。
+  - `WorkLog.task_id`・`Task.project_id`は共に`nullable=False`のFKであり、`Task`・`Project`ともにPKとJOINしているため多対1関係でfan-outによる行重複・消失のリスクも無いことをモデル定義（`app/models.py`）で確認した。
+  - 受け入れ条件が全てテストで裏付けられ、pytest・ruffともに問題なし、warningも無いため、statusを「完了」に更新する。
 - 差し戻し回数: 0
 
 ### タスク: CI/CDパイプライン構築

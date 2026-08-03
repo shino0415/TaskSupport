@@ -143,6 +143,26 @@ class WorkLogRead(BaseModel):
     is_deleted: bool
 
 
+class RunningWorkLogRead(BaseModel):
+    """稼働ログ横断一覧（/work-logs/running）専用のレスポンススキーマ。
+
+    どのタスク・案件に属するかを判別できるよう、WorkLogRead相当のフィールドに
+    加えてtask_name/project_id/project_nameを含める（横断一覧では所属先を
+    追うためにIDだけでなく名前も一緒に返した方が呼び出し側の追加問い合わせを
+    減らせるため）。
+    """
+
+    id: int
+    task_id: int
+    task_name: str
+    project_id: int
+    project_name: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    memo: str | None = None
+    is_deleted: bool
+
+
 class HourlyRateRead(BaseModel):
     project_id: int
     reward: int
