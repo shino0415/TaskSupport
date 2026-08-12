@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 
 from app.auth import verify_api_key
+from app.cors import configure_cors
 from app.database import init_db
 from app.routers import companies, interview_steps, projects, tasks, work_logs
 
@@ -19,22 +20,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-# verify_api_keyをアプリ全体のグローバル依存関係として登録することで、
-# 以降追加される全エンドポイントに認証チェックが自動的に適用される。
-# なお/docs・/redoc・/openapi.jsonはStarletteの素のルートとして登録されグローバル
-# dependenciesの対象外になるため、本人専用ツールという性質上、公開の必要性が薄い
-# これらのドキュメントUIごと無効化することで認証バイパス経路を塞ぐ。
-app = FastAPI(
-    title="案件・選考トラッカー API",
-    lifespan=lifespan,
-    dependencies=[Depends(verify_api_key)],
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
+def create_app() -> FastAPI:
+    """アプリケーションを組み立てる。
 
-app.include_router(projects.router)
-app.include_router(tasks.router)
-app.include_router(work_logs.router)
-app.include_router(companies.router)
-app.include_router(interview_steps.router)
+    CORSの許可オリジンはこの関数の実行時（＝通常はプロセス起動時）に環境変数から
+    読み込まれる。テストから環境変数を変えた状態のアプリを得る用途も兼ねる。
+    """
+    # verify_api_keyをアプリ全体のグローバル依存関係として登録することで、
+    # 以降追加される全エンドポイントに認証チェックが自動的に適用される。
+    # なお/docs・/redoc・/openapi.jsonはStarletteの素のルートとして登録されグローバル
+    # dependenciesの対象外になるため、本人専用ツールという性質上、公開の必要性が薄い
+    # これらのドキュメントUIごと無効化することで認証バイパス経路を塞ぐ。
+    app = FastAPI(
+        title="案件・選考トラッカー API",
+        lifespan=lifespan,
+        dependencies=[Depends(verify_api_key)],
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    configure_cors(app)
+
+    app.include_router(projects.router)
+    app.include_router(tasks.router)
+    app.include_router(work_logs.router)
+    app.include_router(companies.router)
+    app.include_router(interview_steps.router)
+    return app
+
+
+app = create_app()
