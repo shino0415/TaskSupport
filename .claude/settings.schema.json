@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "settings.local.jsonのIDEスキーマ検証を上書きするためのローカルスキーマ。permissions.defaultModeにVS Code拡張のバンドル版スキーマがまだ含んでいない値(auto等)を許容する。他のプロパティは自由に許可する。",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "permissions": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } },
+        "ask": { "type": "array", "items": { "type": "string" } },
+        "additionalDirectories": { "type": "array", "items": { "type": "string" } },
+        "defaultMode": {
+          "type": "string",
+          "enum": ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]
+        }
+      }
+    }
+  }
+}
