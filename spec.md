@@ -655,17 +655,82 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: CI/CDパイプライン構築
-- status: 未着手
+- status: 完了
 - 概要: コード品質チェック・自動テスト・コンテナイメージビルドを自動化する。実際のデプロイ（デプロイ先の決定・接続）はこのタスクの対象外とする。
 - 受け入れ条件:
-  - [ ] コードのpushまたはpull request作成時にワークフローが自動実行される
-  - [ ] lintに違反があるとワークフローが失敗する
-  - [ ] テストに失敗があるとワークフローが失敗する
-  - [ ] Dockerマルチステージビルドでイメージが正常にビルドできる
-  - [ ] 実デプロイのステップは含まれない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] コードのpushまたはpull request作成時にワークフローが自動実行される
+  - [x] lintに違反があるとワークフローが失敗する
+  - [x] テストに失敗があるとワークフローが失敗する
+  - [x] Dockerマルチステージビルドでイメージが正常にビルドできる
+  - [x] 実デプロイのステップは含まれない
+- 実装メモ（技術判断とその理由）:
+  - **ワークフロー構成（`.github/workflows/ci.yml`）**: `on: push` / `on: pull_request`（ブランチ指定なし＝全ブランチ・全PR対象）でトリガー。ジョブは`lint`（`uv run ruff check .`）→`test`（`uv run pytest`、`needs: lint`）→`build`（Dockerイメージビルド、`needs: test`）の順に`needs`で直列依存させ、「lint失敗時はテストも走らない／テスト失敗時はビルドも走らない」という失敗時の早期打ち切りにした（受け入れ条件の「lint/testの失敗でワークフローが失敗する」を満たしつつ、CI時間を無駄にしない一般的なパターン）。依存関係インストールはプロジェクトが`uv`ベースであることに合わせ`astral-sh/setup-uv@v4`＋`uv sync --locked`を使用（`--locked`により`uv.lock`との不整合があれば失敗し、依存関係の再現性を保証）。Pythonバージョンは`pyproject.toml`の`requires-python = ">=3.12"`・`.python-version`（3.12）に合わせて`3.12`を指定。
+  - **testジョブの環境変数（確定: `API_KEY`をワークフローに明示設定するが、これは保険目的であり必須ではない）**: `tests/*.py`を確認したところ、`test_status_transitions.py`（純粋関数のみ）と`test_db_init.py`（認証不要のエンドポイントのみ使用）を除く全テストファイルが`monkeypatch.setenv(API_KEY_ENV_VAR, TEST_API_KEY)`で各テスト自身がAPI_KEYを設定しており、DBも`get_db`の依存関係オーバーライド＋`tmp_path`の一時ファイルDBで完結しているため、ワークフロー側で`API_KEY`や`DATABASE_URL`を設定しなくても`uv run pytest`はローカル同様に全件passすることを確認済み（実際に手元で無設定のまま`uv run pytest`を実行し170件pass）。ただし将来monkeypatchを使わないテストが追加された場合に無認証で失敗する事態を避けるため、`test`ジョブに`env: API_KEY: ci-test-api-key`を保険として明示した（`DATABASE_URL`は未設定＝`app/database.py`のデフォルト`sqlite:///./app.db`にフォールバックするが、テストは全て`get_db`オーバーライドで独自の一時ファイルDBを使うため実質参照されない）。
+  - **Dockerfile（マルチステージ、ベースイメージ: `python:3.12-slim`）**: builderステージで`ghcr.io/astral-sh/uv:0.12.1`イメージから`uv`バイナリのみを`COPY --from`し、`pyproject.toml`・`uv.lock`を先にコピーして`uv sync --locked --no-install-project --no-dev`を実行後にアプリコードをコピーして`uv sync --locked --no-dev`する2段構成にした（依存関係定義のみ先にコピーすることで、アプリコードだけを変更した際に依存関係インストールのDockerレイヤーキャッシュが再利用され、ビルドが速くなる一般的な最適化パターン）。実行ステージは素の`python:3.12-slim`に`.venv`とアプリコードのみをコピーし、`uv`本体やビルドツール類を含まない最小構成にした。`CMD`は`uvicorn app.main:app --host 0.0.0.0 --port 8000`。ベースイメージに`python:3.12-slim`を選んだ理由は、`pyproject.toml`の`requires-python`と一致するPython 3.12系であり、`alpine`系（musl libc）よりSQLAlchemy等のC拡張ビルド済みwheelとの互換性が高くビルドが安定するため。
+  - **`.dockerignore`**: `.venv`・`.git`・`.github`・`__pycache__`・`*.db`／`*.sqlite3`・`.env`・`tests`・`.claude`等、実行イメージに不要またはビルドコンテキスト送信を無駄に増やすものを除外。開発用DBファイル（`app.db`）がイメージに紛れ込まないことも兼ねる。
+  - **buildジョブ**: `docker/setup-buildx-action@v3` + `docker/build-push-action@v6`で`push: false`を明示し、実際のレジストリへのpushは行わずビルドの成否のみを検証する構成にした。デプロイ先（レジストリ・ホスティング環境）は本タスクの対象外（決定事項セクション参照）のため、`deploy`ジョブ自体を作成していない。
+  - **手元での検証**: Dockerが利用可能な環境だったため、`docker build -t project-tracker-api:local-check .`を実際に実行しビルド成功（マルチステージの両ステージとも正常に完了）を確認した。さらに`docker run`でコンテナを起動し、`curl -H "X-API-Key: ..." http://localhost:18000/projects`が200を返すこと（アプリが実際に起動しエンドポイントが応答すること）も確認した上でコンテナ・イメージを削除済み。GitHub Actions自体はこの場では実行できないため、YAMLの構文・ジョブ依存関係（`needs`）・ステップ内容の妥当性のレビューにとどめている。
+  - ローカルで`uv run ruff check .`（`All checks passed!`）・`uv run pytest`（170 passed）を再実行し、ワークフローが呼び出すコマンドがそのまま成功することを確認済み。
+  - **【追記】非rootユーザー実行への対応（セキュリティエバリュエーターのMedium指摘への追加修正）**: 実行ステージに`RUN useradd --create-home --shell /usr/sbin/nologin appuser`で非特権ユーザーを作成し、`USER appuser`でuvicornプロセスの実行ユーザーを切り替えた（コンテナエスケープ等が発生した場合の被害範囲を狭める多層防御目的）。`.venv`・`app`ディレクトリは所有者がroot（`COPY --from=builder`のデフォルト）のままだが、読み取り・実行権限は元々世界（other）に対して付与されているため`appuser`でも問題なく参照・実行できることを確認した。一方でデフォルトの`DATABASE_URL`（`sqlite:///./app.db`）はWORKDIR（`/app`）直下にSQLiteファイルを新規作成する必要があり、`/app`自体はroot所有のまま書き込み権限が無かったため`appuser`起動時に`unable to open database file`で起動失敗した。そのため`RUN chown appuser:appuser /app`を追加し、`/app`ディレクトリ自体の所有者のみ`appuser`に変更した（`.venv`・`app`配下は所有者そのままで読み取り・実行権限のみで足りるため変更していない）。修正後、`docker build`でビルド成功、`docker run`でコンテナ起動、`docker exec <container> whoami`／`cat /proc/1/status`のUidでPID 1（uvicornプロセス）が`appuser`（UID 1000、root=UID 0ではない）で動作していること、`curl`でAPIが200を返すことを確認した上でイメージ・コンテナを削除済み。`uv run pytest`（170 passed）も再実行し、Dockerfileの変更がアプリケーションコード・テストに影響しないことを確認済み。
+  - **【追記2】DBディレクトリ分離によるHigh指摘の解消（セキュリティエバリュエーターの実機検証によるHigh指摘への修正）**: 追記1の`RUN chown appuser:appuser /app`は`/app`ディレクトリ全体を`appuser`書き込み可能にしてしまい、アプリケーションコード（`/app/app/*.py`）自体も`appuser`から書き込める状態だった。これにより、仮に任意ファイル書き込みが可能な脆弱性が生じた場合、攻撃者が`/app`直下に本物のライブラリ名を偽装したファイル（例: `fastapi.py`）を設置すると、uvicornのモジュール解決順序上それが本物より優先して読み込まれ、コンテナ再起動後も`appuser`権限で任意コードが実行され続けるHigh相当のリスクがあった。対応として、`RUN chown appuser:appuser /app`を廃止し、代わりに`RUN mkdir -p /app/data && chown appuser:appuser /app/data`でSQLiteファイル専用のディレクトリ（`/app/data`）のみを作成・`appuser`所有にした。`/app`・`/app/app`・`/app/.venv`は`COPY --from=builder`直後のroot所有のまま変更せず、`appuser`からは読み取り・実行のみ可能（書き込み不可）とした。あわせて、デフォルトの`DATABASE_URL`（`app/database.py`側の`sqlite:///./app.db`というデフォルト値自体は変更せず）をコンテナ内でのみ`ENV DATABASE_URL="sqlite:////app/data/app.db"`で上書きし、SQLiteファイルが`/app/data`配下に作成されるようにした。修正後、`docker build`でビルド成功を確認し、`docker run`でコンテナを起動して以下を実機検証した: (1) `POST /projects`で案件作成→`GET /projects`で取得でき、DBの書き込み・読み込みが機能していること（`X-API-Key`ヘッダ付きでいずれもレスポンス確認済み）、(2) `docker exec`で`/app`直下・`/app/app`配下（例: `fastapi.py`という偽装ファイル名）への書き込みがいずれも`Permission denied`で失敗すること、(3) `/app/.venv`への書き込みも`Permission denied`で失敗すること、(4) `/app/data`配下への書き込みは成功すること、(5) `docker exec ... id`で実行ユーザーが引き続き`appuser`（UID 1000、非root）であることを確認した上でイメージ・コンテナは削除済み。`uv run pytest`（170 passed）・`uv run ruff check`（`All checks passed!`）も再実行し、Dockerfile以外の変更が無いこと・既存のテスト結果に影響が無いことを確認済み。
+- セキュリティエバリュエーターのフィードバック:
+  - 【総評】Critical/High相当の問題は無し。合格（性能評価待ちへ進める）。ただしMedium/Low相当の改善提案が2件あるため記録する。
+  - 【GitHub Actionsワークフロー（`.github/workflows/ci.yml`）】
+    - シークレットの平文ログ出力: `secrets.*`の参照は本ファイルに一切無く、`test`ジョブの`env: API_KEY: ci-test-api-key`もテスト用のダミー文字列（実装メモの通り`monkeypatch`でテスト側が上書きするための保険であり実在のAPIキーではない）。実際のAPIキーやDB接続情報を参照・出力する箇所は無いことをソースで確認した。
+    - `pull_request`トリガーでのfork PR権限昇格リスク: 本ワークフローはシークレットを一切使用しておらず、`build`ジョブも`push: false`でレジストリへの書き込みを行わないため、`pull_request`イベント（`pull_request_target`ではない）でforkからのPRが実行されても、盗用可能なシークレットや書き込み権限のあるトークンの悪用余地は無いことを確認した。
+    - サードパーティActionのバージョン固定: `actions/checkout@v4`・`astral-sh/setup-uv@v4`・`docker/setup-buildx-action@v3`・`docker/build-push-action@v6`は全てメジャーバージョンのタグ参照であり、コミットSHA固定ではない。タグは書き換え可能なため厳密なサプライチェーン対策としてはSHA固定が望ましいが、いずれも著名で広く使われているActionであり、本ワークフローがシークレットを扱わずpushもしない（上記の通り被害範囲が限定的）ことを踏まえるとLow相当の改善余地として記録するに留める（Critical/Highには該当しない）。
+    - 【Medium/Low】`permissions`ブロックが未設定: ワークフロー全体・各ジョブいずれにも`permissions:`の明示指定が無く、リポジトリのデフォルト設定に依存する形になっている。本ワークフローは`checkout`・依存関係インストール・pytest・Dockerビルド（push無し）のみで、コードのpush・PRコメント・パッケージ公開等`GITHUB_TOKEN`の書き込み権限を必要とする操作は行っていないため、`permissions: contents: read`のような最小権限を明示するのが望ましい（サードパーティAction経由のサプライチェーン攻撃が発生した場合の被害範囲を狭める防御多層化の観点）。ただしリポジトリ側のデフォルト設定次第では実害が生じるとは限らずMedium/Low相当であり、Critical/Highではないため差し戻しの対象にはしない。
+  - 【Dockerfile】
+    - ベースイメージ: `python:3.12-slim`（builder・実行イメージ両方）を採用しており、`pyproject.toml`の`requires-python = ">=3.12"`・`.python-version`（3.12）と整合。alpine系より若干イメージサイズは大きいが実装メモの通りC拡張wheel互換性を優先した判断であり妥当。
+    - 不要ファイルの混入: `.dockerignore`で`.venv`・`.git`・`.github`・`.pytest_cache`・`.ruff_cache`・`__pycache__`・`*.py[oc]`・`*.db`・`*.sqlite3`・`.env`・`tests`・`spec.md`・`README.md`・`.claude`を除外しており、開発用DBファイル（`app.db`）・`.env`・テストコード・Git履歴が実行イメージ／ビルドコンテキストに含まれないことを確認した。Dockerfile自体も実行イメージ（`FROM python:3.12-slim`以降）に`COPY --from=builder /app/.venv`・`COPY --from=builder /app/app`の2つのみをコピーしており、`pyproject.toml`・`uv.lock`・`tests`等はコピーされていないことをソースで確認した。
+    - マルチステージビルドとビルド専用依存関係の残留: builderステージでコピーした`uv`/`uvx`バイナリは実行イメージ（`FROM python:3.12-slim`以降、`COPY --from=builder`は`.venv`と`app`のみ）には含まれておらず、`RUN uv sync`によりインストールされる各種パッケージの実体は`.venv`配下のみであることを確認した。`apt-get install`等でコンパイラ（gcc等）を追加導入している箇所も無く、素の`python:3.12-slim`に含まれる範囲を超えるビルドツールが最終イメージに残る実装にはなっていない。
+    - 【Medium】非rootユーザー実行: Dockerfileに`USER`命令が無く、`FROM python:3.12-slim`のデフォルトユーザー（root）のままアプリケーションプロセス（`uvicorn`）が実行される構成になっている。本人専用ツールでインターネット直接公開を前提としていない点は考慮するが、コンテナ内で万一RCE等が発生した場合の被害範囲を狭める多層防御の観点からは、非rootユーザー（例: `RUN useradd`等で作成した専用ユーザーへ`USER`で切り替え）での実行が本番相当のベストプラクティスとして望ましい。ただし受け入れ条件（lint/test失敗時の停止・マルチステージビルド成功・実デプロイステップ非包含）はいずれも満たされており、この指摘はCritical/Highには該当しないため差し戻しの対象にはしない。
+    - 実デプロイステップの不在: `docker push`やレジストリ認証、実際のホスティング環境へのデプロイコマンドは`ci.yml`・Dockerfileいずれにも存在しないことを確認した（`build`ジョブは`docker/build-push-action@v6`に`push: false`を明示しており、ビルド成否の検証のみ）。受け入れ条件5「実デプロイのステップは含まれない」を満たしている。
+  - 【シークレット管理】リポジトリ全体を確認したが、`.env`ファイルは存在せず（`find`で未検出）、APIキーやDB接続文字列のハードコードも`ci.yml`・Dockerfile・`.dockerignore`のいずれにも見当たらない。`.gitignore`に`.env`が含まれておりコミット対象からも除外されている。
+  - 【結論】Critical/High相当の問題は無いため、statusを「性能評価待ち」に更新する。上記Medium 2件（非rootユーザー未実装、`permissions`未明示）・Low 1件（Action未SHA固定）は今回の差し戻し対象にはしないが、将来の改善候補として記録する。
+- 性能エバリュエーターのフィードバック:
+  - 【総評】合格。受け入れ条件5件全てを確認し、いずれも満たしていることを確認した。statusを「完了」に更新する。
+  - 本タスクは通常のAPIエンドポイントと異なりpytestでの受け入れ条件検証が主目的ではないため、指示に従い各条件をYAML静的レビュー・実際のdocker build/run・既存pytestスイート全体の再実行で確認した。
+  - 【トリガー】`ci.yml`の`on:`に`push:`・`pull_request:`が両方定義されており（ブランチフィルタなし＝全ブランチ対象）、「コードのpushまたはpull request作成時にワークフローが自動実行される」を満たす。
+  - 【lintジョブ】`uv run ruff check .`を実行するのみで`continue-on-error`等の失敗握りつぶし設定は無く、ruffはlint違反があれば非ゼロ終了する標準的な挙動のため、ジョブ失敗としてワークフロー全体が停止する（`test`ジョブが`needs: lint`のため）。手元で`uv run ruff check`を再実行し`All checks passed!`（違反ゼロ）を確認済み。
+  - 【testジョブ】`uv run pytest`を実行するのみで同様に失敗握りつぶし設定は無く、pytestはテスト失敗時に非ゼロ終了するため、ジョブ失敗としてワークフローが停止する（`build`ジョブが`needs: test`のため、テスト失敗時はビルドまで到達しない）。`lint→test→build`の`needs`直列依存も妥当。
+  - 【Dockerビルド】Dockerが利用可能な環境だったため実際に検証した。
+    - `docker build --no-cache -t project-tracker-api:perf-check .`を実行し、builder/実行ステージ両方とも約21秒で正常完了（ビルドキャッシュを`docker builder prune -f`で明示的にクリアした上でのクリーンビルドで確認）。
+    - `docker run`でコンテナを起動し、`curl -H "X-API-Key: ..." http://localhost:18001/projects`が200を返すこと（uvicornが実際に起動しFastAPIアプリが応答すること）を確認。ログにも`Application startup complete`・`GET /projects HTTP/1.1 200 OK`を確認。
+    - 検証後、コンテナ・イメージ（`project-tracker-api:perf-check`）は削除済み。
+    - `ci.yml`の`build`ジョブ（`docker/setup-buildx-action@v3` + `docker/build-push-action@v6`、`push: false`）もこの実際のビルド結果と整合する構成であることを静的に確認した。
+  - 【実デプロイステップの不在】`ci.yml`全体を確認したが`docker push`・レジストリ認証・実環境への接続コマンドは存在せず、`build`ジョブは`push: false`を明示している。`deploy`ジョブ自体が定義されていないことも確認。受け入れ条件を満たす。
+  - 【回帰確認】`uv run pytest -v`（プロジェクト全体）を実行し170件全てpass、warningの出力は0件（`warnings summary`ブロック自体が出力されていないことを確認）。「warningが1件でも出たら差し戻す」ルールに抵触する事象なし。
+  - 【付随確認】`ci.yml`・Dockerfileで固定されている`uv`バージョン（0.12.1）が手元の実行環境の`uv --version`（0.12.1）と一致していることを確認し、CI/ローカル/コンテナビルド間のバージョン不整合リスクが無いことを確認した。
+  - 【非対象（セキュリティ観点）】非rootユーザー未実装・`permissions`未明示・Action未SHA固定はセキュリティエバリュエーターの指摘済み事項であり、いずれもMedium/Low相当で受け入れ条件外のため本評価では差し戻し対象にしていない（記録のみ）。
 - 差し戻し回数: 0
+- 【追記】非root化修正（`RUN chown appuser:appuser /app`追加）に対する再レビュー:
+  - status: 完了のまま変更しない（受け入れ条件5件は元々満たされているため）。ただし**High相当の問題を1件検出**したため、修正が必要である旨をここに明記する。generatorへの差し戻しはユーザー判断待ちとし、本レビューでは差し戻し回数・statusは更新しない。
+  - 【High】`chown appuser:appuser /app`（`-R`無し・`/app`のみ）により、`/app`ディレクトリ自体の所有者・書き込み権限がappuserに移る。これにより`/app/app`（アプリコード）・`/app/.venv`配下は引き続きroot所有で直接上書きはできないが、**`/app`直下に任意の新規ファイルを作成できてしまう**。そして実際のCMD（`uvicorn app.main:app --host 0.0.0.0 --port 8000`）は`--app-dir`未指定のためuvicorn側のデフォルト（`click`の`--app-dir`オプションのデフォルト値は`""`であり`None`ではないため、`uvicorn/main.py`の`if app_dir is not None: sys.path.insert(0, app_dir)`が真になり、空文字列＝カレントディレクトリ（`/app`）が`sys.path`の**先頭（index 0、`.venv/site-packages`より優先）**に挿入される）という実装により、`/app`は事実上`sys.path[0]`として扱われる。
+    - **実機で検証・再現済み**: 実際にビルドした本リポジトリのDockerfileのイメージを`docker run`し、`appuser`権限で`/app/app/main.py`の直接上書き（`Permission denied`）および`/app/app`ディレクトリごとの入れ替え（`os.rename`、overlay2の`redirect_dir`制限により`Invalid cross-device link`＝EXDEVで失敗）はブロックされることを確認した。**しかしこれらのブロックはoverlay2ストレージドライバの内部挙動（下位レイヤー由来のディレクトリはredirect_dir無効時にrename不可というEXDEV制限）に偶然依存しているだけであり、Dockerfile側で意図的に設計された保護ではない**（`btrfs`/`zfs`/`devicemapper`/`vfs`等の別ストレージドライバや、イメージのsquash/flatten（`docker build --squash`、`docker export`/`import`等）を行った場合はこのEXDEV制限が働かず、`app/`ディレクトリの入れ替え自体も可能になり得る）。
+    - 一方、`/app`直下への**新規ファイル作成は制限なく成功**することを実機で確認した（例: `/app/evil.py`、`/app/fastapi.py`をappuser権限で作成成功）。さらに、`sys.path.insert(0, '/app')`後に`import app.main`と同等の手順を実機で再現したところ、`/app`に設置した偽の`fastapi.py`（本来`.venv/site-packages/fastapi`を参照すべきimportをシャドーイングする悪意あるファイル）が**実際に`.venv`側の本物より優先して実行される**ことを確認した（PoC: `/app/fastapi.py`に`print("!!! SHADOW EXECUTED !!!"); raise SystemExit(0)`を仕込み、`app.main`import時にこのコードが実行されることを確認）。
+    - さらに`docker restart`（コンテナを作り直さず同一コンテナを再起動するケース。`--restart=on-failure`/`--restart=always`運用時にプロセスクラッシュ等で発生する一般的なシナリオ）を実機で行い、appuserが設置したファイルが再起動後も書き込み層に残存する（消えない）ことを確認した。
+    - **攻撃シナリオ**: アプリに何らかの理由でRCEどころか「任意ファイル書き込み」の脆弱性が生じた場合（RCEより弱い脆弱性で十分）、攻撃者は`/app`直下に依存パッケージ名と同名のPythonファイル（例: `fastapi.py`、`sqlalchemy.py`、`pydantic.py`等、`app/main.py`や配下モジュールがimportしている名前）を設置しておくだけで、次回のプロセス／コンテナ再起動時にuvicornの起動シーケンス内で自分のコードが（appuser権限で）実行される永続的なバックドアを仕込める。これは「非root化によりコード改ざん耐性を高める」という当初の多層防御の意図を、`chown /app`（非再帰だが親ディレクトリ全体が対象）によって実質的に破ってしまっている。
+  - 【代替案の検討（タスク側で提案されていた案は技術的に有効）】`chown`の対象をSQLiteファイル専用のサブディレクトリ（例: `/app/data`）のみに限定し、`/app`自体・`/app/app`・`/app/.venv`はroot所有のまま維持する方式に変更すれば、この問題は解消できる。具体的には:
+    - Dockerfile側で`RUN mkdir -p /app/data && chown appuser:appuser /app/data`のように書き込みが必要な範囲だけをappuser所有にする。
+    - `DATABASE_URL`のデフォルト値（`sqlite:///./app.db`、`app/database.py`側の実装）を`sqlite:////app/data/app.db`のような専用ディレクトリ配下に変更する（もしくは環境変数で本番は明示的に指定する）必要があり、これは**Dockerfileだけでなくアプリケーションコード側`app/database.py`のデフォルト値、または実行時の`ENV DATABASE_URL=...`設定の変更を伴う**ため、今回の「Dockerfileのみの変更」というタスク範囲を超える可能性がある点に注意（generatorが対応する際はどちらの方式にするかユーザー確認が望ましい）。
+    - こうすることで`/app`・`/app/app`はroot所有・appuserは読み取り専用のままになり、`sys.path[0]`（`/app`）への書き込みができなくなるため、上記のimportシャドーイング攻撃は成立しなくなる。
+  - 【結論】Critical/High相当（High）の問題ありと判断する。受け入れ条件（lint/test失敗時停止・マルチステージビルド成功・実デプロイ非包含）自体はDockerfile変更後も引き続き満たされているためstatusを「完了」から後退させる必然性は低いが、コード改ざん耐性という当初の非root化の目的が`chown /app`によって実質的に無効化されている点はセキュリティ上看過できないため、ユーザー判断でgeneratorへの修正差し戻し（例:「修正待ち」に戻す）を強く推奨する。
+- 【追記2】DBディレクトリ分離修正（`chown /app` → `mkdir -p /app/data && chown appuser:appuser /app/data`、`ENV DATABASE_URL="sqlite:////app/data/app.db"`）に対する再レビュー（独立した実機再検証）:
+  - status: 完了のまま変更しない。**上記Highの指摘は本修正により解消されたことを実機で確認した。**新規の問題は検出されなかった。
+  - 【検証環境】generatorの報告を鵜呑みにせず、本エバリュエーター自身が`docker build -t security-recheck:latest .`でリポジトリの現行Dockerfileから独立してイメージをビルドし（ビルド成功）、`docker run`でコンテナを起動して以下を実機で再現・検証した（`docker info`のStorage Driverは`overlayfs`で、前回のHigh指摘時と同じ実行環境）。検証後はコンテナ・イメージともに削除済み。
+  - 【権限構成の確認】`docker exec ... ls -la /app`で`/app`・`/app/.venv`・`/app/app`がいずれも`root:root`・パーミッション`755`（other書き込み不可）のままであり、`/app/data`のみ`appuser:appuser`になっていることをソースではなく実際のコンテナ内で確認した。
+  - 【書き込み試行（appuser権限、`docker exec`）】以下を実際に試行し、いずれも狙い通りの結果になることを確認した。
+    - `/app/evil.py`・`/app`直下への依存パッケージ偽装ファイル`/app/fastapi.py`の新規作成 → いずれも`Permission denied`で失敗（前回Highの核心だった「`/app`直下への新規ファイル作成」が今回は完全にブロックされることを確認）。
+    - `/app/app/main.py`の上書き、`/app/app/newfile.py`の新規作成 → いずれも`Permission denied`。
+    - `/app/.venv/pyvenv.cfg`の上書き → `Permission denied`。
+    - `/app/app`ディレクトリ自体のrename（`mv /app/app /app/app_old`）→ `Permission denied`（前回はEXDEV=overlay2偶然依存でブロックされていたが、今回はディレクトリ自体がroot所有のため権限エラーで正規にブロックされることを確認）。
+    - `/app/data/testfile`への書き込み → 成功（DB用ディレクトリとしての書き込み可能性は維持されている）。
+    - 網羅性確認として`find /app -writable`（appuser権限、`/app/data`除く）を実行し、ヒットしたのは`/app/.venv/.lock`（uvが仮想環境の同時操作を防ぐために作成する空のアドバイザリロックファイル、パーミッション`0666`）1件のみであることを確認した。この`.lock`ファイルはPythonの`import`機構が読み込み・実行する対象ではなく（`.py`ファイルではなく、`sys.path`上のモジュールとしても解決されない）、`app/main.py`等のimportシャドーイングには利用できないため、前回指摘の攻撃シナリオへの再現性は無いと判断した（既存の`uv sync`が生成する副産物であり、今回のDockerfile修正で新たに生じたものでもない）。念のためLow/informationalとして記録するに留め、差し戻し対象にはしない。
+  - 【importシャドーイング攻撃の再現不可を確認】前回の実機PoC（`sys.path.insert(0, '/app')`後に偽の`fastapi.py`が本物より優先実行される）の前提となる「`/app`直下への新規ファイル作成」自体がappuser権限では成功しなくなったため、同じ手口でのPoCは実行するまでもなく成立しないことを確認した（書き込みが`Permission denied`で拒否される時点で、シャドーイング対象ファイルを設置すること自体が不可能）。
+  - 【`docker restart`後の永続化を試みても失敗することを確認】`touch /app/persist_test`を試行→`Permission denied`（作成失敗）、その状態で`docker restart`を実行→再起動後もappuser権限のまま・アプリは正常起動・当該ファイルは存在しない（そもそも作成できていない）ことを確認した。
+  - 【機能面（DB書き込み・読み込み）の独立確認】`docker exec ... env`で`DATABASE_URL=sqlite:////app/data/app.db`になっていることを確認した上で、`X-API-Key`ヘッダ付きで`POST /projects`（201、実際のリクエストボディはProjectCreateスキーマの必須フィールド`name`/`client_name`/`reward`/`applied_date`/`status`（日本語Enum値）に合わせて送信）→`GET /projects`（200、作成したレコードが返る）を実行し、DBの読み書きが正常に機能することを確認した。また`ls /app/*.db`が存在しないこと（`/app`直下にフォールバックのSQLiteファイルが作られていないこと）・`/app/data/app.db`が実際に生成されていることも確認した。`docker restart`後もAPIは200を返し続け、作成済みレコードが保持されていることも確認した。
+  - 【結論】前回検出したHigh（`chown /app`によるコード改ざん耐性の実質無効化）は、DBファイル専用ディレクトリ`/app/data`のみをappuser所有にする方式への変更により解消されたことを、generatorの報告に依らず本エバリュエーター自身の独立した実機検証（ビルド・書き込み試行・API動作確認・restart後の永続化試行）で確認した。他にCritical/High相当の新規問題は検出しなかった（Low: `.venv/.lock`が世界書き込み可能だが、Python importの対象にならないため悪用不可、記録のみ）。statusは「完了」のまま維持する。
 
 ### タスク: フロントエンド実装（仮）とCORS設定
 - status: 未着手
