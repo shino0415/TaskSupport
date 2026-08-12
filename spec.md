@@ -223,7 +223,13 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 
 案件CRUD・タスク管理・稼働計測・時給換算・企業/選考ステップ管理・横断一覧（upcoming / running）まで、「## エンドポイント一覧」に定義した既存APIを一通り画面から操作できる範囲を対象とする。一部機能のみのプロトタイプには留めない。
 
-なお、API Keyをブラウザ側でどう扱うか（画面上での入力方法、保持・永続化の有無など）は未確定であり、フロントエンド基盤タスクの着手前にユーザーの判断を得る。
+### API Keyのブラウザ側での扱い（確定: 画面で入力し sessionStorage に保持）
+
+フロントエンドはAPI Keyをソースコードやビルド時の環境変数に埋め込まず、画面上の入力欄でユーザーが入力する方式とする。入力されたキーは `sessionStorage` に保持し、リロード後は再入力なしで使えるがタブを閉じると破棄される状態にする。永続化（`localStorage`）は、ブラウザを閉じても残る分だけ端末共有時やXSS発生時の漏洩範囲が広がるため採用しない。メモリのみの保持は最も安全だがリロードのたびに再入力が必要で、日常的に稼働計測を行う用途には手間が勝ると判断した。ビルド時の環境変数への埋め込みは、配布されたJSを読めば誰でもキーを取得できるため採用しない。
+
+### フロントエンドのUI方針（確定: UIライブラリを導入する）
+
+一覧・フォーム・ダイアログが中心の画面構成であり、テーブルや入力系コンポーネントを自作するコストを避けるため、UIライブラリ（MUI等）を導入する。依存は重くなるが、案件系・選考系の全機能という画面範囲を素早く形にすることを優先した。具体的なライブラリの選定・バージョンは実装時の技術的詳細として扱う。
 
 ## 実装タスク
 
@@ -868,22 +874,72 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド基盤セットアップとAPI疎通
-- status: 未着手
+- status: 完了
 - 概要: `frontend/` 配下にReact + Vite + TypeScriptのSPA開発環境を用意し、認証付きでAPIを呼び出して結果を画面に表示できる最小構成を作る。以降の全画面タスクの土台となる。CORS設定タスクの完了後に着手する。
-- **着手前にユーザー確認が必要な設計判断**: API Keyをブラウザ側でどう扱うか（画面上での入力方法、保持・永続化の有無、リロード後の再入力可否など）は複数の妥当な選択肢があるため、実装者が独断で決めず、着手前に必ずユーザーに確認して決定を得ること。
+- ~~**着手前にユーザー確認が必要な設計判断**: API Keyをブラウザ側でどう扱うか（画面上での入力方法、保持・永続化の有無、リロード後の再入力可否など）~~ → **解決済み**。「## 決定事項」の「API Keyのブラウザ側での扱い（確定: 画面で入力し sessionStorage に保持）」および「フロントエンドのUI方針（確定: UIライブラリを導入する）」に従うこと。
 - 受け入れ条件:
-  - [ ] `frontend/` 配下で開発サーバーを起動でき、ブラウザで初期画面が表示される
-  - [ ] `frontend/` 配下で本番用ビルドが成功する
-  - [ ] 型チェックとlintをコマンドで実行でき、違反があれば失敗する
-  - [ ] APIの接続先がソースコードに直書きされておらず、環境ごとに切り替えられる
-  - [ ] 実際に稼働中のAPIへ認証付きでリクエストし、取得内容が画面に表示される
-  - [ ] 認証エラー時・通信失敗時に、原因が判別できるメッセージが画面に表示される
-  - [ ] API Keyの扱い方についてユーザーの判断を得たうえで実装されている（未確認のまま実装しない）
-  - [ ] API Keyなどの秘密情報がソースコードやリポジトリにコミットされていない
-  - [ ] 開発サーバーのオリジンをCORSの環境変数に列挙することでブラウザからAPIを呼べることを実際に確認済み
-  - [ ] フロントエンドの依存関係ディレクトリ・ビルド成果物がバージョン管理およびバックエンドのコンテナイメージに含まれない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] `frontend/` 配下で開発サーバーを起動でき、ブラウザで初期画面が表示される
+  - [x] `frontend/` 配下で本番用ビルドが成功する
+  - [x] 型チェックとlintをコマンドで実行でき、違反があれば失敗する
+  - [x] APIの接続先がソースコードに直書きされておらず、環境ごとに切り替えられる
+  - [x] 実際に稼働中のAPIへ認証付きでリクエストし、取得内容が画面に表示される
+  - [x] 認証エラー時・通信失敗時に、原因が判別できるメッセージが画面に表示される
+  - [x] API Keyの扱い方についてユーザーの判断を得たうえで実装されている（未確認のまま実装しない）
+  - [x] API Keyなどの秘密情報がソースコードやリポジトリにコミットされていない
+  - [x] 開発サーバーのオリジンをCORSの環境変数に列挙することでブラウザからAPIを呼べることを実際に確認済み
+  - [x] フロントエンドの依存関係ディレクトリ・ビルド成果物がバージョン管理およびバックエンドのコンテナイメージに含まれない
+- 実装メモ（技術判断とその理由）:
+  - **実行環境（Node.js）**: WSL側にNode.jsが入っておらず（PATH上のnpmはWindows側の`/mnt/c/Program Files/nodejs`のもので`node`が解決できない状態）、aptの候補もEOLの18系だったため、公式配布物からNode 24.19.0（LTS "Krypton"）を**ユーザーローカル**（`~/.local/lib/node-v24.19.0-linux-x64`）へ展開して使用した（sudo不要・システム領域を汚さない）。以降のフロントエンド作業では`export PATH="$HOME/.local/lib/node-v24.19.0-linux-x64/bin:$PATH"`が必要。
+  - **スキャフォールド**: `npm create vite@latest frontend -- --template react-ts`（create-vite 9.1.2）。生成された構成は React 19.2 / Vite 8.2 / TypeScript 6.0 / lintは**oxlint**（現行テンプレートの既定。ESLintではない）。TypeScript 6.0は`strict`が既定で有効なことを実地確認済み（暗黙any・null到達がエラーになる）。
+  - **UIライブラリ（MUI v9系）**: 決定事項「UIライブラリを導入する」に従い`@mui/material` 9.3.1（＋`@emotion/react`・`@emotion/styled`）を採用。React 19対応の最新安定版で、テーブル・フォーム・ダイアログ・Alertが一通り揃うため以降の画面タスクをそのまま載せられる。なおv9のStackは`alignItems`等のプロパティが廃止され`sx`指定に一本化されているため、型エラーに従い`sx={{ alignItems: ... }}`で記述している。
+  - **APIの接続先（環境変数）**: `src/config.ts`の`getApiBaseUrl()`が`import.meta.env.VITE_API_BASE_URL`を読み、前後空白と末尾スラッシュを正規化して返す。**フォールバックURLは持たず**、未設定なら`null`＝設定不備として画面にその旨を表示する（既定値で別環境へ繋ぎにいく事故を防ぐため）。開発用の既定値は`frontend/.env.development`（`http://localhost:8000`、秘密情報なしのためコミット対象）、記法の見本として`frontend/.env.example`を用意。個人設定は`.env.local`等（`*.local`はfrontend/.gitignoreで除外）、本番はビルド環境の環境変数で与える。本番ビルド成果物に`localhost:8000`が混入しないことを`dist`のgrepで確認済み。
+  - **API Keyの扱い（決定事項どおり）**: `src/api/apiKeyStorage.ts`がキー`project-tracker.api-key`で`sessionStorage`のみを読み書きする（`localStorage`は未使用。sessionStorageが使えない環境でも例外で画面が壊れないようtry/catchで握る）。キーはソース・`.env`・ビルド時環境変数のいずれにも埋め込まず、画面上の`type="password"`入力欄から入力して「保存して接続」で保持する。`autoComplete="off"`。「クリア」で破棄可能。
+  - **APIクライアント（`src/api/client.ts`）**: `X-API-Key`ヘッダーで認証し、`credentials`は送らない（バックエンドが`allow_credentials=False`のため）。失敗は`ApiError`に`kind`（`config`／`unauthorized`／`http`／`network`／`invalidResponse`）を持たせて分類し、画面ではその文言をそのままAlertに出す。401は「認証エラー（HTTP 401）: API Keyが正しくありません」、fetch自体の失敗は「APIサーバーに接続できませんでした（<接続先>）。APIが起動しているか、接続先URLとCORSの許可オリジン設定を確認してください」と、ブラウザからは区別できない未起動／URL誤り／CORS不許可をまとめて示す文言にした。エラーレスポンスの`detail`は表示に含めるが、スタックトレース等は表示しない。
+  - **画面構成**: `App.tsx`（接続先の表示＋状態管理）＋`components/ApiKeyPanel.tsx`（キー入力）＋`components/ProjectsPanel.tsx`（`GET /projects`の結果表示）。取得件数を必ず表示し、0件時は「案件は0件です。」と明示する（表示が破綻しない）。読み込み中はスピナー、失敗時はAlert（severity=error）。
+  - **コマンド（package.json）**: `dev`／`build`（`tsc -b && vite build`）／`typecheck`（`tsc -b`）／`lint`（`oxlint --deny-warnings`＝警告も失敗扱いにして「違反があれば失敗する」を満たす）／`test`（`vitest run`）。lint・typecheckとも、故意に違反コードを置いた状態でexit 1になることを実地確認済み（確認用ファイルは削除済み）。
+  - **テスト（Vitest＋Testing Library、24件）**: バックエンドがpytestなのに対しフロントはVitest（jsdom）を採用。`src/api/client.test.ts`（接続先と`X-API-Key`の付与、末尾スラッシュ正規化、接続先未設定・キー未入力時はfetchせずエラー、401／その他HTTPエラー／通信失敗／JSON不正／204の分類）、`src/api/apiKeyStorage.test.ts`（sessionStorageのみに保存しlocalStorageは使わない、再読み出し＝リロード相当、クリア）、`src/App.test.tsx`（未入力時はAPIを呼ばない、入力→表示、キーの保持、保持済みキーでの自動取得、クリア、0件表示、401／通信失敗／接続先未設定のメッセージ、再読み込みでの復旧）。実行環境の`.env`に影響されないよう`vite.config.ts`のtest設定で`VITE_API_BASE_URL`を空にし、各テストで`vi.stubEnv`する。
+  - **実ブラウザでのAPI疎通確認**: バックエンドを`API_KEY=...`・`CORS_ALLOW_ORIGINS=http://localhost:5173`・`DATABASE_URL=<一時ファイル>`で起動（開発用DBは汚していない）し、Vite開発サーバー（`http://localhost:5173`）を立てた上で、**実際のChrome（headless）で`http://localhost:5173`を開いて**以下を確認した（検証用の一時ページ・プロセスはすべて削除・停止済み）。ポート8000は別プロセスが使用中だったためAPIは18010で起動し、開発サーバー側は環境変数`VITE_API_BASE_URL`で接続先を差し替えた（環境ごとの切り替えが効くことの確認も兼ねる）。
+    - 正しいキー: 画面に「接続先: http://localhost:18010」「取得件数: 1 件」と案件行（ID／案件名／クライアント／ステータス／報酬）が表示される。
+    - 誤ったキー: 「認証エラー（HTTP 401）: API Keyが正しくありません。入力したキーを確認してください。」が表示される（バックエンドは401応答にもCORSヘッダーを付けるためブラウザ側で内容を読める）。
+    - `CORS_ALLOW_ORIGINS`を外してAPIを再起動: 同じ操作で「APIサーバーに接続できませんでした（…）。…CORSの許可オリジン設定を確認してください。」に変わる＝**開発サーバーのオリジンをCORS環境変数に列挙して初めてブラウザから呼べる**ことを実地で確認。
+    - APIを停止: 同じ通信失敗メッセージが表示され、画面は破綻しない。
+    - curlでも許可オリジンからのプリフライト（`OPTIONS /projects`、`Access-Control-Request-Headers: x-api-key`）が200で`access-control-allow-origin: http://localhost:5173`・`access-control-allow-headers: … X-API-Key`を返すことを確認済み。
+  - **Git・コンテナからの除外**: `frontend/.gitignore`（テンプレート由来）で`node_modules`・`dist`・`*.local`を除外し、`git add -n`でコミット対象が28ファイル（ソース・設定・`package-lock.json`のみ）であること、`frontend/.env`はルート`.gitignore`の`.env`で除外されることを確認。`.dockerignore`は指摘のあったアンカー問題を修正し、`**/__pycache__`・`**/*.py[oc]`・`**/*.db`・`**/*.sqlite3`・`**/.env`・`**/.env.*`とネストにも効く形にしたうえで、`frontend`（ディレクトリごと）・`**/node_modules`・`**/dist`を追加した。`docker build`後のイメージ内に`frontend`・`node_modules`・`dist`・`__pycache__`が一切存在しないこと、コンテナが従来どおり401/200・CORSヘッダーを返すことを確認し、イメージ・コンテナとも削除済み（`docker push`・実デプロイは未実行）。
+  - **秘密情報**: リポジトリに追加したファイル内にAPI Keyやトークンは無い（検証で使った`front-check-key`等はコマンドラインで与えた一時的な値で、コミット対象ファイルには含まれない）。
+  - **スコープ外（意図的に手を付けていない）**: CIワークフローへのフロントエンドのジョブ追加（本タスクの受け入れ条件は「コマンドで実行できる」ことまで。CI/CDタスクは完了済みのため別途要判断）、ルート`README.md`の整備、案件以外の画面（後続タスク）。
+  - **セルフチェック**: フロント＝`npm run typecheck`（tsc -b、エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`（24 passed）・`npm run build`（成功）。バックエンド＝`uv run pytest -W error` 206 passed（warning 0件）、`uv run ruff check .` All checks passed!。
+- セキュリティエバリュエーターのフィードバック: **Critical/High相当の問題なし**。`frontend/`配下の全コミット対象ファイル（`src/config.ts`・`src/api/{apiKeyStorage,client,errors,projects,types}.ts`・`src/App.tsx`・`src/main.tsx`・`src/components/*.tsx`・テスト3件・`index.html`・`vite.config.ts`・`package.json`・`.env.development`・`.env.example`・`.gitignore`・`README.md`）、ルート`.dockerignore`の差分、およびバックエンド側（`app/auth.py`・`app/cors.py`・`app/main.py`・`app/database.py`・`app/routers/*`）を確認した。
+  - **API Keyの扱い（確定方針どおり・問題なし）**: `src/api/apiKeyStorage.ts`は`window.sessionStorage`のみを読み書きし、`localStorage`・Cookie・URLクエリへの書き出しは一切ない（`grep`で`localStorage`／`document.cookie`／`location.search`の使用がソース側に存在しないことを確認。テスト側の`localStorage`参照は「localStorageに残らないこと」を検証する目的のみ）。キーは`X-API-Key`リクエストヘッダーにのみ載り（`src/api/client.ts`）、URLパスやクエリには載らない。`credentials`は送らずバックエンドの`allow_credentials=False`と整合。`console.*`による出力はソース全体で0件で、エラーメッセージ（`src/api/errors.ts`／`client.ts`）にもキー値・スタックトレース・内部パスは含まれない（401時は「API Keyが正しくありません」という値を含まない文言）。画面側は`type="password"`＋`autoComplete="off"`で平文表示なし、「クリア」でsessionStorageから削除できる。
+  - **ビルド成果物へのキー・接続先の埋め込みなし（実測）**: `frontend/dist/assets/*.js`をgrepし、API Keyらしき値は皆無（ヒットするのはstorageキー名`project-tracker.api-key`とヘッダー名`X-API-Key`の文字列のみ）。`http://localhost:` の埋め込みも0件で、`.env.development`の値が本番ビルドに混入していないことを確認。sourcemapも出力されていない。
+  - **リポジトリへの秘密情報混入なし**: `git add -n frontend`でコミット対象が28ファイル（`node_modules`・`dist`は除外済み）であることを確認。コミット対象の`.env.development`・`.env.example`は`VITE_API_BASE_URL=http://localhost:8000`のみで秘密情報なし（そもそも`VITE_`接頭辞の値はバンドルへインライン展開され公開情報になるため、キーを置かない方針は妥当）。テストコード中のキーは`valid-key`／`saved-key`等のダミーのみ。作業ツリーに未追跡の`.env`実ファイルも存在しない。
+  - **`.dockerignore`修正は正しく機能（実測）**: ビルドコンテキストを実際に検査（`COPY . /ctx`する検証用イメージ）した結果、コンテキストに入るのは`.dockerignore`・`.gitignore`・`.python-version`・`Dockerfile`・`pyproject.toml`・`uv.lock`・`backend/app/**`のみで、`frontend`・`node_modules`・`dist`・`app.db`・`__pycache__`・`spec.md`・`.venv`・`.git`はすべて除外されていた。実際の`docker build`も成功し（ビルドは壊れていない）、生成イメージ内は`/app/{.venv,app,data}`のみでフロントエンド資材・DBファイル・`.env`の混入なし、`Config.Env`にも秘密情報なし（`DATABASE_URL`はコンテナ内パスのみ）。検証用イメージ・ビルド済みイメージはいずれも削除済み（`docker push`・デプロイは未実行）。
+  - **XSS観点で危険な描画なし**: `dangerouslySetInnerHTML`・`innerHTML`・`eval`・`new Function`の使用は0件。APIレスポンス（`name`／`client_name`／`status`等）もエラーメッセージもJSXの式展開（React標準のエスケープ）とMUIコンポーネント経由でのみ描画している。
+  - **依存パッケージ**: `npm audit`（Node 24.19.0）で **0 vulnerabilities**。`package-lock.json`はコミット対象に含まれており再現性も担保されている。
+  - **バックエンドの劣化なし**: 本タスクの差分にバックエンドのコード変更は含まれない（`git status`上の変更は`.dockerignore`・`spec.md`・未追跡の`frontend/`のみ）。念のため再確認し、グローバル依存関係`Depends(verify_api_key)`＋`docs_url=None`/`redoc_url=None`/`openapi_url=None`による全エンドポイント認証、`secrets.compare_digest`による定数時間比較とfail closed、`CORS_ALLOW_ORIGINS`未設定時に全拒否＋`allow_credentials=False`、生SQL文字列結合なし（ORM経由のみ）、物理削除（`session.delete`／`DELETE FROM`）0件・`is_deleted`フィルタ維持、を確認した。
+  - 補足（ブロッキングではない参考情報・Low）: `frontend/.gitignore`には`.env`系の除外指定がなく（`*.local`のみ）、`frontend/.env`はルート`.gitignore`の`.env`で拾えているが、README記載の**`frontend/.env.production`はどちらのignoreにも一致せずコミット対象になる**（`git check-ignore -v frontend/.env.production`が何も返さないことを確認）。`VITE_`変数は本来公開情報であり現状は秘密漏洩には直結しないが、将来の誤コミット防止のため`frontend/.gitignore`に`.env`・`.env.*`（`!.env.example`・`!.env.development`）を明示しておくとより安全。
+  - 補足（設計上の受容事項）: sessionStorage保持はXSS発生時にキーが読める性質を持つが、これは「## 決定事項 / API Keyのブラウザ側での扱い」でトレードオフを明示したうえで確定済みの方針であり、本実装は方針から逸脱していない。
+- 性能エバリュエーターのフィードバック: **合格。受け入れ条件10項目すべてを実コマンド・実ブラウザで検証し、満たされていることを確認した。バックエンドに回帰なし（206件pass・warning 0件）。**
+  - **バックエンド回帰**: `uv run pytest -v` 206件全pass（約11.4秒、fail/error/skip 0件）。**warningは0件**（`uv run pytest -W error`でも206件pass）。`uv run ruff check .`は`All checks passed!`。ステータス警告4パターン（同一・隣接順行・飛び越え・逆行）、論理削除後の一覧/詳細除外、親詳細への子情報非包含、WorkLogの多重start・複数タスク/案件の同時進行・進行中ログ扱い、稼働時間0の時給換算はいずれも従来どおりpass。本タスクの差分（`.dockerignore`・新規`frontend/`）にバックエンドのコード変更は含まれない。
+  - **フロントエンドのコマンド（Node 24.19.0をユーザーローカルPATHで実行）**: `npm run typecheck`（`tsc -b`）exit 0、`npm run lint`（`oxlint --deny-warnings`）exit 0、`npm run test`（`vitest run`）**24件全pass**（3ファイル、約2.2秒）、`npm run build`（`tsc -b && vite build`）成功（`dist/assets/index-*.js` 409.52 kB／gzip 129.09 kB、chunk sizeの警告も出ない）。`npm run dev`は`http://localhost:5173/`で起動しHTMLを返す。
+  - **テスト実行時のwarning: 0件**。`vitest run`の標準エラー出力は0バイト、標準出力にも`warn`／`deprecat`／`experimental`の語は1件も現れない（フロント側も差し戻し条件に該当しない）。
+  - **テストが「収集されずに素通り」でないことの確認**: `vitest run --reporter=verbose`で24件のテスト名と個別実行時間を確認した（`apiKeyStorage.test.ts` 4件、`client.test.ts` 9件、`App.test.tsx` 11件）。skip/todoは0件。内容も実質的で、`App.test.tsx`はTesting Library＋`userEvent`でDOM操作（キー入力→「保存して接続」クリック）を行い、`fetch`をスタブして呼び出しURL・`X-API-Key`ヘッダー値・表示テキストまでアサートしている。
+  - **受け入れ条件1（開発サーバー起動・初期画面表示）: 合格** — `npm run dev -- --port 5173`を起動し、**実ブラウザ（Windows側Chromeのheadlessモードで`--dump-dom`）**で`http://localhost:5173/`を開いてレンダリング結果を確認。「案件・選考トラッカー」見出し、接続先表示、API Key入力欄（`type="password"`）、「API Keyを入力すると、APIへ接続して案件一覧を表示します。」、「案件一覧（GET /projects）」が実際に描画されていた（MUI/emotionのスタイルも注入済み＝Reactが正常に動作）。
+  - **受け入れ条件2（本番ビルド成功）: 合格** — `npm run build`が`tsc -b`込みで成功。成果物の`dist/`を静的配信して実ブラウザで動作させ、API疎通まで確認済み（下記条件5・6）。
+  - **受け入れ条件3（型チェック・lintが違反で失敗する）: 合格（意図的な違反を混入して実測）** — 一時ファイル`src/__eval_violation.ts`に暗黙any（`TS7006`）と型不一致（`TS2322`）を仕込むと`npm run typecheck`／`npm run build`がともに**exit 2**で失敗（`tsconfig.app.json`に`strict`の明記は無いがTypeScript 6.0の既定でstrictが有効なことを実地確認）。同様に`debugger`文と重複キーを仕込むと`npm run lint`が`no-debugger`／`no-dupe-keys`を報告して**exit 1**（`--deny-warnings`によりwarningレベルでも失敗）。**確認用ファイルは削除済みで、削除後に再実行してexit 0に戻ることを確認した**（`git status`も評価前と同一）。
+  - **受け入れ条件4（接続先が直書きでなく環境ごとに切替可能）: 合格** — `src/config.ts`は`import.meta.env.VITE_API_BASE_URL`のみを参照しフォールバックURLを持たない。`VITE_API_BASE_URL=http://localhost:18010`を与えて起動した開発サーバーの画面に「接続先: http://localhost:18010」が表示され（`.env.development`の`http://localhost:8000`を上書きできている）、その接続先へ実際にリクエストが飛ぶことをブラウザで確認。環境変数なしでビルドした`dist`には`localhost`文字列が0件で、開発用の既定値が本番成果物へ混入しない。
+  - **受け入れ条件5（稼働中APIへ認証付きリクエストし取得内容を表示）: 合格（実APIサーバー＋実ブラウザで確認）** — 一時DB（`DATABASE_URL`を評価用ファイルに指定。開発用`app.db`は未変更）で`uvicorn`を起動し案件を1件登録、`VITE_API_BASE_URL`をそのAPIに向けたビルド成果物を静的配信し、実ブラウザで開いた結果、画面に「接続先: http://localhost:18010」「取得件数: 1 件」と案件行（ID=1／評価用案件／評価クライアント／提案中／123,456）が表示された（`toLocaleString()`による桁区切りも機能）。
+  - **受け入れ条件6（認証エラー時・通信失敗時に原因が判別できるメッセージ）: 合格（実ブラウザで3系統を確認）** — (a) 誤ったキー: 「認証エラー（HTTP 401）: API Keyが正しくありません。入力したキーを確認してください。」、(b) APIプロセス停止: 「APIサーバーに接続できませんでした（http://localhost:18010）。APIが起動しているか、接続先URLとCORSの許可オリジン設定を確認してください。」、(c) 接続先未設定: 環境変数名を含む設定不備メッセージ（vitestで担保）。いずれも`role="alert"`のMUI Alertとして表示され、画面レイアウトは破綻しない。認証エラーと通信失敗が別文言で区別できている。
+  - **受け入れ条件7（API Keyの扱いをユーザー判断のうえ実装）: 合格** — 「## 決定事項」の「API Keyのブラウザ側での扱い（確定: 画面で入力し sessionStorage に保持）」に沿い、`sessionStorage`のみを使用（`apiKeyStorage.test.ts`が`localStorage.length === 0`まで検証）。画面入力（`type="password"`＋`autoComplete="off"`）・保持・クリア・リロード相当の再利用が実装・テストされている。
+  - **受け入れ条件8（秘密情報の非コミット）: 合格** — `git add -n frontend`のコミット対象は28ファイル（ソース・設定・`package-lock.json`のみ）で、`node_modules`・`dist`は`frontend/.gitignore`で除外済み。コミット対象の`.env.development`／`.env.example`は`VITE_API_BASE_URL`のみ。ビルド成果物にAPI Keyらしき値は無い。評価に使った`front-eval-key`はコマンドラインで与えた使い捨て値でリポジトリには残っていない。
+  - **受け入れ条件9（開発サーバーのオリジンをCORSに列挙して初めて呼べる）: 合格（実測）** — 許可オリジンに列挙した状態では`OPTIONS /projects`（`Origin: http://localhost:5173`、`Access-Control-Request-Headers: x-api-key`）が200＋`access-control-allow-origin`／`access-control-allow-headers: … X-API-Key`を返し、ブラウザからのGETも成功。`CORS_ALLOW_ORIGINS`を外してAPIを再起動すると、同じ画面・同じキーで前記(b)の通信失敗メッセージに変わることを実ブラウザで確認（プリフライトは400）。
+  - **受け入れ条件10（依存関係ディレクトリ・ビルド成果物がVCSとバックエンドイメージに含まれない）: 合格（`docker build`で実測）** — 検証用イメージで`COPY . /ctx`してビルドコンテキストを実査した結果、含まれるのは`.dockerignore`・`.gitignore`・`.python-version`・`Dockerfile`・`pyproject.toml`・`uv.lock`・`backend/app/**`のみで、`frontend`・`node_modules`・`dist`・`*.db`・`__pycache__`・`.env*`は0件。実際の`docker build`も成功し、生成イメージの`/app`は`app`・`data`・`.venv`のみ、`/app/app`配下に`__pycache__`／`*.pyc`が**存在しない**（`.dockerignore`の`**/`アンカー修正が効いている＝再編タスクで記録されたLowが解消）。コンテナ起動後の実挙動も従来どおり（キーなし401／正キー200／許可オリジンのプリフライト200）。検証用イメージ・コンテナはすべて削除済み（`docker push`・実デプロイは未実行）。
+  - **テストによる担保の確認（テスト不足の有無）**: 受け入れ条件のうち自動テスト化が可能な範囲（接続先の環境変数読み出しと末尾スラッシュ正規化、`X-API-Key`付与、401／その他HTTPエラー／通信失敗／JSON不正／204の分類、キー未入力・接続先未設定時にfetchしないこと、sessionStorageのみへの保持・再読み出し・クリア、取得結果の表示・0件表示・エラー表示・再読み込みでの復旧）はいずれも24件のテストで担保されており、**本タスクの受け入れ条件に対するテスト不足は認められない**。残る条件（開発サーバー起動、ビルド、lint/typecheckの失敗挙動、実APIとのCORS込み疎通）は性質上コマンド・ブラウザでの実地確認事項であり、上記のとおり自分で再現して確認した。
+  - 【Low（合格判定に影響しない・記録のみ）】通信失敗（API未起動・URL誤り）とCORS不許可が同一文言になる。ブラウザからは原理的に区別できないため設計として妥当で、文言も両方の観点を促す内容になっているが、原因切り分けの手順（許可オリジン設定の確認方法）をREADMEに追記するとより親切。
+  - 【Low（合格判定に影響しない・記録のみ）】`.github/workflows/ci.yml`はlint→test→buildの3ジョブすべてがバックエンド専用で、フロントエンドの`typecheck`／`lint`／`test`はCIで実行されない。受け入れ条件は「コマンドで実行できる」ことまでのため合格判定には影響しないが、「違反があれば失敗する」ゲートが自動化されていないので、後続のフロントエンドタスクの前にCIジョブ追加を検討したい（generator実装メモでもスコープ外と明記済み）。
+  - 【Low（合格判定に影響しない・記録のみ）】後続タスクで使う分岐に未テストの経路がある: `client.ts`の`AbortError`の再スロー、`body`指定時の`Content-Type`付与（POST/PATCH経路）、`apiKeyStorage.ts`の`sessionStorage`が使えない環境のフォールバック。本タスクの受け入れ条件外だが、案件管理画面タスクで登録・更新を実装する際に併せてテストを足すのが望ましい。
+  - 【Low（既出・セキュリティエバリュエーターと同旨）】`frontend/.env.production`はルート／`frontend`いずれの`.gitignore`にも一致せずコミット対象になる（`git check-ignore`で確認）。READMEが本番設定の置き場として案内しているため、`frontend/.gitignore`に`.env`・`.env.*`（`!.env.example`・`!.env.development`）を追加しておくと誤コミットを防げる。
+  - **評価環境の後始末**: 評価で起動した`uvicorn`（ポート18010／18011）・Vite開発サーバー（5173）・静的配信サーバー（4173）はすべて停止、評価用DBはスクラッチ領域の一時ファイルのみ（開発用`app.db`は未変更）、`docker`のイメージ・コンテナは削除済み。混入した違反ファイルは削除し`dist`もクリーンに再ビルドしたため、`git status`は評価前と同一（`.dockerignore`・`spec.md`のM、`frontend/`のみ未追跡）。アプリケーションコード・テストコードは一切変更していない。
+  - 総評: バックエンド206件pass・warning 0件・ruff通過、フロントエンド24件pass・warning 0件・typecheck/lint/buildすべて成功、受け入れ条件10項目を実ブラウザ・実APIまで含めて再現確認できたため**完了**とする。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 案件管理画面

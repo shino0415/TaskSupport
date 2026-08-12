@@ -3,12 +3,20 @@
 .github
 .pytest_cache
 .ruff_cache
-__pycache__
-*.py[oc]
-*.db
-*.sqlite3
-.env
+# パターンはコンテキストルート基準のアンカー付きマッチのため、ネストしたディレクトリにも
+# 効かせるには **/ を付ける必要がある（backend/app/__pycache__ 等の混入防止）
+**/__pycache__
+**/*.py[oc]
+**/*.db
+**/*.sqlite3
+**/.env
+**/.env.*
 backend/tests
+# フロントエンドはバックエンドのイメージに一切含めない（依存関係ディレクトリ・
+# ビルド成果物を含め、ビルドコンテキストへ送らない）
+frontend
+**/node_modules
+**/dist
 spec.md
 README.md
 .claude
