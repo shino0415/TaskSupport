@@ -20,6 +20,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# アプリコードがbackend/配下に移ったため、isortのファーストパーティ判定の基準ディレクトリを合わせる
+src = ["backend"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -27,5 +29,5 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]

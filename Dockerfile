@@ -23,7 +23,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-install-project --no-dev
 
-COPY app ./app
+COPY backend/app ./app
 RUN uv sync --locked --no-dev
 
 FROM python:3.12-slim

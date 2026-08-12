@@ -31,7 +31,7 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     env:
-      # tests/はTestClient使用時に必要なAPI_KEYをmonkeypatchで各テスト自身が
+      # backend/tests/はTestClient使用時に必要なAPI_KEYをmonkeypatchで各テスト自身が
       # 設定するため本来この環境変数への依存はないが、将来テストが増えた際の
       # 保険として、ローカル実行やCIでも同じ挙動になるよう明示しておく。
       API_KEY: ci-test-api-key

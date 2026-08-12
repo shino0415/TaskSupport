@@ -752,25 +752,69 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - 【結論】前回検出したHigh（`chown /app`によるコード改ざん耐性の実質無効化）は、DBファイル専用ディレクトリ`/app/data`のみをappuser所有にする方式への変更により解消されたことを、generatorの報告に依らず本エバリュエーター自身の独立した実機検証（ビルド・書き込み試行・API動作確認・restart後の永続化試行）で確認した。他にCritical/High相当の新規問題は検出しなかった（Low: `.venv/.lock`が世界書き込み可能だが、Python importの対象にならないため悪用不可、記録のみ）。statusは「完了」のまま維持する。
 
 ### タスク: ソースコードのbackend/・frontend/への再編
-- status: 未着手
+- status: 完了
 - 概要: フロントエンドを同一リポジトリに追加するのに先立ち、バックエンドのソースコード（アプリ本体とテスト）を `backend/` 配下へ移し、リポジトリのレイアウトをバックエンド／フロントエンドの2本立てに整える。設定ファイル類はリポジトリルートに残し、`frontend/` の中身は後続の基盤セットアップタスクで作成する。以降のフロントエンド関連タスクより前に実施する。
 - 前提（確定済みの方針、再検討しない）:
   - 移動対象はソースコードのみ（アプリ本体とテスト一式）。移動先は `backend/` 配下で、それぞれの内部構成は変えない。
   - 依存関係定義・ロックファイル・コンテナビルド定義とその除外設定・CIワークフロー定義・README・spec.md・Pythonバージョン指定・Git除外設定はリポジトリルートに残す。
   - コンテナ内でのアプリ配置、DBファイルの配置、非rootユーザー実行、書き込み権限の分離に関する既存タスクの決定は変更しない。
 - 受け入れ条件:
-  - [ ] アプリ本体とテストが `backend/` 配下に移動しており、リポジトリルート直下には残っていない
-  - [ ] 設定ファイル類（依存関係定義・ロックファイル・コンテナビルド定義とその除外設定・CIワークフロー定義・README・spec.md・Pythonバージョン指定・Git除外設定）はリポジトリルートに残っている
-  - [ ] 移動はバージョン管理上ファイルの移動として履歴を追える形で行われており、再編に伴うパスの追従以外にファイルの中身が変更されていない
-  - [ ] 新レイアウトのままテストスイート全件がパスする（テストの探索先とimportの解決が新レイアウトで正しく機能している）
-  - [ ] 新レイアウトのままlintが通り、対象範囲から移動後のソースが漏れていない
-  - [ ] コンテナイメージのビルドが成功し、起動したコンテナのAPIが認証付きリクエストに対して従来どおり応答する
-  - [ ] コンテナ内でのアプリ配置・DBファイル配置・実行ユーザー・書き込み権限が再編前と同じ状態を保っている
-  - [ ] CIワークフローが新レイアウトのソースを対象にlint・test・buildを実行する定義になっている
-  - [ ] README等のドキュメント内のパス記述が新レイアウトと矛盾しない
-  - [ ] 認証・論理削除・ステータス遷移警告など既存タスクの受け入れ条件に挙げた挙動が再編後も変わらない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] アプリ本体とテストが `backend/` 配下に移動しており、リポジトリルート直下には残っていない
+  - [x] 設定ファイル類（依存関係定義・ロックファイル・コンテナビルド定義とその除外設定・CIワークフロー定義・README・spec.md・Pythonバージョン指定・Git除外設定）はリポジトリルートに残っている
+  - [x] 移動はバージョン管理上ファイルの移動として履歴を追える形で行われており、再編に伴うパスの追従以外にファイルの中身が変更されていない
+  - [x] 新レイアウトのままテストスイート全件がパスする（テストの探索先とimportの解決が新レイアウトで正しく機能している）
+  - [x] 新レイアウトのままlintが通り、対象範囲から移動後のソースが漏れていない
+  - [x] コンテナイメージのビルドが成功し、起動したコンテナのAPIが認証付きリクエストに対して従来どおり応答する
+  - [x] コンテナ内でのアプリ配置・DBファイル配置・実行ユーザー・書き込み権限が再編前と同じ状態を保っている
+  - [x] CIワークフローが新レイアウトのソースを対象にlint・test・buildを実行する定義になっている
+  - [x] README等のドキュメント内のパス記述が新レイアウトと矛盾しない
+  - [x] 認証・論理削除・ステータス遷移警告など既存タスクの受け入れ条件に挙げた挙動が再編後も変わらない
+- 実装メモ（技術判断とその理由）:
+  - **移動方法（`git mv`）**: `git mv app backend/app`・`git mv tests backend/tests`で移動した。`git status`上は全23ファイルが`R`（rename、内容変更なし）として記録されており、バージョン管理上「移動」として履歴を追える。移動対象ファイルの中身は1行も変更していない（`app/`配下は`app.`始まりのimportのみで相対パス依存が無く、`tests/`配下も`from app import ...`形式のためimport文の書き換えは不要だった）。ルート直下に残したのは`pyproject.toml`・`uv.lock`・`Dockerfile`・`.dockerignore`・`.github/workflows/ci.yml`・`README.md`・`spec.md`・`.python-version`・`.gitignore`（＋gitignore対象の`app.db`・`.venv`等）。
+  - **pytestのパス追従（`pyproject.toml`）**: `pythonpath = ["."]` → `["backend"]`、`testpaths = ["tests"]` → `["backend/tests"]`に変更した。ルートから`uv run pytest`を実行するという既存の運用（CIの`run: uv run pytest`もそのまま）を変えずに、`backend`をsys.pathに載せることで`from app import ...`のimport解決を従来どおり成立させる方式を選んだ（各テストファイルのimport文を書き換えずに済み、「中身を変更しない」という受け入れ条件と両立するため）。
+  - **ruffのパス追従（`pyproject.toml`）**: lint対象は`uv run ruff check .`（ルート起点の再帰探索）のままで移動後のソースを自動的に含むため、コマンド・CI定義の変更は不要。ただしisort（`I`ルール）のファーストパーティ判定基準がデフォルトでプロジェクトルートのため、`src = ["backend"]`を追加して`app`パッケージが引き続きファーストパーティとして扱われるようにした。実際に`uv run ruff check . --show-files`で、移動後の`backend/app/*.py`13件・`backend/tests/*.py`9件が全てlint対象に含まれている（漏れが無い）ことを確認済み。
+  - **Dockerfileのパス追従**: builderステージの`COPY app ./app` → `COPY backend/app ./app`の1行のみ変更した。ビルドコンテキストはリポジトリルートのまま（CIの`context: .`も変更不要）で、**コンテナ内の配置は従来どおり`/app/app`**になるため、`CMD ["uvicorn", "app.main:app", ...]`・`WORKDIR /app`・`ENV DATABASE_URL="sqlite:////app/data/app.db"`・非rootユーザー（`appuser`）・`/app/data`のみ書き込み可という既存タスクの決定は一切変更していない。
+  - **`.dockerignore`のパス追従**: `tests` → `backend/tests`に変更した（`.dockerignore`のパターンはコンテキストルート基準のマッチのため、移動後は`tests`のままではテストコードの除外が効かなくなる）。他のエントリ（`.venv`・`.git`・`.github`・`*.db`・`.env`・`spec.md`・`README.md`・`.claude`等）は従来どおり。
+  - **CIワークフロー**: `lint`は`uv run ruff check .`（ルート再帰探索で`backend/`を含む）、`test`は`uv run pytest`（`testpaths = ["backend/tests"]`が効く）、`build`は`context: .`（Dockerfileが`backend/app`をコピー）で、いずれも新レイアウトのソースを対象に動作するため機能的な変更は不要だった。唯一、`test`ジョブの`API_KEY`に付したコメント内のパス記述を`tests/` → `backend/tests/`に更新した（記述の正確性のための追従のみ）。
+  - **ドキュメントのパス記述**: `README.md`は現時点で空ファイル（0バイト）であり、新レイアウトと矛盾するパス記述は存在しないため変更していない（レイアウト説明の新規追記は本タスクのスコープ外と判断）。`spec.md`内の`app/...`・`tests/...`という記述は全て過去タスクの実装メモ・エバリュエーターのフィードバック（実施時点の記録）であり、書き換えると履歴の記録としての正確性が損なわれるため意図的に変更していない。以降の記述は`backend/app/...`・`backend/tests/...`を用いる。
+  - **docker実機確認（ビルド〜API疎通〜権限）**: `docker build -t project-tracker-api:reorg-check .`でビルド成功。`docker run -e API_KEY=... -p 18002:8000`で起動し、以下を実機で確認した上でコンテナ・イメージとも削除済み。
+    - 認証: `X-API-Key`なしの`GET /projects`は401、正しいキー付きは200。
+    - 既存挙動の回帰: `POST /projects`が201、`PATCH`で順行遷移（提案中→契約中）は`warning: null`、逆行遷移（契約中→提案中）は200＋`warning: "契約中 から 提案中 への変更です。..."`、`DELETE`が204でその後の`GET /projects`から除外される（論理削除）ことを確認。
+    - コンテナ内配置: `/app/app`（アプリコード）・`/app/.venv`・`/app/data`のみが存在し、`/app/tests`・`/app/backend`は存在しない（テストコードは`.dockerignore`で除外されたまま）。`DATABASE_URL=sqlite:////app/data/app.db`で`/app/data/app.db`が実際に生成されている。
+    - 実行ユーザー: `id`＝`uid=1000(appuser)`、`/proc/1/status`のNameが`uvicorn`・Uidが1000（非root）。
+    - 書き込み権限の分離: `/app`・`/app/app`・`/app/.venv`は`root:root` 755のままで、`/app/evil.py`・`/app/fastapi.py`・`/app/app/evil.py`・`/app/.venv/evil.py`への書き込みはいずれも`Permission denied`。`/app/data`配下のみ書き込み成功。`find /app -writable`（`/app/data`除く）のヒットは`/app/.venv/.lock`のみで、これは再編前のセキュリティ再レビュー（【追記2】）時点と同一の状態。
+  - **セルフチェック**: `uv run pytest` 170件全passでwarning 0件（`warnings summary`セクションの出力なし）、`uv run ruff check .`は`All checks passed!`。
+- セキュリティエバリュエーターのフィードバック:
+  - **結論: 合格（Critical/High該当なし）。statusを「性能評価待ち」に更新、差し戻し回数は0のまま。**
+  - 【変更範囲の独立検証】`git status`/`git diff --cached -M --stat`で、移動23ファイルが全て`R`（rename）かつ`0 insertions(+), 0 deletions(-)`＝内容無変更であることを確認した。内容変更があったのは`.dockerignore`（`tests`→`backend/tests`の1行）、`Dockerfile`（`COPY app ./app`→`COPY backend/app ./app`の1行）、`pyproject.toml`（`pythonpath`/`testpaths`/`[tool.ruff] src`）、`.github/workflows/ci.yml`（コメント1行のみ）の4ファイルで、いずれも報告どおりパス追従の範囲に収まっている。アプリコードが1行も変わっていない以上、認証・論理削除・ステータス遷移警告等の既存挙動に劣化を生む余地は無い（実機でも後述のとおり再確認済み）。
+  - 【認証・論理削除の再確認】`backend/app/main.py`で`verify_api_key`が`FastAPI(dependencies=[...])`のグローバル依存関係として維持され、`docs_url`/`redoc_url`/`openapi_url`は`None`のまま。`backend/app/auth.py`は`secrets.compare_digest`による定数時間比較＋環境変数未設定時fail closedのまま。routers配下の全GET/一覧クエリに`is_deleted.is_(False)`フィルタが残り、DELETE系は全て`is_deleted = True`（物理削除・`DELETE FROM`・生SQL文字列結合・`text()`/`execute()`の使用は`grep`で0件）。ハードコードされたAPIキー/DB認証情報、ユーザー入力のログ出力・外部コマンド渡しも0件。
+  - 【実機検証（本エバリュエーター自身が実施）】`docker build`でイメージを生成し、`-e API_KEY=... -p 18123:8000`で起動して確認した（検証後にコンテナ・イメージとも削除済み）。
+    - 認証: キー無し`GET /projects`＝401、誤キー＝401（レスポンスは`{"detail":"Invalid or missing API Key"}`のみでスタックトレース・内部パス・SQL文字列の漏洩なし）、正キー＝200。`/docs`・`/openapi.json`は404のまま。
+    - コンテナ内配置・権限: 実行ユーザーは`uid=1000(appuser)`、`/app`・`/app/app`・`/app/.venv`は`root:root`のままで`touch`は全て`Permission denied`、書き込み可能なのは`appuser:appuser`所有の`/app/data`のみ。`DATABASE_URL=sqlite:////app/data/app.db`で`/app/data/app.db`が生成され、`/app`直下にDBファイルは作られない。既存タスクの「非root実行・書き込み権限の分離・DB配置」の決定は崩れていない。
+    - イメージ内容: `/app`直下は`.venv`・`app`・`data`のみ。テストコード（`test_*`）・`.env`・`*.db`・`.git`・`.venv`（ホスト側）等の混入は無し。
+    - lint/test: 新レイアウトのまま`uv run pytest`＝170 passed（warning 0件）、`uv run ruff check .`＝All checks passed。CIの`lint`（`ruff check .`のルート再帰探索）・`test`（`testpaths = ["backend/tests"]`）・`build`（`context: .`＋`COPY backend/app`）はいずれも新レイアウトのソースを実際に対象にしており、パスの取りこぼしによる「素通り」は無い。
+    - `pythonpath = ["backend"]`の副作用: `backend/`配下は`app`・`tests`のみで、リポジトリルート（`spec.md`・`app.db`等）はimportパスから外れる方向の変更であり、意図しないディレクトリがimportパスに入る問題は無い。
+  - 【Low（今回の変更が原因ではない既存事象。修正は任意、次タスク以降で検討推奨）】`.dockerignore`のパターンはコンテキストルート基準のアンカー付きマッチであり、`__pycache__`・`*.py[oc]`は**ネストしたディレクトリには効かない**。そのため`COPY backend/app ./app`によりホスト側の`backend/app/__pycache__/*.pyc`・`backend/app/routers/__pycache__/*.pyc`がイメージ内`/app/app`に取り込まれることを実機で確認した（最小再現コンテキストでの検証により、再編前の`app/__pycache__`でも同じく取り込まれていた＝本タスクによる劣化ではないことも確認済み）。影響はイメージ肥大化とローカルビルドの再現性低下に留まり（CIはcheckout直後で`__pycache__`が存在しないため清浄、また`.pyc`は`.py`のmtime/sizeで無効化されるため古いバイトコードの実行も起きない）、機密漏洩には至らないためLow判定。修正するなら`**/__pycache__`・`**/*.py[oc]`のように`**/`付きパターンにするのが適切。
+  - 【Info（将来向け）】同じアンカー仕様のため、後続の`frontend/`追加時に`node_modules`や`frontend/.env*`がビルドコンテキストへ入り得る。フロントエンド基盤セットアップタスクで`.dockerignore`（および必要なら`frontend/.dockerignore`）へ`**/node_modules`・`**/.env*`相当の除外を追加することを推奨する。
+- 性能エバリュエーターのフィードバック:
+  - 【総評】合格。受け入れ条件10項目すべてを実際の実行（pytest・ruff・docker build/run・git履歴確認）で検証し、いずれも満たしていることを確認した。warningも0件のため、statusを「完了」に更新する（差し戻し回数は0のまま）。
+  - 【pytest】`uv run pytest -v`をリポジトリルートで実行し、`collected 170 items` / `170 passed`（10秒）。ヘッダに`configfile: pyproject.toml` / `testpaths: backend/tests`が表示され、全テストが`backend/tests/*.py`から実際に収集されていることを確認した。再編前の170件と件数が完全に一致しており、「収集0件で素通り」ではないことを収集件数・各テスト名の出力の両方で確認済み。
+  - 【warning 0件の厳密確認】通常実行で`warnings summary`セクションが出力されないことに加え、`uv run pytest -W error`（全warningをエラー化）でも`170 passed`となることを確認した。DeprecationWarning等を含め警告は1件も発生しておらず、差し戻しルールに抵触しない。
+  - 【ruff】`uv run ruff check .`＝`All checks passed!`（exit 0）。さらに`uv run ruff check . --show-files`で対象ファイルを列挙し、`backend/app/*.py` 13件・`backend/tests/*.py` 9件の計22ファイル（＋`pyproject.toml`）が全てlint対象に含まれていることを確認した。ルート起点の再帰探索のため移動後のソースの取りこぼしは無い。
+  - 【import解決の実確認】`sys.path`に`backend`を追加した状態で`import app`が`/home/shino/portfolio/ProjectList/backend/app/__init__.py`を解決することを確認。ルート直下に`app/`・`tests/`は残っておらず（`ls`で`Dockerfile`・`README.md`・`app.db`・`backend`・`pyproject.toml`・`spec.md`・`uv.lock`のみ）、旧パスの残骸を誤importする余地は無い。
+  - 【実行ディレクトリ非依存の確認（追加検証）】`backend/`ディレクトリをcwdにして`uv run pytest`を実行しても、rootdirがリポジトリルートとして解決され`170 passed`・`uv run ruff check .`も`All checks passed!`となることを確認した。CIの`run: uv run pytest`（ルート実行）はもちろん、ローカルでの実行位置が変わっても破綻しない。
+  - 【git履歴上の移動】`git status --porcelain`で23ファイルすべてが`R`（rename）、`git diff --cached -M --stat`で`23 files changed, 0 insertions(+), 0 deletions(-)`＝内容無変更を確認。さらに各テストファイルを`git show HEAD:tests/<file>`と`diff`で1件ずつ突き合わせ、全9ファイルが完全一致（差分なし）であることを確認した。テスト関数定義数もHEAD側146・現行146で一致（170件はparametrize展開後の件数）。内容変更があったのは`pyproject.toml`・`Dockerfile`（`COPY backend/app ./app`）・`.dockerignore`（`backend/tests`）・`ci.yml`（コメント1行）の4ファイルのみで、いずれもパス追従の範囲内。
+  - 【設定ファイルのルート残置】`pyproject.toml`・`uv.lock`・`Dockerfile`・`.dockerignore`・`.github/workflows/ci.yml`・`README.md`・`spec.md`・`.python-version`・`.gitignore`がすべてリポジトリルートに存在することを確認。
+  - 【CIワークフロー定義】`lint`は`uv run ruff check .`（ルート再帰探索＝`backend/`配下を実際に対象にすることを`--show-files`で裏取り済み）、`test`は`uv run pytest`（`testpaths = ["backend/tests"]`が効くことを実行ヘッダで裏取り済み）、`build`は`context: .`＋Dockerfileの`COPY backend/app ./app`で新レイアウトを対象にしている。`needs`による`lint→test→build`の直列依存、`push: false`、`permissions: contents: read`も維持されており、新レイアウトのソースを対象にlint・test・buildを実行する定義になっている。
+  - 【docker実機検証（ビルド〜API疎通）】ユーザー許可のもと実施し、検証後にコンテナ・イメージとも削除済み（`docker push`・実デプロイは未実行）。
+    - `docker build`成功に加え、キャッシュの影響を排除するため`docker build --no-cache`でもクリーンビルドが成功することを確認した（旧`COPY app ./app`のままならルートに`app/`が無いため必ず失敗するので、新パスでコピーが成立していることの裏取りになる）。
+    - `docker run -e API_KEY=... -p 18077:8000`で起動し、`X-API-Key`なしの`GET /projects`＝401、正しいキー付き＝200を確認。`/docs`は404のまま。
+  - 【コンテナ内配置・権限が再編前と同一】`/app`直下は`.venv`・`app`・`data`のみで`/app/tests`・`/app/backend`は存在しない（テストコードは`.dockerignore`で除外されたまま）。`DATABASE_URL=sqlite:////app/data/app.db`、`/app/data/app.db`が生成される。実行ユーザーは`uid=1000(appuser)`（非root）。`/app/fastapi.py`・`/app/app/evil.py`・`/app/.venv/evil.py`への書き込みはいずれも`Permission denied`、`/app/data`配下のみ書き込み成功。`find /app -writable`（`/app/data`除く）のヒットは`/app/.venv/.lock`のみで、再編前（CI/CDタスクの【追記2】時点）と完全に同一の状態。
+  - 【既存挙動の回帰確認（コンテナ実機）】ステータス遷移警告を4パターンで実測し、同一（提案中→提案中）＝`warning: null`、隣接順行（提案中→契約中）＝`null`、飛び越え順行（契約中→完了）＝`null`、逆行（完了→提案中）＝`"完了 から 提案中 への変更です。..."`と正しく分岐することを確認。論理削除は`DELETE`＝204後に一覧から除外・詳細が404。親詳細（`GET /projects/{id}`）のレスポンスに子タスク情報が含まれないこと、配下タスク0件の時給換算が`{"total_work_hours":0.0,"hourly_rate":null}`で200を返すことも確認した。いずれも既存タスクの受け入れ条件どおり。
+  - 【テストによる担保の確認（テスト不足の有無）】指示された境界値・エッジケースに対応するテストが新レイアウトでも収集・パスしていることを個別に確認した: ステータス警告4パターン（`test_status_transitions.py`のproject/task/prep/resultそれぞれに同一・隣接順行・飛び越え順行・逆行、加えて分岐先＝無関係遷移）、論理削除の一覧・詳細除外（`test_delete_*_marks_is_deleted_and_excludes_from_list`・`test_get_*_not_found_after_deletion`）、親詳細の子情報非包含（`test_get_project_detail_does_not_include_child_task_info`・`test_get_company_detail_does_not_include_child_interview_step_info`）、WorkLogの同一タスク多重start（`test_start_work_log_allows_multiple_running_logs_for_same_task`）・複数タスク／案件の同時進行（`..._allows_concurrent_logs_across_tasks_and_projects`）・進行中ログの扱い（`test_hourly_rate_running_log_excluded_from_total`）、稼働時間0の時給換算（`test_hourly_rate_zero_total_hours_returns_consistent_response_without_error`・`..._when_no_tasks`）。本タスク固有のテスト不足は無い（再編タスクの性質上、レイアウト自体を検証する自動テストは存在しないが、170件が新設定のまま収集・パスすること自体が探索先とimport解決の担保になっている）。
+  - 【Low（差し戻し対象外・記録のみ）】`README.md`は0バイトの空ファイルのため受け入れ条件9「ドキュメント内のパス記述が新レイアウトと矛盾しない」は自明に成立しているが、リポジトリのレイアウト（`backend/`・今後の`frontend/`）や起動・テスト手順の記載は将来的に追加が望ましい。
+  - 【Low（本タスク起因ではない既存事象・記録のみ）】`--no-cache`ビルドしたイメージ内の`/app/app`に`__pycache__`が含まれることを実機で確認した。`.dockerignore`の`__pycache__`がアンカー付きでネストに効かないためで、セキュリティエバリュエーターが既にLowとして記録済みの再編前からの事象（`**/__pycache__`・`**/*.py[oc]`への変更が適切）。イメージ肥大化のみで機能・セキュリティ影響は無いため差し戻し対象にしない。
+  - 【非対象】`frontend/`ディレクトリ自体は本タスクの概要どおり後続タスクで作成する方針のため、未作成であることを不備とは扱わない。
 - 差し戻し回数: 0
 
 ### タスク: CORS許可オリジン設定（バックエンド）

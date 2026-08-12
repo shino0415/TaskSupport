@@ -8,7 +8,7 @@ __pycache__
 *.db
 *.sqlite3
 .env
-tests
+backend/tests
 spec.md
 README.md
 .claude
