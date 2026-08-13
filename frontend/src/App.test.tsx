@@ -423,3 +423,60 @@ describe('画面構成の分割とナビゲーション', () => {
     expect(screen.queryByRole('region', { name: '案件管理' })).not.toBeInTheDocument()
   })
 })
+
+// ページ分割後も、横断一覧の各リンク先URL（/companies/:id・/projects/:id・/tasks/:id/:id）を
+// クリックを介さず直接開いた場合に同じ詳細が表示されることを検証する。
+// BrowserRouterは現在のlocationを初期状態として描画するため、この手順は
+// 「URLを直接開く」操作・「再読み込みする」操作のいずれとも同一の初期描画過程をたどる
+// （「画面構成の分割とナビゲーション」describeの「直接開いても同じ画面が表示される」と同じ考え方）。
+describe('詳細ダイアログへのディープリンク（新しいページ構成でのURL直接オープン）', () => {
+  it('企業詳細のURLを直接開くと、選考ページ上に対応する企業詳細ダイアログが開いた状態で表示される', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    window.history.pushState(null, '', '/companies/1')
+
+    render(<App />)
+
+    // ダイアログが開くとMUIが背景をaria-hiddenにするため、背景側の要素は
+    // hidden: true を指定して（アクセシビリティツリー上は非表示のまま）存在のみ確認する。
+    expect(screen.getByRole('region', { name: '選考管理', hidden: true })).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('企業詳細（ID: 1）')).toBeInTheDocument()
+    expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
+  })
+
+  it('案件詳細のURLを直接開くと、案件ページ上に対応する案件詳細ダイアログが開いた状態で表示される', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    window.history.pushState(null, '', '/projects/1')
+
+    render(<App />)
+
+    // ダイアログが開くとMUIが背景をaria-hiddenにするため、背景側の要素は
+    // hidden: true を指定して（アクセシビリティツリー上は非表示のまま）存在のみ確認する。
+    expect(screen.getByRole('region', { name: '案件管理', hidden: true })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'タスク管理', hidden: true })).toBeInTheDocument()
+    expect(
+      screen.getByRole('region', { name: '稼働計測・時給換算', hidden: true }),
+    ).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('案件詳細（ID: 1）')).toBeInTheDocument()
+    expect(await within(dialog).findByText('CrowdWorks')).toBeInTheDocument()
+  })
+
+  it('タスク詳細のURLを直接開くと、案件ページのタスク管理で対象タスクが分かる状態で表示される', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    window.history.pushState(null, '', `/tasks/${String(SAMPLE_PROJECT.id)}/${String(SAMPLE_TASK.id)}`)
+
+    render(<App />)
+
+    expect(screen.getByRole('region', { name: '案件管理' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '稼働計測・時給換算' })).toBeInTheDocument()
+    const tasksRegion = screen.getByRole('region', { name: 'タスク管理' })
+    expect(await within(tasksRegion).findByText('取得件数: 1 件')).toBeInTheDocument()
+    const highlightedRow = within(tasksRegion).getByText('要件整理').closest('tr')!
+    expect(highlightedRow).toHaveAttribute('aria-current', 'true')
+    expect(within(highlightedRow).getByText('対象のタスク')).toBeInTheDocument()
+  })
+})
