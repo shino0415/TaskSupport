@@ -1381,10 +1381,40 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: CI/CDパイプラインへのマイグレーション適用組み込みの検討
-- status: 未着手
+- status: 完了
 - 概要: 「本番相当環境へのマイグレーション適用の自動化方針」の決定（確定: CI/CDパイプラインに自動組み込みする。「## 決定事項」参照）に沿って、CI/CDパイプラインにマイグレーション適用のステップを追加する。
 - 受け入れ条件:
-  - [ ] CI/CDパイプラインの実行時にマイグレーションが適用され、適用に失敗するとパイプラインが失敗する
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] CI/CDパイプラインの実行時にマイグレーションが適用され、適用に失敗するとパイプラインが失敗する
+- 実装メモ（技術判断とその理由）:
+  - **ジョブ構成（`.github/workflows/ci.yml`）**: 既存の`lint → test → build`（`needs`による直列依存）の間に、新規ジョブ`migrate`（`Apply migrations (alembic upgrade head)`）を`test`の後・`build`の前に挿入し、`needs: test` → `migrate`、`build`の`needs`を`test`から`migrate`に変更した。これにより`lint → test → migrate → build`の直列依存となり、マイグレーション適用に失敗すると（`migrate`ジョブが失敗し）後続の`build`ジョブには進まない（受け入れ条件の「適用に失敗するとパイプラインが失敗する」＝安全側に倒す方針をジョブの`needs`依存で実現）。
+  - **「実デプロイ対象外」という既存スコープとの整合**: 「CI/CDパイプライン構築」タスクの決定通り、本プロジェクトのCI/CDパイプラインは実際のデプロイ先（レジストリ・ホスティング環境）を持たず、`build`ジョブも`push: false`でビルド成否のみ検証する構成のまま（本タスクでも変更していない）。そのため「マイグレーションを適用する対象の本番相当環境」も実在しない。この制約の中で「## 決定事項」の方針（デプロイのたびにスキーマが確実に最新化されることを優先し、適用失敗時はパイプラインを失敗させる）を可能な限り忠実に再現するため、`migrate`ジョブは**パイプライン実行のたびに、空のDB（`DATABASE_URL=sqlite:////tmp/ci_migration_check.db`、ジョブのランナー上に都度新規作成される一時ファイル）に対して`uv run alembic -c backend/alembic.ini upgrade head`を実際に実行し、現行の全マイグレーションリビジョンが先頭から最新まで問題なく適用できることを検証する**設計にした。実際のホスティング環境が用意された際は、この`migrate`ジョブの`DATABASE_URL`を本番相当DBの接続文字列（GitHub Secretsで注入）に差し替えるだけで、同じ`alembic upgrade head`コマンドがそのまま本番相当環境への適用ステップとして機能する構成にしてある。
+  - **既存の`test_migrations.py`（pytest経由の検証）との役割の違い**: 「マイグレーション管理基盤の導入」タスクで追加した`backend/tests/test_migrations.py`は、Alembicの内部API（`command.upgrade`等）をPythonから直接呼び出してテストする形であり、CIの`test`ジョブ（`uv run pytest`）内で間接的に検証されている。一方、本タスクの`migrate`ジョブは**`alembic` CLIコマンドを実際にシェルから呼び出すステップ**であり、受け入れ条件の文言「CI/CDパイプラインの実行時にマイグレーションが適用され」を、pytestのテストケース内での間接検証ではなくパイプラインの明示的な1ステップとして直接満たす目的で独立させた。
+  - **依存関係インストール**: `alembic`は`pyproject.toml`の`[project].dependencies`（devグループではなく本体側）に含まれているため、`migrate`ジョブでも他ジョブと同じ`uv sync --locked`のみで利用可能（`--no-dev`等の追加オプションは不要）。
+  - **DATABASE_URLの指定方法**: `sqlite:////tmp/ci_migration_check.db`（スキーム後にスラッシュ4つ＝絶対パス`/tmp/ci_migration_check.db`を指す標準的なSQLite URL形式）とし、GitHub Actionsランナー上の一時領域に都度新規のファイルを作成する（既存の開発用`app.db`やテストの一時DBとは完全に独立しており、`migrate`ジョブの実行がリポジトリ内の他ファイルに影響することはない）。
+  - **ローカルでの再現確認**（GitHub Actions上でのジョブ実行はユーザー指示により対象外、ローカルでのコマンド再現で代替）:
+    - 成功系: リポジトリルートから`DATABASE_URL="sqlite:///<一時パス>/test.db" uv run alembic -c backend/alembic.ini upgrade head`を実行し、Pythonで直接SQLiteファイルを開いて確認したところ、`alembic_version`（値: `522c9ff7a611`）を含む全6テーブル（`project`/`task`/`work_log`/`company`/`interview_step`/`alembic_version`）が空DBから作成されることを確認した（`ci.yml`の`migrate`ジョブが実行するコマンドと同一）。
+    - 失敗系: `backend/migrations/versions/`配下に、`upgrade()`内で`raise RuntimeError(...)`する一時的な壊れたリビジョン（`down_revision=522c9ff7a611`のダミー、検証後に削除済み・`__pycache__`も削除して後片付け済み）を一時的に配置した状態で同じコマンドを実行し、プロセスの終了コードが`1`（非ゼロ）になることを確認した。GitHub Actionsではステップが非ゼロ終了するとそのステップ・ジョブが失敗し、`needs: migrate`である`build`ジョブは実行されない（GitHub Actionsの`needs`の標準挙動）ため、「適用に失敗するとパイプラインが失敗する」という受け入れ条件を満たすことをローカルで裏付けた。
+    - YAML構文の妥当性は`python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"`で確認済み（パースエラーなし）。
+  - **スコープ外（意図的に未実施）**: 実際のGitHub Actions上でのワークフロー実行（ユーザー指示により対象外）。実デプロイ先（本番相当DBの接続情報・GitHub Secrets登録）の用意（「CI/CDパイプライン構築」タスクの決定通り、実デプロイ自体がこのプロジェクトのスコープ外のため）。Dockerイメージ（`Dockerfile`）への`backend/migrations`・`backend/alembic.ini`の組み込みは行っていない（`build`ジョブは引き続き`push: false`でビルド成否のみを検証する構成であり、コンテナ起動時に自動でマイグレーションを適用する設計ではなく、決定事項が指すのはCI/CDパイプライン上でのステップとしての自動適用であるため）。
+  - **セルフチェック**: `uv run pytest`（213 passed、warning 0件、backendは本タスクで無変更のため回帰確認目的）、`uv run ruff check .`（`All checks passed!`、backend無変更）。`git status --short`で本タスクの変更が`.github/workflows/ci.yml`のみであること、`backend/`配下・`app.db`に差分が無いことを確認済み。
+- テスト: 本タスクはCI/CDワークフロー定義（YAML）の変更であり新規のPython関数・エンドポイントを追加しないため、新規pytestファイルは追加していない（「CI/CDパイプライン構築」タスクと同じ方針）。代わりに上記実装メモの通り、ローカルで実際に`alembic upgrade head`コマンドを実行し成功系（空DBへの全テーブル作成）・失敗系（非ゼロ終了）の両方を再現確認し、既存のバックエンド自動テストスイート（213件、`test_migrations.py`の7件を含む）が本タスクによる回帰なく全てpassすることを確認した。
+- セキュリティエバリュエーターのフィードバック:
+  - 【総評】Critical/High相当の問題は無し。合格（性能評価待ちへ進める）。
+  - 【シークレット・DB接続情報の扱い】`.github/workflows/ci.yml`の差分を確認した。新規`migrate`ジョブが参照する`DATABASE_URL`は`sqlite:////tmp/ci_migration_check.db`という固定のローカルパス文字列のみで、`secrets.*`の参照・実在のDB接続情報・APIキーの類はハードコードされていない。`backend/alembic.ini`にも`sqlalchemy.url`の直書きは無く（`grep`で確認済み）、`backend/migrations/env.py`は`config.get_main_option("sqlalchemy.url") or DATABASE_URL`で`app.database.DATABASE_URL`（環境変数、未設定時は`sqlite:///./app.db`）にフォールバックする実装であり、この経路でも秘密情報の埋め込みは無い。実装メモに記載の「実デプロイ環境ができたら`DATABASE_URL`をSecrets経由に差し替える想定」は現時点では未実施の将来計画であり、現状のコードには影響しない。
+  - 【一時DBの分離】`migrate`ジョブはGitHub Actions上で`test`ジョブとは別の`runs-on: ubuntu-latest`インスタンス（ジョブ単位で独立したランナーVM）として実行されるため、同一ランナー上でのファイルパス衝突は原理的に発生しない。また`test`ジョブ内のpytestは各テストが`tmp_path`フィクスチャや`monkeypatch`で独自の一時DBを使う設計（既存実装、本タスクでは無変更）であり、`/tmp/ci_migration_check.db`という固定パスと衝突する余地は無い。ランナーはジョブ実行のたびに使い捨てられる（`ubuntu-latest`、セルフホストではない）ため、過去の実行の残骸が次回実行に混入することも無い。
+  - 【失敗時のパイプライン停止】diffを確認したところ、新規`migrate`ジョブは`needs: test`、既存`build`ジョブの`needs`は`test`から`migrate`に変更されている（`lint → test → migrate → build`の直列依存）。`migrate`ジョブのステップは`run: uv run alembic -c backend/alembic.ini upgrade head`のみで、`continue-on-error`等の失敗握りつぶし設定は無い。GitHub Actionsの標準挙動として、`needs`で指定したジョブが失敗すると（`if: always()`等の指定が無い限り）依存先ジョブは実行されないため、alembicが非ゼロ終了すれば`build`ジョブに進まない構成になっていることをYAML上で確認した。
+  - 【既存タスクの決定事項との整合】`build`ジョブは`needs`以外のフィールド（`push: false`、`docker/build-push-action@v6`の構成等）に変更が無いことをdiffで確認した。「CI/CDパイプライン構築」タスクで確立した「実デプロイ非対象・レジストリpushなし」というスコープは維持されている。「本番相当環境へのマイグレーション適用の自動化方針」（決定事項セクション）が求める「適用失敗時にパイプラインが失敗する」という安全側の設計も`needs`依存で実現されており、実装メモの技術判断と整合している。
+  - 【権限昇格】`ci.yml`冒頭の`permissions: contents: read`はワークフロー全体に1箇所のみ存在し（`grep`で確認）、新規`migrate`ジョブを含むいずれのジョブにもジョブ単位の`permissions:`上書きは追加されていない。したがって全ジョブが引き続き`contents: read`という最小権限を継承しており、`migrate`ジョブの追加によって`GITHUB_TOKEN`の権限が意図せず昇格した箇所は無い。
+  - 【その他確認事項】`migrate`ジョブが呼ぶ`uses:`は既存ジョブでも使用済みの`actions/checkout@v4`・`astral-sh/setup-uv@v4`のみで、新規のサードパーティActionは追加されていない（「CI/CDパイプライン構築」タスクで指摘済みのAction未SHA固定というLow指摘の対象が広がったわけではない）。`pull_request`トリガー時にforkからのPRで`migrate`ジョブが実行されても、本ジョブはシークレットを一切参照せずローカルの使い捨てSQLiteファイルに対してマイグレーションを適用するのみであり、盗用可能な機密情報・書き込み権限のある操作は存在しない。
+  - 【結論】Critical/High相当の問題は無いため、statusを「性能評価待ち」に更新する。新規のMedium/Low指摘も本タスク範囲では検出しなかった。
+- 性能エバリュエーターのフィードバック:
+  - 【総評】合格。受け入れ条件を満たすことを確認した。statusを「完了」に更新する。本タスクは新規APIエンドポイント・関数を追加するものではないため、指示通りワークフロー定義（YAML）の静的検証とローカルでのコマンド再現（成功系・失敗系）を主な確認手段とした。
+  - 【`uv run pytest -v`】213 passed、warning 0件（`warnings summary`セクション自体が出力されていないことを確認）。既存テストへの回帰なし。backend配下は本タスクで無変更（`git status --short backend/`で差分なしを確認済み）であり、テスト結果はセルフチェック記載の213件と一致。
+  - 【`uv run ruff check`】`All checks passed!`。
+  - 【`.github/workflows/ci.yml`のYAML構文・`needs`依存関係】`python3 -c "import yaml; yaml.safe_load(...)"`でパースエラーなしを確認。さらに`jobs.*.needs`をパースして`lint -> needs: None`、`test -> needs: lint`、`migrate -> needs: test`、`build -> needs: migrate`という直列依存を確認し、実装メモ・セキュリティエバリュエーターの指摘内容と一致することを確認した。`migrate`ジョブのステップは`run: uv run alembic -c backend/alembic.ini upgrade head`のみで`continue-on-error`等の失敗握りつぶし設定は無い。トップレベルの`permissions: contents: read`のみでジョブ単位の上書きも無いことも確認した。
+  - 【ローカル再現・成功系】`DATABASE_URL="sqlite:////tmp/ci_migration_check_verify.db" uv run alembic -c backend/alembic.ini upgrade head`（`migrate`ジョブと同一コマンド）を実行し、exit code 0を確認。Pythonのsqlite3で直接開いて`alembic_version`（`522c9ff7a611`）を含む6テーブル（`project`/`task`/`work_log`/`company`/`interview_step`/`alembic_version`）が空DBから作成されることを確認した。検証後、一時DBファイルは削除済み。
+  - 【ローカル再現・失敗系】`backend/migrations/versions/`配下に、`upgrade()`内で`raise RuntimeError(...)`する一時的な壊れたリビジョン（`revision="perfevalbroken"`、`down_revision="522c9ff7a611"`）を自ら作成して同じコマンドを実行し、`522c9ff7a611`適用後に`perfevalbroken`の適用中に例外が送出されexit code 1（非ゼロ終了）になることを確認した。GitHub Actionsの標準挙動では非ゼロ終了したステップはジョブを失敗させ、`needs: migrate`の`build`ジョブは実行されないため、「適用に失敗するとパイプラインが失敗する」という受け入れ条件が構成上満たされることを裏付けた。検証後、この一時リビジョンファイルおよび`__pycache__`は削除し、`git status --short backend/migrations/`で差分が無いことを確認した（`522c9ff7a611_create_initial_schema.py`のみが残存）。
+  - 【受け入れ条件の判定】「CI/CDパイプラインの実行時にマイグレーションが適用され、適用に失敗するとパイプラインが失敗する」→ 上記のYAML静的検証（`needs`依存）とローカルでの成功系・失敗系の実コマンド再現により満たされていることを確認した。
+  - 【テスト不足の指摘の要否】本タスクはYAMLワークフロー定義の変更のみでアプリケーションコードの追加が無く、既存の`backend/tests/test_migrations.py`（alembicの内部APIを直接呼ぶ7件）で`upgrade head`によるスキーマ作成・ロールバック等は既に別の観点でpytestカバー済みであることを確認した。CIワークフロー自体（YAMLの`needs`構成やジョブがシェルから`alembic` CLIを呼ぶこと）をpytestで検証する仕組みは無いが、先行の「CI/CDパイプライン構築」タスクの性能評価でも同様の理由（YAML変更はpytestでなく実コマンド再現・静的レビューで検証する方針）が採用されており、本タスクでも同方針を踏襲することが妥当と判断し、新規pytest不足は指摘事項としない。
+  - 【スコープ確認】`git status --short`で本タスクの差分が`.github/workflows/ci.yml`（および本評価によるspec.md更新）のみであり、`backend/`配下・`app.db`に差分が無いことを確認した。
 - 差し戻し回数: 0

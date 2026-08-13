@@ -47,9 +47,31 @@ jobs:
       - name: Run pytest
         run: uv run pytest
 
+  migrate:
+    name: Apply migrations (alembic upgrade head)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Apply migrations to a fresh database
+        # 本番相当環境への実デプロイはこのパイプラインの対象外（CI/CDパイプライン構築タスク参照）のため、
+        # ここではパイプライン実行のたびに、空のDBに対して現行の全マイグレーションが
+        # 先頭から最新まで問題なく適用できることを検証する。適用に失敗した場合（alembicが
+        # 非ゼロ終了する）はこのジョブが失敗し、needsで依存するbuildジョブに進ませない。
+        env:
+          DATABASE_URL: "sqlite:////tmp/ci_migration_check.db"
+        run: uv run alembic -c backend/alembic.ini upgrade head
+
   build:
     name: Build Docker image
-    needs: test
+    needs: migrate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
