@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import App from './App'
@@ -32,6 +32,12 @@ function jsonResponse(status: number, body: unknown): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+// App にはタスク管理画面（TasksPanel）も同居し、同じ /projects を独自に取得するため、
+// 案件管理画面固有の表示確認は「案件管理」領域に絞って検証する。
+function projectsRegion() {
+  return screen.getByRole('region', { name: '案件管理' })
 }
 
 beforeEach(() => {
@@ -139,7 +145,7 @@ describe('エラー表示', () => {
 
     render(<App />)
 
-    const alert = await screen.findByRole('alert')
+    const alert = await within(projectsRegion()).findByRole('alert')
     expect(alert).toHaveTextContent('401')
     expect(alert).toHaveTextContent('API Key')
   })
@@ -150,7 +156,7 @@ describe('エラー表示', () => {
 
     render(<App />)
 
-    const alert = await screen.findByRole('alert')
+    const alert = await within(projectsRegion()).findByRole('alert')
     expect(alert).toHaveTextContent(BASE_URL)
     expect(alert).toHaveTextContent('CORS')
   })
@@ -162,7 +168,9 @@ describe('エラー表示', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('VITE_API_BASE_URL')
+    expect(await within(projectsRegion()).findByRole('alert')).toHaveTextContent(
+      'VITE_API_BASE_URL',
+    )
   })
 
   it('再読み込みで復旧できる', async () => {
@@ -176,12 +184,12 @@ describe('エラー表示', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    await screen.findByRole('alert')
+    await within(projectsRegion()).findByRole('alert')
 
     shouldFail = false
     await user.click(screen.getByRole('button', { name: '再読み込み' }))
 
     expect(await screen.findByText('ポートフォリオサイト制作')).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(projectsRegion()).queryByRole('alert')).not.toBeInTheDocument()
   })
 })

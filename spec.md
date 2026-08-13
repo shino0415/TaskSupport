@@ -1007,18 +1007,66 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド タスク管理画面
-- status: 未着手
+- status: 完了
 - 概要: 案件配下のタスクの一覧表示・追加・編集・削除をブラウザ上で行えるようにする。案件管理画面の完了後に着手する。
 - 受け入れ条件:
-  - [ ] 案件を選んでその配下のタスク一覧を表示できる
-  - [ ] タスクを新規追加でき、追加内容が一覧に反映される
-  - [ ] タスクの各項目（ステータス含む）を編集でき、変更内容が画面に反映される
-  - [ ] タスクのステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない
-  - [ ] タスクを削除でき、削除後は一覧に表示されなくなる
-  - [ ] 案件詳細のレスポンスに子タスクが含まれることを前提とせず、タスク一覧を別途取得して表示している
-  - [ ] タスクが0件の案件でも表示が破綻しない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 案件を選んでその配下のタスク一覧を表示できる
+  - [x] タスクを新規追加でき、追加内容が一覧に反映される
+  - [x] タスクの各項目（ステータス含む）を編集でき、変更内容が画面に反映される
+  - [x] タスクのステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない
+  - [x] タスクを削除でき、削除後は一覧に表示されなくなる
+  - [x] 案件詳細のレスポンスに子タスクが含まれることを前提とせず、タスク一覧を別途取得して表示している
+  - [x] タスクが0件の案件でも表示が破綻しない
+- 実装メモ（技術判断とその理由）:
+  - **画面構成（既存パターンの踏襲）**: 案件管理画面タスクで確立した構成（コンテナ役のPanelコンポーネント＋MUI Dialogのフォーム、`apiRequest`の再利用、フォーム検証の別モジュール化）をそのまま踏襲した。`App.tsx`に`ProjectsPanel`と並べて`TasksPanel`を追加し、ルーティングは導入していない（前タスクの決定を継続）。
+  - **案件の選択UI**: `TasksPanel`は自身で`GET /projects`（全件、ステータス絞り込みなし）を叩いて案件セレクタ（MUIの`TextField select`）を構築する。選択した`project_id`を状態として持ち、選択変更のたびに`GET /projects/{id}/tasks`を叩き直す。**案件詳細（`GET /projects/{id}`）は一切使わない**ため、「親詳細に子タスクが含まれることを前提としない」を構造的に満たす（バックエンドが将来子情報を含めるようになっても、このAPI呼び出し経路を変えない限り影響を受けない）。未選択時はタスク一覧を取得しない。案件が0件のときは「案件が0件です。先に案件を登録してください。」を表示する。
+  - **API・型（既存の分割方針を踏襲）**: `src/api/tasks.ts`に`fetchTasks`/`createTask`/`updateTask`/`deleteTask`を追加（`fetchProjects`/`fetchProject`等と同じく`apiRequest`のみを経由）。`src/api/types.ts`に`TASK_STATUSES`（未着手/処理中/完了）・`Task`・`TaskInput`・`TaskPatchResponse`を追加。`Task.status`はAPIレスポンスが`str`のため`string`型のまま保持し、フォーム変換時のみ`TaskStatus`にフォールバック検証する（`projectForm.ts`と同じ考え方）。
+  - **フォーム検証（`src/taskForm.ts`）**: `projectForm.ts`と同型の`TaskFormValues`/`TaskFormErrors`/`validateTaskForm`/`toTaskFormValues`/`toTaskInput`。必須はタスク名のみ（バックエンドの`TaskCreate`が要求するのは`name`と`status`で、`status`はセレクトの既定値「未着手」が必ず入るため、実質未入力になり得るのは名前のみ）。メモは空欄を`null`に変換してAPIへ送る（クリアを許可するバックエンドの仕様に合わせる）。
+  - **タスク詳細ダイアログは実装しない**: バックエンドに`GET /tasks/{id}`が存在しない（一覧・作成・更新・削除のみ）ため、案件のような「一覧の値を使い回さず都度取得する詳細ダイアログ」は作らず、編集フォームは一覧取得済みの`Task`オブジェクトをそのまま初期値にする（案件のPATCHが`ProjectUpdate`同様、送信していない項目も含め全項目を送る実装のため、一覧の値がstaleでも实質問題にならない。案件管理画面のレビューでも一覧のstale性はLow止まりで指摘されている)。
+  - **ステータス逆行時の警告（決定事項どおり非ブロッキング）**: 案件管理画面と同じパターンで、`PATCH`のレスポンスの`warning`が非nullなら`Alert severity="warning"`で「タスクを更新しました（変更は保存されています）。<APIのwarning本文>」を表示しつつ、更新はブロック・ロールバックしない。
+  - **App.test.tsxとの整合（既存タスクの回帰対応）**: `TasksPanel`を`App`に追加したことで、既存の接続確認テスト（`App.test.tsx`）が同じ`GET /projects`を`ProjectsPanel`と`TasksPanel`の双方から独立に叩くようになり、(a) 両パネルが同時にエラーAlertを出すケースで`screen.findByRole('alert')`（単数）が「複数要素が見つかった」で失敗する、(b) 両パネルの「再読み込み」ボタンのアクセシブルネームが重複する、という2つの回帰が発生した。(b)は`TasksPanel`側のタスク一覧再読み込みボタンを「タスク一覧を再読み込み」という別名に変更して解消。(a)は`ProjectsPanel`・`TasksPanel`それぞれのルート`Paper`に`component="section"`＋`aria-label`（「案件管理」「タスク管理」）を付与してランドマークを分離し、`App.test.tsx`側は影響する4件のテストのみ`within(screen.getByRole('region', { name: '案件管理' }))`で案件パネルに絞って検証するよう更新した（挙動そのものは変更していない。案件管理画面固有のテストのため、案件パネルに閉じて検証するのが適切と判断）。他のApp.test.tsxのテスト（文言のtext検索ベースのもの等）は無修正で通過している。
+  - **テスト（Vitest、新規23件＝76件中）**: `src/api/tasks.test.ts`（4件、URL・メソッド・ボディ・warning受け取り・204）、`src/taskForm.test.ts`（10件、必須未入力・空白のみ・未知ステータス値のフォールバック・変換結果）、`src/components/TasksPanel.test.tsx`（案件選択で対象案件の`GET /projects/{id}/tasks`を叩くこと・案件切替で一覧が切り替わること・0件表示・新規追加と一覧反映・タスク名未入力時に送信しないこと・編集反映・逆行warningの提示と更新の成立・削除確認と一覧からの消失・削除キャンセル・案件一覧取得失敗時とタスク一覧取得失敗時それぞれのエラー表示）。`App.test.tsx`は上記4件を`within`スコープに修正のうえ76件全pass。
+  - **実ブラウザでの動作確認（Playwright + Chromium headless、実APIに対して）**: バックエンドを`API_KEY`・`CORS_ALLOW_ORIGINS=http://localhost:5188`・一時DB（`DATABASE_URL`をスクラッチ領域の一時ファイルに指定。開発用`app.db`は未使用・未変更）で18010番に起動し、Vite開発サーバー（5188）を`VITE_API_BASE_URL=http://127.0.0.1:18010`で起動して、実ブラウザから以下を確認した（確認後、サーバー・一時DB・playwrightの一時セットアップとも停止・削除済み）。
+    - 案件A（タスク「下書き作成」=完了、1件）・案件B（タスク0件）をcurlで用意。「タスク管理」領域で案件Aを選択→取得件数1件・「下書き作成」表示。案件Bへ切替→「タスクは0件です。」表示（一覧が破綻しない）。
+    - 「タスクを追加」→タスク名・メモ入力→追加→「タスクを追加しました。」と一覧への反映を確認。APIにも`POST /projects/1/tasks`で保存されていることを確認。
+    - 順行更新（未着手→処理中）→「タスクを更新しました。」のみ（警告なし）。
+    - 逆行更新（完了→処理中）→「タスクを更新しました（変更は保存されています）。完了 から 処理中 への変更です。意図的な変更か確認してください。」が表示され、**同時に一覧の表示も処理中に更新済み**（更新はブロックされていない）。
+    - 削除→確認→「タスク「実機テストタスク」を削除しました。」、一覧から消失。APIでも`GET /projects/1/tasks`から論理削除済みタスクが除外されることを確認。
+    - 誤ったAPI Key→「タスク管理」領域に「認証エラー（HTTP 401）: API Keyが正しくありません。…」が表示される。
+    - ブラウザのコンソールエラー・ページエラーは0件。
+  - **スコープ外（意図的に未実装）**: 稼働ログ・時給換算の画面（後続タスク）、選考系の画面、横断一覧画面、CIワークフローへのフロントエンドジョブ追加、タスクの`order`（表示順序）カラムやドラッグ&ドロップ並べ替え（spec.md「将来の拡張候補（未実装）」に明記され対象外）。
+  - **セルフチェック**: フロント＝`npm run typecheck`（tsc -b、エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`（76 passed、stderr 0バイト＝warning 0件）・`npm run build`（成功）。バックエンド＝`uv run pytest -W error` 206 passed（warning 0件、無変更）、`uv run ruff check .` All checks passed!（バックエンドのコードは無変更）。
+- セキュリティエバリュエーターのフィードバック: **Critical/High相当の問題なし。承認する。** `git status`/`git diff`で変更範囲が`frontend/src/{App.tsx,App.test.tsx,api/types.ts,components/ProjectsPanel.tsx}`（変更）＋`frontend/src/{api/tasks.ts,api/tasks.test.ts,taskForm.ts,taskForm.test.ts,components/TaskFormDialog.tsx,components/TasksPanel.tsx,components/TasksPanel.test.tsx}`（新規）＋`spec.md`のみであることを確認したうえでレビューした。バックエンド（`backend/`配下）・`package.json`／`package-lock.json`・`Dockerfile`・`.gitignore`／`.dockerignore`・CIワークフローに差分が無いことを`git diff --stat`で確認済み（`app/routers/tasks.py`・`app/main.py`・`app/schemas.py`を実際に読み、前タスクで確認済みのグローバル`Depends(verify_api_key)`・`is_deleted`フィルタ・`TaskUpdate`スキーマが変更されていないことも裏付けた）。
+  - **認証（問題なし）**: 新規の`fetchTasks`／`createTask`／`updateTask`／`deleteTask`（`src/api/tasks.ts`）は4本とも既存の`apiRequest`（`src/api/client.ts`）のみを経由しており、`fetch`を直接呼ぶ実装は無い。`X-API-Key`ヘッダーにのみキーを載せ、URL・クエリ・ボディには含めない。キー未入力時は`apiRequest`が`fetch`前に`unauthorized`で弾く。`src/api/tasks.ts`・`taskForm.ts`・`components/TaskFormDialog.tsx`・`components/TasksPanel.tsx`とそのテストに`console.*`／`localStorage`／`document.cookie`／`location.search`の使用は0件（grepで確認）。バックエンド側は`app/main.py`で`app.include_router(tasks.router)`を含む全ルーターがグローバル`dependencies=[Depends(verify_api_key)]`配下にあり、`tasks.py`単体でのDepends付け忘れ・迂回は無い（本タスクはバックエンド無変更のため`secrets.compare_digest`によるタイミング攻撃耐性も維持）。
+  - **インジェクション・URL組み立て（問題なし）**: `tasks.ts`の`projectId`／`taskId`は型上`number`（`Project.id`／`Task.id`由来）で、テンプレートリテラルでの埋め込みも数値のみのため文字列結合によるパス改変・クエリ注入の余地は無い。案件セレクタの選択肢はMUIの`MenuItem`に固定された`project.id`のみで自由入力を許さない。生SQL文字列結合は本タスクの差分に含まれない（バックエンド無変更）。
+  - **mass assignment（問題なし）**: `TaskInput`型（`src/api/types.ts`）は`name`／`status`／`memo`の3フィールドのみで`id`・`project_id`・`is_deleted`を含まず、`toTaskInput`（`taskForm.ts`）もこの3項目しか生成しない。`createTask`／`updateTask`はこの`TaskInput`のみを送信する。出力用の`Task`／`TaskPatchResponse`型（`id`・`project_id`・`is_deleted`を含む）とは分離されている。バックエンド`TaskUpdate`スキーマ（`app/schemas.py`）も`name`／`status`／`memo`のみで`id`・`project_id`・`is_deleted`のフィールド自体が存在しないため、フロント側で万一余分なキーを混ぜてもPydanticが無視する構造は維持されている。
+  - **論理削除の徹底（問題なし）**: `TasksPanel`は一覧取得を`GET /projects/{id}/tasks`（`fetchTasks`）のみで行い、案件詳細（`GET /projects/{id}`）は一切呼ばない構造になっており、「親詳細に子タスクが含まれることを前提としない」を構造的に満たしている（受け入れ条件どおり）。バックエンドの`list_tasks`／`update_task`／`delete_task`（`app/routers/tasks.py`）はいずれも`is_deleted.is_(False)`でのフィルタ・404化を行っており、`delete_task`は`task.is_deleted = True`のみで`db.delete(`／`DELETE FROM`相当の物理削除は無い（grepで該当箇所0件を確認）。画面側の削除後も`reloadTasks()`で一覧を取り直すのみで、削除済みタスクを推測復元する経路は無い。
+  - **エラーハンドリング（問題なし）**: 表示メッセージは既存の`ApiError`分類（config／unauthorized／http＋`detail`／network／invalidResponse）をそのまま使い、`TasksPanel`・`TaskFormDialog`に独自の例外整形・console出力は無い。スタックトレース・内部パス・SQL文字列を含む経路は追加されていない（前タスクで確認済みの`extractDetail`のJSON以外ボディ握りつぶし挙動をそのまま踏襲）。
+  - **CORS・シークレット管理（問題なし・無変更）**: バックエンド・`.env`系ファイルに変更が無いため、`allow_credentials=False`＋環境変数列挙のfail-closed構成は維持されている。新規テストのキーは`valid-key`／`my-key`等のダミーのみで、ソースコード中にAPI Keyやトークンのハードコードは無い。
+  - **XSS（問題なし）**: `TaskFormDialog.tsx`・`TasksPanel.tsx`に`dangerouslySetInnerHTML`・`innerHTML`・`eval`・`new Function`は0件。タスク名・ステータス・メモ・PATCHの`warning`本文はいずれもJSXの式展開（Reactの自動エスケープ）とMUIコンポーネント経由でのみ描画されている（案件管理画面タスクで同パターンをペイロード実測済みであり、本タスクは同一の描画方式を踏襲しているため個別の再実測はしていない）。
+  - **App.tsx/App.test.tsxの変更（問題なし）**: `TasksPanel`追加に伴う`ProjectsPanel`への`aria-label="案件管理"`付与と`App.test.tsx`の`within(region)`化はテスト・アクセシビリティ上のスコープ調整のみで、認証・データ取得ロジックの変更を伴わない（実装メモの説明どおり挙動は変わらないことをコード上でも確認）。
+  - 【Low（差し戻し対象外・既出パターンの継続）】案件管理画面タスクで指摘済みの「`reload`系にリクエストの中断・順序保証が無い」点が本タスクにも引き継がれている。`TasksPanel`の`reloadProjects`／`reloadTasks`は`AbortController`を使っておらず、案件セレクタを高速に切り替えると先行リクエストの応答が後着し、選択中の案件と一致しないタスク一覧が一瞬表示され得る。表示内容は常にサーバーが`is_deleted=false`で絞った当人のデータであり機密性の問題ではない。
+  - 【Low（既出・本タスクでの劣化ではない）】sessionStorage保持によるXSS発生時のキー露出リスク、および配信HTMLにCSPの`meta`が無い点は「## 決定事項 / API Keyのブラウザ側での扱い」で受容済みのトレードオフであり、本差分で悪化していない。
+  - 総評: 認証ヘッダー付与の単一経路（`apiRequest`）維持、URLへのキー非露出、`TaskInput`による入出力スキーマ分離でのmass assignment防止、`GET /projects/{id}/tasks`単独利用による論理削除フィルタの徹底、危険な描画の不在、バックエンド無変更（`Depends(verify_api_key)`・`is_deleted`フィルタ・物理削除不在を再確認）のいずれも確認できた。Critical/High相当の指摘なし。statusを「性能評価待ち」に更新する。
+- 性能エバリュエーターのフィードバック: **問題なし。承認する。** 実装メモの申告どおりであることを実行して確認した。
+  - フロントエンド: `npm run typecheck`（`tsc -b`、エラーなし）／`npm run lint`（`oxlint --deny-warnings`、指摘なし）／`npm run test`（`vitest run`、9ファイル76件全pass、stdout/stderrともwarning等の出力なし・stderr 0バイトを実測で確認）／`npm run build`（`tsc -b && vite build`成功）。
+  - バックエンド: `uv run pytest -v`（206 passed、warningなし）／`uv run pytest -W error`（206 passed、warning昇格でも失敗なし）／`uv run ruff check .`（All checks passed!）。`git diff --stat`でbackend配下に差分が無いことも確認済み（本タスクはフロントエンドのみの変更）。
+  - 受け入れ条件の裏付け（`frontend/src/components/TasksPanel.test.tsx`・`frontend/src/taskForm.test.ts`・`frontend/src/api/tasks.test.ts`を実読・実行して確認）:
+    - 「案件を選んでその配下のタスク一覧を表示できる」: `案件を選ぶとその配下のタスク一覧が表示され、GET /projects/{id}/tasks を叩く` `案件を切り替えると別案件のタスク一覧に切り替わる` でpass。
+    - 「タスクを新規追加でき、一覧に反映される」: `フォームから追加でき、追加内容が一覧に反映される`（POSTボディ・URL・一覧反映を検証）、および必須項目未入力時に送信しないケースもpass。
+    - 「各項目（ステータス含む）を編集でき、変更内容が画面に反映される」: `各項目を編集でき、変更内容が一覧に反映される` でpass。
+    - 「ステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない」: `ステータス逆行時はAPIの警告を表示しつつ、更新自体は成立する` で、警告Alertの表示と、テーブル上のステータスが実際に更新後の値になっていること（ロールバックされていないこと）の両方をpassで確認。順行・同一ステータスの無警告ケースも新規追加テストの`selectOption(user, 'ステータス', '処理中')`（未着手→処理中）で無警告のままpassしていることを確認（ただし後述のとおり隣接・飛び越え・同一ステータスを名前で区別した専用テストケースは無い）。
+    - 「タスクを削除でき、削除後は一覧に表示されなくなる」: `確認のうえ削除でき、削除後は一覧に表示されなくなる`／`キャンセルすると削除されない` でpass。
+    - 「案件詳細のレスポンスに子タスクが含まれることを前提とせず、タスク一覧を別途取得して表示している」: `frontend/src/api/tasks.ts`を実読し、`fetchTasks`が`GET /projects/{id}/tasks`のみを呼び、`GET /projects/{id}`（fetchProject相当）を一切呼んでいないことをコード上で確認。`TasksPanel.tsx`も同様に`fetchProjects`（一覧、`/projects`）と`fetchTasks`のみを使用しており、構造的に条件を満たす。
+    - 「タスクが0件の案件でも表示が破綻しない」: `タスクが0件の案件でも表示が破綻しない`でpass（「タスクは0件です。」表示、取得件数0件表示）。
+  - 境界値・エッジケースの確認（手順4の指定項目）:
+    - ステータス警告ロジックの4パターン（同一・隣接・飛び越え・逆行）は、**バックエンド側**（`backend/tests/test_status_transitions.py`のtask系4テスト：`test_task_status_same_status_no_warning`／`adjacent_forward`／`multi_step_forward`／`backward_transition_returns_warning`）で網羅されており、バックエンドは無変更のためこれらは既存どおりpassしている。**フロントエンド側**は「逆行→警告あり」「順行(未着手→処理中)→警告なし」の2パターンのみが`TasksPanel.test.tsx`で確認されており、フロント側で「同一ステータス」「飛び越え遷移」を名指しして警告なしを確認するテストケースは無い（フロント側の警告表示ロジック自体は`updated.warning === null`の分岐のみで単純であり、バックエンドが返す`warning`値をそのまま出し分けているだけなので実害は低いと判断するが、テスト網羅としては不足）。
+    - 論理削除（DELETE後に一覧から除外）: `確認のうえ削除でき、削除後は一覧に表示されなくなる`でfakeサーバーの`is_deleted`フィルタごしに確認済み、pass。
+    - 親詳細エンドポイント: 上記のとおりコード上で`GET /projects/{id}`を呼ばない構造を確認済み。
+    - WorkLog関連（多重start、複数タスク・複数案件同時進行、`ended_at`がNULLの間の「進行中」扱い）: 本タスクはWorkLog機能を含まないため対象外（該当機能は次タスク「フロントエンド 稼働計測・時給換算画面」で評価する）。バックエンド側の該当条件（`test_start_work_log_allows_multiple_running_logs_for_same_task`等）は無変更のまま既存どおりpass。
+    - 時給換算エンドポイント: 本タスクのスコープ外（次タスクで評価）。
+  - テスト不足の指摘（差し戻し理由ではなく記録のみ）: 上記のとおりフロント側の警告ロジックで「同一ステータス」「飛び越え遷移」を明示的に確認するテストケースが無い。バックエンドで担保済み・フロント側ロジックも単純なためLow相当と判断し、本タスクの合否には影響しないが次回generatorへの参考として記録する。
+  - 総評: pytest・ruff・フロントエンドの4チェック（test/typecheck/lint/build）すべて通過、warning 0件を実測で確認、受け入れ条件7件すべてに対応する自動テストが存在し実際にpassしている。上記のテスト不足はLow相当のため差し戻し対象とせず、statusを「完了」に更新する。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 稼働計測・時給換算画面

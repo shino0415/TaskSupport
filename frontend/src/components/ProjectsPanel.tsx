@@ -137,7 +137,7 @@ export function ProjectsPanel({ apiKey }: Props) {
   }
 
   return (
-    <Paper sx={{ p: 2 }}>
+    <Paper component="section" aria-label="案件管理" sx={{ p: 2 }}>
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
