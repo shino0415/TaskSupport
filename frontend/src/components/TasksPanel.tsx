@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
+import Chip from '@mui/material/Chip'
 import CircularProgress from '@mui/material/CircularProgress'
 import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
@@ -28,6 +29,10 @@ import { TaskFormDialog } from './TaskFormDialog'
 
 type Props = {
   apiKey: string
+  /** 横断一覧等からの遷移で、指定した案件を選択した状態で表示する。 */
+  initialSelectedProjectId?: number | null
+  /** 横断一覧等からの遷移で、指定したタスクの行を目立たせた状態で表示する。 */
+  initialHighlightTaskId?: number | null
 }
 
 type Notice = {
@@ -38,7 +43,11 @@ type Notice = {
 const NO_PROJECT_SELECTED = '' as const
 
 /** 案件を選んでその配下のタスクの一覧・追加・編集・削除を行う画面。 */
-export function TasksPanel({ apiKey }: Props) {
+export function TasksPanel({
+  apiKey,
+  initialSelectedProjectId = null,
+  initialHighlightTaskId = null,
+}: Props) {
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [projectsErrorMessage, setProjectsErrorMessage] = useState<string | null>(null)
   const [isLoadingProjects, setIsLoadingProjects] = useState(false)
@@ -58,6 +67,8 @@ export function TasksPanel({ apiKey }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null)
+
+  const [highlightTaskId, setHighlightTaskId] = useState<number | null>(initialHighlightTaskId)
 
   const reloadProjects = useCallback(async () => {
     if (apiKey === '') {
@@ -102,6 +113,24 @@ export function TasksPanel({ apiKey }: Props) {
   useEffect(() => {
     void reloadTasks()
   }, [reloadTasks])
+
+  // 横断一覧等からの遷移（initialSelectedProjectId/initialHighlightTaskIdの指定）で、
+  // 対象案件を選択し、対象タスクの行を目立たせる
+  useEffect(() => {
+    if (initialSelectedProjectId !== null) {
+      setSelectedProjectId(initialSelectedProjectId)
+    }
+    setHighlightTaskId(initialHighlightTaskId)
+  }, [initialSelectedProjectId, initialHighlightTaskId])
+
+  // 対象タスクを含む一覧が表示されたら、その行までスクロールする（jsdom等scrollIntoView未実装の環境向けに任意呼び出し）
+  useEffect(() => {
+    if (highlightTaskId === null || tasks === null) {
+      return
+    }
+    const row = document.querySelector<HTMLElement>(`[data-task-row-id="${highlightTaskId}"]`)
+    row?.scrollIntoView?.({ block: 'center' })
+  }, [highlightTaskId, tasks])
 
   const openCreateForm = () => {
     setEditingTask(null)
@@ -268,9 +297,28 @@ export function TasksPanel({ apiKey }: Props) {
                 </TableHead>
                 <TableBody>
                   {tasks.map((task) => (
-                    <TableRow key={task.id}>
+                    <TableRow
+                      key={task.id}
+                      data-task-row-id={task.id}
+                      aria-current={task.id === highlightTaskId ? 'true' : undefined}
+                      sx={
+                        task.id === highlightTaskId
+                          ? { backgroundColor: 'action.selected' }
+                          : undefined
+                      }
+                    >
                       <TableCell>{task.id}</TableCell>
-                      <TableCell>{task.name}</TableCell>
+                      <TableCell>
+                        {task.name}
+                        {task.id === highlightTaskId && (
+                          <Chip
+                            label="対象のタスク"
+                            color="info"
+                            size="small"
+                            sx={{ ml: 1 }}
+                          />
+                        )}
+                      </TableCell>
                       <TableCell>{task.status}</TableCell>
                       <TableCell>{task.memo ?? '-'}</TableCell>
                       <TableCell>

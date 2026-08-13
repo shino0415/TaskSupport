@@ -33,6 +33,8 @@ import { InterviewStepFormDialog } from './InterviewStepFormDialog'
 
 type Props = {
   apiKey: string
+  /** 横断一覧等からの遷移で、指定した企業の詳細ダイアログを開いた状態で表示する。 */
+  initialDetailCompanyId?: number | null
 }
 
 type Notice = {
@@ -47,7 +49,7 @@ const NO_SELECTION = '' as const
  * まとめた画面。企業詳細（GET /companies/{id}）は選考ステップの情報を含めないため、
  * 選考ステップは別途 GET /companies/{id}/interview-steps で取得して表示する。
  */
-export function CompaniesPanel({ apiKey }: Props) {
+export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props) {
   const [companies, setCompanies] = useState<Company[] | null>(null)
   const [companiesErrorMessage, setCompaniesErrorMessage] = useState<string | null>(null)
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false)
@@ -96,6 +98,13 @@ export function CompaniesPanel({ apiKey }: Props) {
   useEffect(() => {
     void reloadCompanies()
   }, [reloadCompanies])
+
+  // 横断一覧等からの遷移（initialDetailCompanyIdの指定）で、詳細ダイアログを自動的に開く
+  useEffect(() => {
+    if (initialDetailCompanyId !== null) {
+      setDetailCompanyId(initialDetailCompanyId)
+    }
+  }, [initialDetailCompanyId])
 
   const reloadSteps = useCallback(async () => {
     if (apiKey === '' || selectedCompanyId === NO_SELECTION) {

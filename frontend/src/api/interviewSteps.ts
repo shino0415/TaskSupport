@@ -11,6 +11,14 @@ export function fetchInterviewSteps(
   })
 }
 
+/** 全企業を横断した、予定日が近い順（未設定は末尾）の選考ステップ一覧。 */
+export function fetchUpcomingInterviewSteps(
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<InterviewStep[]> {
+  return apiRequest<InterviewStep[]>('/interview-steps/upcoming', apiKey, { signal })
+}
+
 export function createInterviewStep(
   apiKey: string,
   companyId: number,

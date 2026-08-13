@@ -72,6 +72,21 @@ export type WorkLog = {
   is_deleted: boolean
 }
 
+/** GET /work-logs/running のレスポンス。どのタスク・案件の稼働かを一覧側で判別できるよう、
+ * WorkLog相当のフィールドに加えtask_name/project_id/project_nameを含む（バックエンドの
+ * RunningWorkLogReadと対応）。 */
+export type RunningWorkLog = {
+  id: number
+  task_id: number
+  task_name: string
+  project_id: number
+  project_name: string
+  started_at: string | null
+  ended_at: string | null
+  memo: string | null
+  is_deleted: boolean
+}
+
 /** GET /projects/{id}/hourly-rate のレスポンス。稼働実績が無い場合hourly_rateはnull。 */
 export type HourlyRate = {
   project_id: number

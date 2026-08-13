@@ -231,6 +231,10 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 
 一覧・フォーム・ダイアログが中心の画面構成であり、テーブルや入力系コンポーネントを自作するコストを避けるため、UIライブラリ（MUI等）を導入する。依存は重くなるが、案件系・選考系の全機能という画面範囲を素早く形にすることを優先した。具体的なライブラリの選定・バージョンは実装時の技術的詳細として扱う。
 
+### フロントエンドのルーティング方針（確定: 軽量ルーティングを導入する）
+
+「フロントエンド 横断一覧画面（予定選考・進行中稼働）」タスクの受け入れ条件「一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる」の実現方式としてユーザーが選択した。それまでの各画面タスク（案件・タスク・稼働計測・選考管理）はいずれも「単一ページ構成を踏襲し、ルーターは導入しない」という実装メモ上の判断（`## 決定事項`未確定のgenerator裁量）を積み重ねてきたが、横断一覧からの遷移という要件を機に、ここで明示的にルーター（react-router、またはURLハッシュの手動パースなど軽量な実装）を導入する方針へ切り替える。ユーザーの判断理由は「ルーターがあった方が使いやすい」。具体的なライブラリ選定（react-router-dom等）・URL構造（例: `#/projects/1`）・既存4画面への遡及適用の要否は実装時の技術的詳細としてgeneratorが判断してよい。
+
 ## 実装タスク
 
 ### タスク: DBモデル定義とDB初期化
@@ -1196,16 +1200,68 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 横断一覧画面（予定選考・進行中稼働）
-- status: 未着手
+- status: 完了
 - 概要: 日付が近い選考ステップの一覧と、現在進行中の稼働ログの一覧を横断的に確認できる画面を用意する。案件系・選考系の各画面が揃った後に着手する。
+  - **要人間判断は解消済み**: 受け入れ条件4「一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる」の実現方式について、選択肢A（ルーター不導入・外部stateでスクロール＋詳細自動表示）／B（軽量ルーティング導入）／C（その場での要約表示に留める）をユーザーに提示し、**B（軽量ルーティングを導入する）** が選ばれた。理由・詳細は「## 決定事項」の「フロントエンドのルーティング方針」を参照。generatorはこの方針に沿って受け入れ条件4を実装し、他の受け入れ条件と合わせて完了させた。
 - 受け入れ条件:
-  - [ ] 日付が近い選考ステップの一覧が表示され、どの企業のどのステップ・いつの予定かが分かる
-  - [ ] 現在進行中の稼働ログの一覧が表示され、どの案件・どのタスクのものかが分かる
-  - [ ] 進行中の稼働ログの一覧から、対象の計測を終了でき、終了後はその一覧に表示されなくなる
-  - [ ] 一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる
-  - [ ] 該当データが0件の場合も表示が破綻せず、0件であることが分かる
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 日付が近い選考ステップの一覧が表示され、どの企業のどのステップ・いつの予定かが分かる
+  - [x] 現在進行中の稼働ログの一覧が表示され、どの案件・どのタスクのものかが分かる
+  - [x] 進行中の稼働ログの一覧から、対象の計測を終了でき、終了後はその一覧に表示されなくなる
+  - [x] 一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる
+  - [x] 該当データが0件の場合も表示が破綻せず、0件であることが分かる
+- 実装メモ（技術判断とその理由）:
+  - **画面構成（既存パターンの踏襲）**: 新規`OverviewPanel`を`App.tsx`の先頭（`ApiKeyPanel`の直後、`ProjectsPanel`より前）に追加した。横断一覧という性質上、他画面より先に「今対応すべきこと」を見せる配置とした。`Paper component="section" aria-label="横断一覧"`で他パネルと同じランドマーク分離を行っている。
+  - **API・型（既存の分割方針を踏襲）**: `src/api/interviewSteps.ts`に`fetchUpcomingInterviewSteps`（`GET /interview-steps/upcoming`）、`src/api/workLogs.ts`に`fetchRunningWorkLogs`（`GET /work-logs/running`）を追加。稼働ログの終了操作は既存の`stopWorkLog`（`PATCH /work-logs/{id}/stop`）をそのまま再利用した（稼働計測・時給換算画面タスクで実装済みのAPIを横断一覧からも呼ぶだけで、新規エンドポイントは不要）。`src/api/types.ts`に`RunningWorkLog`型（バックエンドの`RunningWorkLogRead`と対応、`task_name`/`project_id`/`project_name`を含む）を追加。`upcoming`側はバックエンドが`InterviewStepRead`をそのまま返す設計（企業名を含まない）のため、専用の型は追加せず既存の`InterviewStep`型を再利用した。
+  - **選考ステップの企業名解決（クライアント側での突き合わせ）**: `GET /interview-steps/upcoming`のレスポンスには`company_id`はあるが企業名が含まれない（バックエンドの`InterviewStepRead`スキーマの仕様どおり）。「どの企業の」という受け入れ条件を満たすため、`OverviewPanel`は`GET /companies`を独立して取得し、`company_id`から`companies.find(...)`で名前を引く。この「1画面が複数のGETを独立に呼んでデータを組み立てる」構成は稼働計測・時給換算画面（案件一覧＋タスク一覧＋稼働ログ＋時給換算）で確立済みのパターンを踏襲したもの。企業一覧の取得に失敗しても選考ステップ自体は表示できるよう、企業名解決の失敗と選考ステップ取得の失敗を独立したエラー状態として持ち、企業名解決に失敗した場合は`企業ID: <id>`にフォールバックしたうえで、その旨を`Alert severity="warning"`で明示する。
+  - **予定日未設定の表示**: 既存の選考管理画面と同じく`step.date ?? '未定'`パターンを踏襲（企業横断エンドポイント自体は日付未設定のステップを除外せず末尾に含める設計のため、フロント側もそれをそのまま描画する）。
+  - **進行中の稼働ログの終了操作**: 各行に「計測終了」ボタンを持ち、押下で`stopWorkLog`を呼んだ後`GET /work-logs/running`を再取得する。バックエンドが`ended_at`未設定のログのみを返す設計のため、終了操作が成功すればサーバー側のフィルタで自然に一覧から消える（フロント側で個別に配列からの除去等は行わない）。成功時は`Alert severity="success"`で「「<案件名>」「<タスク名>」の計測を終了しました。」と通知する。
+  - **エラー表示の出し分け**: 選考ステップ一覧・企業一覧（名前解決用）・進行中稼働ログ一覧はそれぞれ独立した`Alert`を持つ（既存パネルと同じ「一覧ごとに個別のエラー領域を持つ」パターン）。稼働ログの終了操作の失敗は稼働ログ一覧側のエラー領域に表示する。
+  - **軽量ルーティングの導入（受け入れ条件4）**: 「## 決定事項」の方針に従い`react-router-dom`（`BrowserRouter`）を導入した。既存の単一ページ構成（5パネルを1ページに並べる`Panels`コンポーネント）自体は維持しつつ、`App.tsx`に`/`・`/projects/:projectId`・`/companies/:companyId`・`/tasks/:projectId/:taskId`の3種のルートを追加し、それぞれ対応するパネルへ「初期選択状態」を渡すラッパーコンポーネント（`ProjectDetailRoute`/`CompanyDetailRoute`/`TaskDetailRoute`）を用意した。未知のパスは`Navigate to="/"`でトップへリダイレクトする。`ProjectsPanel`/`CompaniesPanel`は新規の`initialDetailProjectId`/`initialDetailCompanyId` propを受け取り、値が非nullなら`useEffect`で詳細ダイアログを自動的に開く。`TasksPanel`は`initialSelectedProjectId`（案件セレクタを自動選択）と`initialHighlightTaskId`（対象タスクの行を`aria-current="true"`＋背景色＋「対象のタスク」`Chip`で目立たせ、`scrollIntoView`で該当行までスクロール）の2つのpropを受け取る。`OverviewPanel`の各行に、企業／案件／タスクの詳細へ遷移する`Button component={RouterLink} to="..."`を追加した（企業: `/companies/{company_id}`、案件: `/projects/{project_id}`、タスク: `/tasks/{project_id}/{task_id}`）。案件・タスク・稼働計測・選考管理の既存4画面には遡及適用せず（URLを直接共有する用途は本タスクのスコープ外のため）、横断一覧からの遷移という目的に必要な範囲のみルーティング対応した。
+  - **App.test.tsxとの整合（既存タスクで確立した回帰対応の踏襲）**: `OverviewPanel`が独立に`GET /projects`を叩くPanelと違い`/interview-steps/upcoming`・`/companies`・`/work-logs/running`を叩くため、既存の`App.test.tsx`のうち全エンドポイントに同一の案件データを返す包括的なフェッチスタブを使うテスト1件（「入力したキーで認証付きリクエストし、取得内容を表示する」）で、`vi.mocked(fetch).mock.calls[0]`（先頭の呼び出しが`/projects`である前提）が`OverviewPanel`の先行フェッチにより崩れる回帰が発生した。挙動自体は変更せず、`mock.calls`から`/projects`宛のリクエストを検索するよう`find`ベースのアサーションに修正した（他のテストは`within(projectsRegion())`で既にスコープ済みのため影響なし）。
+  - **テスト（Vitest、166件中）**: `src/components/OverviewPanel.test.tsx`（予定の近い選考ステップ一覧の表示・0件表示・企業一覧取得失敗時のフォールバック表示・選考ステップ一覧取得失敗時のエラー表示、進行中の稼働ログ一覧の表示・0件表示・計測終了操作と一覧からの消失・進行中稼働ログ取得失敗時のエラー表示、両セクションが独立に取得され互いの0件表示に影響しないこと）。`src/components/ProjectsPanel.test.tsx`・`src/components/CompaniesPanel.test.tsx`にそれぞれ「横断一覧等からの遷移（初期選択）」describeブロックを追加し、`initialDetailProjectId`/`initialDetailCompanyId`を渡すと詳細ダイアログが最初から開いた状態で表示されることを検証。`src/components/TasksPanel.test.tsx`にも同名のdescribeブロックを追加し、`initialSelectedProjectId`で対象案件が選択済みの状態、`initialHighlightTaskId`で対象タスク行が`aria-current="true"`＋「対象のタスク」表示になることを検証（MUI `Select`の選択済み表示テキストは`getByLabelText(...).toHaveValue(...)`では取得できない＝隠しinputではなくコンボボックス要素側にテキストがレンダリングされるため、`getByRole('combobox', { name: ... }).toHaveTextContent(...)`へ修正した）。`src/App.test.tsx`に「横断一覧からの画面遷移」describeブロックを追加し、`MemoryRouter`ではなく実際の`App`（`BrowserRouter`込み）を`render`した上で、横断一覧の「企業の詳細」「案件の詳細」「タスクの詳細」の各リンクをクリックし、対応する詳細ダイアログ・タスクのハイライト行が表示されることをEnd-to-End的に検証する3件を追加。
+  - **実ブラウザでの動作確認（Playwright + Chromium headless、実APIに対して）**: バックエンドを`API_KEY`・`CORS_ALLOW_ORIGINS=http://127.0.0.1:5199`・一時DB（`DATABASE_URL`をスクラッチ領域の一時ファイルに指定。開発用`app.db`は未使用・未変更、`stat`で更新日時が本タスク実施前のまま変わっていないことを確認済み）で18010番に起動し、Vite開発サーバー（5199）を`VITE_API_BASE_URL=http://127.0.0.1:18010`で起動して、実ブラウザから以下を確認した（確認後、サーバー・一時DB・playwrightの一時セットアップとも停止・削除済み。評価用に`npm install --no-save playwright`で一時導入したパッケージも`npm uninstall --no-save playwright`で削除し、`package.json`／`package-lock.json`にplaywright関連の差分が残っていないことを`git diff`で確認済み）。
+    - 企業「実機テスト株式会社」配下に選考ステップ2件（予定日ありの「一次面接」2026-09-01、予定日未設定の「書類選考」）、案件「実機テスト案件」配下にタスク「実機テストタスク」＋進行中の稼働ログ1件をcurlで用意。「横断一覧」領域に「取得件数: 2 件」（選考ステップ）と「実機テスト株式会社／一次面接／2026-09-01／…」「実機テスト株式会社／書類選考／未定／…」の2行、「取得件数: 1 件」（稼働ログ）と「実機テスト案件／実機テストタスク／開始時刻」の1行が表示されることを確認。
+    - 選考ステップ行の「企業の詳細」ボタンをクリック→`/companies/1`へ遷移し、選考管理画面の企業詳細ダイアログが「企業詳細（ID: 1）」「実機テスト株式会社」を表示した状態で自動的に開くことを確認。
+    - トップに戻り、稼働ログ行の「案件の詳細」ボタンをクリック→`/projects/1`へ遷移し、案件管理画面の案件詳細ダイアログが「案件詳細（ID: 1）」「実機テスト案件」（プラットフォーム: CrowdWorks含む）を表示した状態で自動的に開くことを確認。
+    - トップに戻り、稼働ログ行の「タスクの詳細」ボタンをクリック→`/tasks/1/1`へ遷移し、タスク管理画面で案件「実機テスト案件」が選択済みの状態でタスク一覧が表示され、対象タスク「実機テストタスク」の行が目立つ表示（背景色＋「対象のタスク」表示）になっていることを確認。
+    - 上記3種類の遷移操作の実行中、ブラウザのコンソールエラー・ページエラーがいずれも0件であることを確認。
+    - 「計測終了」ボタンを押すと「「実機テスト案件」「実機テストタスク」の計測を終了しました。」の通知が表示され、進行中の稼働ログ一覧が「進行中の稼働ログは0件です。」に変わることを確認（一覧からの消失）。
+    - 稼働ログを0件にした状態で「進行中の稼働ログは0件です。」の表示のみになり、画面が破綻しないことを確認。
+    - 誤ったAPI Key→「横断一覧」領域の3箇所（選考ステップ一覧・企業名解決・進行中稼働ログ一覧）すべてに「認証エラー（HTTP 401）: API Keyが正しくありません。…」が表示されることを確認（この操作自体はブラウザ標準機能により401レスポンスの`Failed to load resource`ログがコンソールに残るが、これは`fetch()`がHTTPエラーレスポンスを受け取った際にChromiumが自動的に記録するネットワークログであり、アプリケーションのJavaScriptエラーではない。実際に発生したJSの`pageerror`は0件であることを別途確認した）。
+  - **スコープ外（意図的に未実装、または今回対応しない）**: CIワークフローへのフロントエンドジョブ追加。既存4画面（案件・タスク・稼働計測・選考管理）のURL直接共有対応（詳細以外の状態、例: フィルタ条件のURL反映）は本タスクのスコープ外。
+  - **セルフチェック**: フロント＝`npm run typecheck`（tsc -b、エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`（166 passed、stderr 0バイト＝warning 0件）・`npm run build`（成功、`vite build`が出す500KB超チャンクサイズの情報メッセージのみ、エラーではない）。バックエンド＝`uv run pytest` 206 passed（warning 0件、無変更）、`uv run ruff check .` All checks passed!（バックエンドのコードは無変更）。
+- セキュリティエバリュエーターのフィードバック（合格、Critical/High相当の指摘なし）:
+  - 対象: `git diff`（`frontend/`配下、`App.tsx`・`App.test.tsx`・`api/interviewSteps.ts`・`api/workLogs.ts`・`api/types.ts`・`components/ProjectsPanel.tsx(.test.tsx)`・`components/CompaniesPanel.tsx(.test.tsx)`・`components/TasksPanel.tsx(.test.tsx)`・`package.json`・`package-lock.json`）および新規`components/OverviewPanel.tsx`・`OverviewPanel.test.tsx`を確認。`git diff --stat`で`backend/`配下（バックエンドのコード）が本タスクで一切変更されていないことを確認済み。
+  - **新規依存（react-router-dom）のサプライチェーン**: `npm audit`（本体・devとも）で脆弱性0件を確認。`package-lock.json`の`resolved`/`integrity`を確認したところ、`react-router-dom@7.18.2`・`react-router@7.18.2`（本体が依存）・推移依存の`cookie@1.1.1`・`set-cookie-parser@2.7.2`すべてが公式`registry.npmjs.org`から取得されSRI用の`integrity`ハッシュが付与されており、不審なミラー・タイポスクワッティング等の兆候はない。`react-router-dom`はReact Router（remix-run）チームが公開する広く使われているメジャーライブラリであり、妥当な選定と判断した。
+  - **URLパラメータ（projectId/companyId/taskId）の扱い**: `App.tsx`の`ProjectDetailRoute`/`CompanyDetailRoute`/`TaskDetailRoute`はいずれも`useParams()`で取得した文字列を`Number(...)`で変換し、`Number.isNaN`で弾いてから（非数値・空文字・パストラバーサル的な文字列等はすべて`null`となり無視される）各パネルへ渡している。渡された数値はAPIパス（`apiRequest`経由、`X-API-Key`ヘッダーで認証）の組み立てにのみ使われ、生SQLや外部コマンドには渡らない。`TasksPanel`の`document.querySelector`（`[data-task-row-id="${highlightTaskId}"]`）も型として常に`number | null`に限定されており、クォート文字を含む文字列が混入する経路がないためセレクタインジェクションの余地はない。未知のパス（`*`）は固定の`Navigate to="/"`のみで、外部入力（クエリパラメータ等）でリダイレクト先を決定する実装は無く、オープンリダイレクトの余地もない。React標準のエスケープにより`step.memo`等TEXTカラムの値をテーブルセルへ表示している箇所も含め、`dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function`の使用は`grep`で0件を確認しXSSの経路もない。
+  - **API Keyの非露出**: `api/client.ts`の`apiRequest`は認証を`X-API-Key`ヘッダーのみで行い（コメントにも明記）、`App.tsx`・`OverviewPanel.tsx`・各Panelのいずれもクエリ文字列やパスパラメータに`apiKey`を含めていないことをコード全体から確認した。ルーティング導入後もURL・ブラウザ履歴に現れるのは案件/企業/タスクの数値ID（`/projects/1`等）のみで、API Key自体はコンポーネントstate（`sessionStorage`永続化、本タスクでの変更なし）にとどまる。`App.test.tsx`の新規E2E的テスト3件でも遷移後のURLに現れるのはIDのみであることを確認した。
+  - **mass assignment**: 本タスクはPATCHエンドポイントを新設しておらず、既存の`stopWorkLog`（`PATCH /work-logs/{id}/stop`）をボディなしで再利用しているのみ（`api/workLogs.ts`）。新規スキーマ・新規PATCH経路は追加されていない。
+  - **論理削除の徹底**: 本タスクはバックエンドを変更していないため、`GET /interview-steps/upcoming`・`GET /work-logs/running`の`is_deleted`フィルタ挙動（および既知の非ブロッキング事項として記録済みの「企業削除後も配下の選考ステップが横断一覧に残る」件）に変化はない。参考として`GET /projects/{id}`・`GET /companies/{id}`・`GET /tasks/{project_id}`のルーターコードを確認し、詳細取得系がいずれも`is_deleted.is_(False)`でフィルタ済みであることを確認した。これにより、横断一覧からの遷移で論理削除済みの案件・企業に直接IDでアクセスしようとしても、詳細エンドポイント側で404相当となり削除済みデータが新たに露出することはない。
+  - **エラーハンドリング**: `api/client.ts`のエラー整形ロジックは本タスクで変更されておらず、`detail`フィールドのみを抽出してスタックトレース・内部パス・SQL文字列等を含まない設計のまま。`OverviewPanel`のエラー表示（`Alert severity="error"/"warning"`）も同じ`toDisplayMessage`を通しており、新たな情報漏洩経路は確認されなかった。
+  - **その他**: `git diff`内に`console.log`等の追加、APIキー・DB接続情報のハードコードは無し（`grep`で確認）。`npm run typecheck`（エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test -- --run`（166 passed）・`npm audit`（0 vulnerabilities）を再実行し、generatorの報告内容を再現確認した。
+  - 総評: 新規依存のサプライチェーンは健全、URLパラメータ経由のインジェクション・オープンリダイレクトの経路なし、API KeyはURL・ブラウザ履歴に一切露出せず、既存の認証・論理削除・エラーハンドリングの設計もバックエンド無変更のため踏襲されている。Critical/High相当の指摘なし。statusを「性能評価待ち」に更新する。
+- 性能エバリュエーターのフィードバック（合格）:
+  - 【判定】合格。フロントエンド・バックエンドとも全チェックが通り、受け入れ条件5件すべてに対応するテストが存在しPASSしていることを確認した。statusを「完了」に更新する。
+  - **フロントエンド実行結果**（`export PATH="$HOME/.local/lib/node-v24.19.0-linux-x64/bin:$PATH"`を通した上で`frontend/`配下で実行）:
+    - `npm run test -- --run`: `Test Files 19 passed (19)` / `Tests 166 passed (166)`。stdoutを`grep -iE "warn"`しても実際のwarning行はヒットせず、stderrを別ファイルにリダイレクトして確認したところ0バイトであることを確認した（generatorの報告「stderr 0バイト＝warning 0件」を再現）。
+    - `npm run typecheck`（`tsc -b`）: エラーなし（exit 0）。
+    - `npm run lint`（`oxlint --deny-warnings`）: 指摘なし（exit 0）。
+    - `npm run build`: 成功。出力は`vite build`の「500KB超チャンクサイズ」情報メッセージ（`(!) Some chunks are larger than 500 kB...`）のみで、エラー・warningではない。
+  - **バックエンド実行結果**（`backend/`配下、本タスクはバックエンド無変更のため回帰確認目的）:
+    - `uv run pytest -v`: `206 passed`。`grep -iE "warning"`でヒットしたのは`test_..._backward_transition_returns_warning`等のテスト名文字列のみで、`warnings summary`セクションは出力されておらずwarning 0件。
+    - `uv run ruff check`: `All checks passed!`。
+    - `git diff --stat -- backend/`が空であることを確認し、バックエンドが本タスクで一切変更されていないことを裏付けた。
+  - **受け入れ条件ごとの確認（対応するテストとその合否）**:
+    1. 「日付が近い選考ステップの一覧が表示され、どの企業のどのステップ・いつの予定かが分かる」: `OverviewPanel.test.tsx`の`選考ステップ一覧が表示され、企業名・種別・予定日が分かる`PASS。企業名解決の失敗時フォールバック（`企業一覧の取得に失敗しても選考ステップは表示され、企業名の代わりに企業IDが表示される`）、選考ステップ自体の取得失敗（`選考ステップ一覧の取得に失敗すると原因が分かるメッセージを表示する`）も個別にPASSしており、独立したエラー系統であることも検証済み。
+    2. 「現在進行中の稼働ログの一覧が表示され、どの案件・どのタスクのものかが分かる」: `進行中の稼働ログ一覧が表示され、案件・タスクが分かる`PASS。取得失敗時のエラー表示テストもPASS。
+    3. 「進行中の稼働ログの一覧から、対象の計測を終了でき、終了後はその一覧に表示されなくなる」: `計測を終了でき、終了後は一覧に表示されなくなる`PASS。`PATCH /work-logs/1/stop`が呼ばれたこと・成功通知の文言・終了後に「進行中の稼働ログは0件です。」へ変わり対象行が`queryByText`で見つからなくなることまで検証されている。
+    4. 「一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる」: 3階層で検証されている。(a) `OverviewPanel.test.tsx`側で各リンクの`to`遷移前提の存在確認、(b) `ProjectsPanel.test.tsx`/`CompaniesPanel.test.tsx`/`TasksPanel.test.tsx`の「横断一覧等からの遷移（初期選択）」describeで各Panelが`initialDetailProjectId`/`initialDetailCompanyId`/`initialSelectedProjectId`/`initialHighlightTaskId`を正しく解釈することを単体で確認、(c) `App.test.tsx`の「横断一覧からの画面遷移」describe 3件（企業・案件・タスクそれぞれ）で、実際の`App`（`BrowserRouter`込み）を`render`し横断一覧のリンクをクリックしてから対応する詳細ダイアログ・ハイライト行が表示されるまでをEnd-to-Endで検証しており、いずれもPASSした。未知パスの`Navigate to="/"`リダイレクト自体を検証する専用テストは無いが、`App.tsx`の実装は`<Route path="*" element={<Navigate to="/" replace />} />`という静的な最終フォールバックであり、外部入力に依存しないリダイレクト先固定のロジックであるため実害・回帰リスクは低いと判断した（テスト不足として軽微に指摘、後述）。
+    5. 「該当データが0件の場合も表示が破綻せず、0件であることが分かる」: 選考ステップ・稼働ログそれぞれの`0件の場合も表示が破綻せず、0件であることが分かる`がPASS。加えて「横断一覧の独立性」describeの`選考ステップと進行中稼働ログはそれぞれ独立に取得され、一方の0件がもう一方の表示に影響しない`もPASSしており、0件表示のクロス影響がないことまで確認済み。
+  - **既存パネルへの回帰影響確認**: `App.test.tsx`の`入力したキーで認証付きリクエストし、取得内容を表示する`が`OverviewPanel`追加により`mock.calls[0]`が`/projects`である前提が崩れる回帰を`find`ベースのアサーションへの修正で解消済みであることをテストコードで確認し、実際に166件全PASSに含まれていることも確認した。他の18ファイルのテストにも失敗・スキップはない。
+  - **テスト不足の指摘（軽微、差し戻しには当たらない）**:
+    - 未知パス（例: `/unknown-path`）へアクセスした際に`/`へリダイレクトされることを直接検証するテストが無い。実装が外部入力に依存しない固定リダイレクトであるため優先度は低いが、将来ルートが増えた際の回帰検知のために追加を推奨する。
+    - `TaskDetailRoute`/`ProjectDetailRoute`/`CompanyDetailRoute`が非数値パラメータ（例: `/projects/abc`）を受け取った場合に`initialDetail*Id`が`null`になり詳細ダイアログが自動的に開かないこと（`Number.isNaN`分岐）を直接検証する単体テストが無い。セキュリティエバリュエーターがコードレビューでこの分岐の安全性（無視されるのみで例外・インジェクションに繋がらない）を確認済みではあるが、動作面のテストとしては不足している。
+  - コードは変更していない（`Read`のみで`Edit`は使用していない）。
 - 差し戻し回数: 0
 
 ## 型安全性リファクタリング（実装タスク一覧の外）

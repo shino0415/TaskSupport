@@ -29,6 +29,8 @@ import { ProjectFormDialog } from './ProjectFormDialog'
 
 type Props = {
   apiKey: string
+  /** 横断一覧等からの遷移で、指定した案件の詳細ダイアログを開いた状態で表示する。 */
+  initialDetailProjectId?: number | null
 }
 
 type Notice = {
@@ -39,7 +41,7 @@ type Notice = {
 const ALL_STATUSES = '' as const
 
 /** 案件の一覧・絞り込み・詳細・登録・編集・削除をまとめた画面。 */
-export function ProjectsPanel({ apiKey }: Props) {
+export function ProjectsPanel({ apiKey, initialDetailProjectId = null }: Props) {
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | typeof ALL_STATUSES>(
     ALL_STATUSES,
@@ -77,6 +79,13 @@ export function ProjectsPanel({ apiKey }: Props) {
   useEffect(() => {
     void reload()
   }, [reload])
+
+  // 横断一覧等からの遷移（initialDetailProjectIdの指定）で、詳細ダイアログを自動的に開く
+  useEffect(() => {
+    if (initialDetailProjectId !== null) {
+      setDetailProjectId(initialDetailProjectId)
+    }
+  }, [initialDetailProjectId])
 
   const openCreateForm = () => {
     setEditingProject(null)

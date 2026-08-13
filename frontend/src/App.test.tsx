@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 import { API_KEY_HEADER } from './api/client'
 import { API_KEY_STORAGE_KEY } from './api/apiKeyStorage'
-import type { Project } from './api/types'
+import type { Company, InterviewStep, Project, RunningWorkLog, Task } from './api/types'
 
 const BASE_URL = 'http://api.test.local:8000'
 
@@ -19,6 +19,40 @@ const SAMPLE_PROJECT: Project = {
   applied_date: '2026-08-01',
   deadline: null,
   platform: 'CrowdWorks',
+  memo: null,
+  is_deleted: false,
+}
+
+const SAMPLE_COMPANY: Company = { id: 1, name: '株式会社サンプル', is_deleted: false }
+
+const SAMPLE_TASK: Task = {
+  id: 11,
+  project_id: 1,
+  name: '要件整理',
+  status: '処理中',
+  memo: null,
+  is_deleted: false,
+}
+
+const SAMPLE_STEP: InterviewStep = {
+  id: 101,
+  company_id: 1,
+  type: '一次面接',
+  date: '2026-09-01',
+  prep_status: '準備中',
+  result: '未定',
+  memo: null,
+  is_deleted: false,
+}
+
+const SAMPLE_RUNNING_WORK_LOG: RunningWorkLog = {
+  id: 1,
+  task_id: SAMPLE_TASK.id,
+  task_name: SAMPLE_TASK.name,
+  project_id: SAMPLE_PROJECT.id,
+  project_name: SAMPLE_PROJECT.name,
+  started_at: '2026-08-13T10:00:00',
+  ended_at: null,
   memo: null,
   is_deleted: false,
 }
@@ -43,12 +77,15 @@ function projectsRegion() {
 beforeEach(() => {
   vi.stubEnv('VITE_API_BASE_URL', BASE_URL)
   window.sessionStorage.clear()
+  // ルーティングのテストが遷移した後のURLを引きずらないよう、毎回トップに戻す
+  window.history.pushState(null, '', '/')
 })
 
 afterEach(() => {
   cleanup()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+  window.history.pushState(null, '', '/')
 })
 
 describe('初期画面', () => {
@@ -80,12 +117,16 @@ describe('API Keyを入力しての疎通', () => {
     await user.type(screen.getByLabelText('API Key'), 'valid-key')
     await user.click(screen.getByRole('button', { name: '保存して接続' }))
 
-    // App にはタスク管理・稼働計測・選考管理の各画面も同居し、同じ /projects や
+    // App には横断一覧・タスク管理・稼働計測・選考管理の各画面も同居し、同じ /projects や
     // 同型のレスポンスを独自に取得するため、案件管理画面固有の表示確認は
     // 「案件管理」領域に絞って検証する。
     expect(await within(projectsRegion()).findByText('ポートフォリオサイト制作')).toBeInTheDocument()
     expect(within(projectsRegion()).getByText('取得件数: 1 件')).toBeInTheDocument()
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!
+    const projectsCall = vi
+      .mocked(fetch)
+      .mock.calls.find(([url]) => url === `${BASE_URL}/projects`)
+    expect(projectsCall).toBeDefined()
+    const [url, init] = projectsCall!
     expect(url).toBe(`${BASE_URL}/projects`)
     const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers[API_KEY_HEADER]).toBe('valid-key')
@@ -194,5 +235,93 @@ describe('エラー表示', () => {
 
     expect(await screen.findByText('ポートフォリオサイト制作')).toBeInTheDocument()
     expect(within(projectsRegion()).queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+/** 横断一覧からの遷移確認用に、案件・タスク・企業・選考ステップ・進行中稼働ログを一通り揃えた簡易APIサーバー。 */
+function stubRoutingFetch() {
+  stubFetch((input: RequestInfo | URL) => {
+    const pathname = new URL(String(input)).pathname
+    if (pathname === '/projects') {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_PROJECT]))
+    }
+    if (pathname === `/projects/${String(SAMPLE_PROJECT.id)}`) {
+      return Promise.resolve(jsonResponse(200, SAMPLE_PROJECT))
+    }
+    if (pathname === `/projects/${String(SAMPLE_PROJECT.id)}/tasks`) {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_TASK]))
+    }
+    if (pathname === '/companies') {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_COMPANY]))
+    }
+    if (pathname === `/companies/${String(SAMPLE_COMPANY.id)}`) {
+      return Promise.resolve(jsonResponse(200, SAMPLE_COMPANY))
+    }
+    if (pathname === '/interview-steps/upcoming') {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_STEP]))
+    }
+    if (pathname === '/work-logs/running') {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_RUNNING_WORK_LOG]))
+    }
+    return Promise.resolve(jsonResponse(404, { detail: 'Not Found' }))
+  })
+}
+
+// 横断一覧（OverviewPanel）の一覧
+function overviewRegion() {
+  return screen.getByRole('region', { name: '横断一覧' })
+}
+
+describe('横断一覧からの画面遷移', () => {
+  it('選考ステップの「企業の詳細」から、対応する企業の詳細画面へ辿れる', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    const user = userEvent.setup()
+
+    render(<App />)
+    await within(overviewRegion()).findByText('一次面接')
+    await user.click(
+      within(overviewRegion()).getByRole('link', { name: '企業「株式会社サンプル」の詳細へ' }),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('企業詳細（ID: 1）')).toBeInTheDocument()
+    expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
+  })
+
+  it('進行中の稼働ログの「案件の詳細」から、対応する案件の詳細画面へ辿れる', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    const user = userEvent.setup()
+
+    render(<App />)
+    await within(overviewRegion()).findByText('要件整理')
+    await user.click(
+      within(overviewRegion()).getByRole('link', {
+        name: '案件「ポートフォリオサイト制作」の詳細へ',
+      }),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('案件詳細（ID: 1）')).toBeInTheDocument()
+    expect(await within(dialog).findByText('CrowdWorks')).toBeInTheDocument()
+  })
+
+  it('進行中の稼働ログの「タスクの詳細」から、対応するタスクの詳細画面（タスク管理）へ辿れる', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    const user = userEvent.setup()
+
+    render(<App />)
+    await within(overviewRegion()).findByText('要件整理')
+    await user.click(
+      within(overviewRegion()).getByRole('link', { name: 'タスク「要件整理」の詳細へ' }),
+    )
+
+    const tasksRegion = screen.getByRole('region', { name: 'タスク管理' })
+    expect(await within(tasksRegion).findByText('取得件数: 1 件')).toBeInTheDocument()
+    const highlightedRow = within(tasksRegion).getByText('要件整理').closest('tr')!
+    expect(highlightedRow).toHaveAttribute('aria-current', 'true')
+    expect(within(highlightedRow).getByText('対象のタスク')).toBeInTheDocument()
   })
 })

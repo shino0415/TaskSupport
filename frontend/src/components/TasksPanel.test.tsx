@@ -391,3 +391,36 @@ describe('通信エラー', () => {
     expect(alert).toHaveTextContent('500')
   })
 })
+
+describe('横断一覧等からの遷移（初期選択）', () => {
+  it('initialSelectedProjectIdを渡すと、その案件のタスク一覧が最初から表示される', async () => {
+    setupFakeServer([PROJECT_A, PROJECT_B], [TASK_A, TASK_B])
+
+    render(<TasksPanel apiKey={API_KEY} initialSelectedProjectId={PROJECT_A.id} />)
+
+    expect(await screen.findByText('取得件数: 2 件')).toBeInTheDocument()
+    expect(screen.getByText('要件整理')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '案件を選択' })).toHaveTextContent(
+      'ポートフォリオサイト制作（契約中）',
+    )
+  })
+
+  it('initialHighlightTaskIdを渡すと、対象タスクの行が目立つ表示になる', async () => {
+    setupFakeServer([PROJECT_A, PROJECT_B], [TASK_A, TASK_B])
+
+    render(
+      <TasksPanel
+        apiKey={API_KEY}
+        initialSelectedProjectId={PROJECT_A.id}
+        initialHighlightTaskId={TASK_B.id}
+      />,
+    )
+
+    await screen.findByText('取得件数: 2 件')
+    const highlightedRow = screen.getByText('デザイン確認').closest('tr')!
+    expect(highlightedRow).toHaveAttribute('aria-current', 'true')
+    expect(within(highlightedRow).getByText('対象のタスク')).toBeInTheDocument()
+    const otherRow = screen.getByText('要件整理').closest('tr')!
+    expect(otherRow).not.toHaveAttribute('aria-current')
+  })
+})

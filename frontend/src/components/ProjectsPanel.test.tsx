@@ -429,3 +429,15 @@ describe('通信エラー', () => {
     expect(alert).toHaveTextContent('API Key')
   })
 })
+
+describe('横断一覧等からの遷移（初期選択）', () => {
+  it('initialDetailProjectIdを渡すと、詳細ダイアログが最初から開いた状態で表示される', async () => {
+    setupFakeServer([PROJECT_A, PROJECT_B])
+
+    render(<ProjectsPanel apiKey={API_KEY} initialDetailProjectId={PROJECT_B.id} />)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('案件詳細（ID: 2）')).toBeInTheDocument()
+    expect(await within(dialog).findByText('ランサーズ')).toBeInTheDocument()
+  })
+})

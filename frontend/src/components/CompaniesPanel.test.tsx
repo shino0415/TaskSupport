@@ -602,3 +602,15 @@ describe('通信エラー', () => {
     expect(alert).toHaveTextContent('500')
   })
 })
+
+describe('横断一覧等からの遷移（初期選択）', () => {
+  it('initialDetailCompanyIdを渡すと、詳細ダイアログが最初から開いた状態で表示される', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_B], [])
+
+    render(<CompaniesPanel apiKey={API_KEY} initialDetailCompanyId={COMPANY_B.id} />)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('企業詳細（ID: 2）')).toBeInTheDocument()
+    expect(await within(dialog).findByText('合同会社テスト')).toBeInTheDocument()
+  })
+})
