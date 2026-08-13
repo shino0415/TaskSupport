@@ -62,3 +62,20 @@ export type TaskInput = {
 export type TaskPatchResponse = Task & {
   warning: string | null
 }
+
+export type WorkLog = {
+  id: number
+  task_id: number
+  started_at: string | null
+  ended_at: string | null
+  memo: string | null
+  is_deleted: boolean
+}
+
+/** GET /projects/{id}/hourly-rate のレスポンス。稼働実績が無い場合hourly_rateはnull。 */
+export type HourlyRate = {
+  project_id: number
+  reward: number
+  total_work_hours: number
+  hourly_rate: number | null
+}

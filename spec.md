@@ -1070,18 +1070,69 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 稼働計測・時給換算画面
-- status: 未着手
+- status: 完了
 - 概要: タスク単位での稼働計測の開始/終了、稼働ログの確認・削除、案件の時給換算結果の表示をブラウザ上で行えるようにする。タスク管理画面の完了後に着手する。
 - 受け入れ条件:
-  - [ ] タスクごとに計測の開始と終了を操作でき、操作結果が画面に反映される
-  - [ ] 進行中の稼働ログが、終了済みのログと視覚的に区別できる
-  - [ ] 同一タスク内の多重計測、および別タスク・別案件との同時計測が行え、それぞれ画面上で扱える
-  - [ ] タスクの稼働ログ一覧が表示され、各ログの稼働時間が確認できる
-  - [ ] 誤って開始した稼働ログを削除でき、削除後は一覧に表示されなくなる
-  - [ ] 案件の時給換算結果を画面で確認できる
-  - [ ] 稼働時間が0など換算できない場合でも画面がエラーで破綻せず、換算できない旨が分かる表示になる
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] タスクごとに計測の開始と終了を操作でき、操作結果が画面に反映される
+  - [x] 進行中の稼働ログが、終了済みのログと視覚的に区別できる
+  - [x] 同一タスク内の多重計測、および別タスク・別案件との同時計測が行え、それぞれ画面上で扱える
+  - [x] タスクの稼働ログ一覧が表示され、各ログの稼働時間が確認できる
+  - [x] 誤って開始した稼働ログを削除でき、削除後は一覧に表示されなくなる
+  - [x] 案件の時給換算結果を画面で確認できる
+  - [x] 稼働時間が0など換算できない場合でも画面がエラーで破綻せず、換算できない旨が分かる表示になる
+- 実装メモ（技術判断とその理由）:
+  - **画面構成（既存パターンの踏襲、3段階の選択）**: 案件管理画面・タスク管理画面で確立した構成（コンテナ役のPanelコンポーネント＋`apiRequest`の再利用、ルーティング未導入）をそのまま踏襲した。新規`WorkTrackingPanel`を`App.tsx`に`TasksPanel`と並べて追加。画面内では「案件を選択」（時給換算対象・タスク一覧の絞り込み）→「タスクを選択」（稼働ログ対象）の2段階セレクタを持つ。フォーム入力を伴う登録・編集操作が無い（計測開始・終了・削除はいずれもボタン一発の操作でユーザー入力欄が不要）ため、`TaskFormDialog`のようなフォームダイアログは作らず、削除のみ確認ダイアログを設けた。
+  - **API・型（既存の分割方針を踏襲）**: `src/api/workLogs.ts`に`fetchWorkLogs`/`startWorkLog`/`stopWorkLog`/`deleteWorkLog`（いずれも`apiRequest`のみ経由。`start`/`stop`はボディを持たないバックエンドの設計どおりリクエストボディなしで呼ぶ）、`src/api/hourlyRate.ts`に`fetchHourlyRate`（`GET /projects/{id}/hourly-rate`）を追加。`src/api/types.ts`に`WorkLog`（`started_at`/`ended_at`をAPIレスポンスのISO文字列のまま保持し、加工はコンポーネント側で行う）・`HourlyRate`（`hourly_rate: number | null`）を追加。WorkLogには作成・更新フォーム用の`*Input`型を作っていない（開始・終了とも入力項目が無いため）。
+  - **稼働時間の計算はフロントエンドでも「都度計算」方針を踏襲（`src/workLogFormat.ts`）**: 描画から独立した純粋関数`formatWorkLogDuration`/`formatHourlyRate`/`formatTotalWorkHours`として切り出した（他フォームの`validateXxxForm`等と同じく、コンポーネントと同居させるとlintの`react(only-export-components)`に触れるため別モジュール化）。バックエンドが「稼働時間は保存せず`ended_at - started_at`で都度計算する」方針（spec.md該当箇所）を採っているのと平仄を合わせ、フロントエンドの稼働ログ一覧の各行表示も保存済みの数値を使わず`started_at`/`ended_at`から都度計算する。進行中（`ended_at`が`null`）のログは「進行中」という文字列を返すのみで、経過時間の計算はしない（時給換算エンドポイントが進行中ログを集計対象から除外する設計と一貫させ、1秒ごとに変わる値を表示してユーザーを混乱させないため）。
+  - **進行中/終了済みの視覚的区別**: MUIの`Chip`（進行中=`color="warning"`のラベル「進行中」、終了済み=標準色のラベル「終了済み」）を各行の「状態」列に表示し、進行中の行は背景色も`action.hover`で薄く強調した。テキスト情報（Chipのラベル文字列）とスタイル（色）の両方で区別しているため、色のみに依存しない。
+  - **多重計測・同時計測への対応**: 「計測開始」ボタンは選択中タスクに進行中ログが既にあるかどうかを確認せず常にAPIを呼ぶ（バックエンドの`start_work_log`が多重startを許可する設計と対応）。同一タスク内で複数回押すと稼働ログ一覧に複数の「進行中」行が並ぶ。別タスク・別案件の同時計測は、案件セレクタ・タスクセレクタを選び直すことで対応する（案件を切り替えると選択中タスクをリセットし、別案件の計測状態を混同しないようにした）。バックエンドの横断一覧エンドポイント（`GET /work-logs/running`）は本タスクの受け入れ条件に含まれないため使用していない（対象は次タスク「フロントエンド 横断一覧画面」）。
+  - **時給換算結果の表示と「換算できない」場合の扱い**: 案件を選択すると`GET /projects/{id}/hourly-rate`を叩き、報酬額・合計稼働時間（完了済みログのみと明記）・換算時給を表示する。バックエンドが`hourly_rate: null`を返す場合（合計稼働時間0）は、`0`や`Infinity`のような数値ではなく`Alert severity="info"`で「時給を算出できません（稼働実績がありません）。」を表示し、画面がエラーで落ちないことを保証する。この一覧取得・時給換算取得は個別に状態管理しており、片方が失敗してももう片方の表示は継続する。
+  - **稼働ログ一覧・削除操作**: 稼働ログ一覧はID・状態（Chip）・開始時刻・終了時刻・稼働時間（`formatWorkLogDuration`）・操作の列を持つ。進行中の行のみ「計測終了」ボタンを表示する。削除は案件・タスク管理画面と同じ確認ダイアログパターンを使い、削除後は`reloadWorkLogs`に加えて`reloadHourlyRate`も呼び直す（削除によって合計稼働時間・時給が変わりうるため）。計測終了時も同様に`reloadHourlyRate`を呼ぶ。計測開始時は完了済み時間に影響しないため呼ばない。
+  - **エラー表示の出し分け**: 案件一覧・時給換算・タスク一覧・稼働ログ一覧はそれぞれ独立した`Alert severity="error"`を持つ（案件管理画面・タスク管理画面と同じ「一覧ごとに個別のエラー領域を持つ」パターン）。計測開始・終了・削除（確認後）の失敗は稼働ログ一覧側のエラー領域に表示する（フォームダイアログが無いため、ProjectsPanelの削除失敗と同じ「一覧側に出す」方針を踏襲）。
+  - **App.test.tsxとの整合**: `WorkTrackingPanel`も独自に`GET /projects`を叩くため、`App.test.tsx`が既存のとおり`projectsRegion()`（`within(screen.getByRole('region', { name: '案件管理' }))`）でスコープを絞っている前提を踏襲し、`WorkTrackingPanel`のルート`Paper`にも`component="section"` `aria-label="稼働計測・時給換算"`を付与してランドマークを分離した。案件・タスクの各セレクタは「案件を選択」というラベルを`TasksPanel`と同名で使っているが、両パネルは別領域（ランドマーク）に属し、`App.test.tsx`は該当ラベルをクエリしていないため衝突しない。`App.test.tsx`自体への修正は不要だった（既存76件は無修正で全pass、新規追加分も含め全体で受け入れ確認済み）。
+  - **テストで踏んだハマりどころ（記録）**: MUIの`Chip`はラベル用の`<span class="MuiChip-label">`とその親要素が同一テキストを持つため、`screen.getByText('進行中')`のようなセレクタ指定なしのクエリは「複数要素が見つかった」で失敗する。テストでは`{ selector: '.MuiChip-label' }`を指定して回避した。また、時給換算が`hourly_rate: null`のときに表示する`Alert severity="info"`もMUIの`Alert`はデフォルトで`role="alert"`を持つため、通信エラーテストで`screen.findByRole('alert')`を単数クエリすると時給換算側のinfo Alertと衝突する。該当テストでは時給換算のスタブ応答を`hourly_rate`が非nullになる値にして回避した（実装側の設計は変更していない）。
+  - **テスト（Vitest、新規27件＝130件中）**: `src/api/workLogs.test.ts`（4件、URL・メソッド・ボディなし・204）、`src/api/hourlyRate.test.ts`（2件、URL・`hourly_rate: null`の受け取り）、`src/workLogFormat.test.ts`（10件、進行中/完了済みの表示分岐・1時間未満/未満丸め・想定外データでの`-`表示・時給nullの文言・四捨五入・合計時間0件）、`src/components/WorkTrackingPanel.test.tsx`（11件、案件・タスクを選んでの計測開始と一覧反映・計測終了と状態表示の切り替え・同一タスク内の多重計測（2件同時「進行中」）・別タスク/別案件への切り替えでの独立した計測・稼働ログの削除確認と一覧からの消失／キャンセル・時給換算の表示（報酬額・合計稼働時間・換算時給）・合計稼働時間0（タスクはあるが完了ログ無し／進行中ログのみ）でも画面が破綻せず算出不可の旨が出ること・案件一覧取得失敗と稼働ログ一覧取得失敗それぞれのエラー表示）。既存の`App.test.tsx`（76件）・`TasksPanel.test.tsx`等は無修正で全pass。
+  - **実ブラウザでの動作確認（Playwright + Chromium headless、実APIに対して）**: バックエンドを`API_KEY`・`CORS_ALLOW_ORIGINS=http://127.0.0.1:5199`・一時DB（`DATABASE_URL`をスクラッチ領域の一時ファイルに指定。開発用`app.db`は未使用・未変更）で18010番に起動し、Vite開発サーバー（5199）を`VITE_API_BASE_URL=http://127.0.0.1:18010`で起動して、実ブラウザから以下を確認した（確認後、サーバー・一時DB・playwrightの一時セットアップとも停止・削除済み）。
+    - 案件（reward=10000）とタスク「実機テストタスク」「実機テストタスク2」をcurlで用意。「稼働計測・時給換算」領域で案件・タスクを選択→「稼働ログは0件です。」、時給換算は「時給を算出できません（稼働実績がありません）。」を表示（換算不能でも画面が壊れない）。
+    - 「計測開始」→一覧に1件「進行中」表示で反映。続けてもう一度「計測開始」→2件目の「進行中」行が追加（同一タスク内の多重計測、`.MuiChip-label`で「進行中」2件を確認）。APIにも`POST /tasks/1/work-logs/start`が2回保存されていることを確認。
+    - 別タスク「実機テストタスク2」に切替→「稼働ログは0件です。」（別タスクの一覧に切り替わる、既存の2件は混ざらない）→そちらでも「計測開始」→両タスクで独立して進行中ログを持てることを確認（別タスク・別案件との同時計測。案件についても案件セレクタの切替でタスクセレクタがリセットされ、選択のたびに`GET /projects/{id}/tasks`・`GET /projects/{id}/hourly-rate`を取り直すことをコードとして確認済み）。元のタスクに戻すと2件の進行中ログがそのまま残っていることも確認。
+    - 1件目の進行中ログに対して「計測終了」→状態が「終了済み」Chipに変わり、稼働時間（開始・終了の実時刻の差分。実行が数秒で完了したため実測値は「0時間0分」）が表示される。時給換算も同時に再取得され、`total_work_hours`・`hourly_rate`が0以外の値に更新される（極短時間のため時給換算値自体は非現実的に大きくなるが、これは0除算回避ロジックが正しく作動している証跡であり実装上の不具合ではない）。
+    - 誤って開始したログを「削除」→確認ダイアログ→「〜を削除しました。」の通知表示、一覧から消失。APIでも`GET /tasks/1/work-logs`から論理削除済みログが除外されることを確認。
+    - 誤ったAPI Key（クリア後に入力）→「稼働計測・時給換算」領域を含む4領域すべてに「認証エラー（HTTP 401）: API Keyが正しくありません。…」が表示される。
+    - ブラウザのコンソールには401応答に伴うネットワークエラーログ（6件、いずれも「Failed to load resource: the server responded with a status of 401」）のみが記録され、JSの例外（`pageerror`）は0件。
+  - **スコープ外（意図的に未実装）**: 選考系の画面、横断一覧画面（`/work-logs/running`・`/interview-steps/upcoming`）、CIワークフローへのフロントエンドジョブ追加、稼働ログのメモ編集UI（バックエンドの`start`/`stop`エンドポイントがメモを受け付けない設計のため対象外）。
+  - **セルフチェック**: フロント＝`npm run typecheck`（tsc -b、エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`（130 passed、stderr 0バイト＝warning 0件）・`npm run build`（成功）。バックエンド＝`uv run pytest -W error` 206 passed（warning 0件、無変更）、`uv run ruff check .` All checks passed!（バックエンドのコードは無変更）。
+- セキュリティエバリュエーターのフィードバック: **Critical/High相当の問題なし。承認する。** `git status`/`git diff`で変更範囲が`frontend/src/{App.tsx,api/types.ts}`（変更、`App.tsx`は`WorkTrackingPanel`の追加importと配置のみ、`types.ts`は`WorkLog`/`HourlyRate`型の追加のみ）＋`frontend/src/{api/workLogs.ts,api/hourlyRate.ts,workLogFormat.ts,components/WorkTrackingPanel.tsx}`（新規実装）＋各`*.test.ts(x)`（新規テスト）＋`spec.md`のみで、**バックエンド・`package.json`/`package-lock.json`・`Dockerfile`・`.gitignore`・CIワークフローに変更が無い**ことを確認した。既存の`api/client.ts`（`apiRequest`）・`api/errors.ts`と突き合わせ、`npm run typecheck`／`npm run lint`（oxlint --deny-warnings）／`npm run test`を実際に自環境で再実行して裏付けを取った。
+  - **認証・API Keyの扱い（既存パターン踏襲・問題なし）**: 新規の`fetchWorkLogs`／`startWorkLog`／`stopWorkLog`／`deleteWorkLog`（`api/workLogs.ts`）と`fetchHourlyRate`（`api/hourlyRate.ts`）はいずれも既存の`apiRequest`のみを経由しており、独自に`fetch`を呼ぶ実装や別の認証経路は無い（`grep`で確認）。`WorkTrackingPanel.tsx`もAPI Keyを直接`fetch`に渡したり`console.*`へ出力したりする箇所は無く、propsで受け取った`apiKey`を`apiRequest`系関数へ渡すのみ。API Key未入力時は各`reloadXxx`が`apiKey === ''`で早期リターンし、「計測開始」ボタンも`disabled={apiKey === '' || ...}`で無効化される。
+  - **インジェクション・URL組み立て（問題なし）**: `workLogs.ts`／`hourlyRate.ts`のパスに埋め込む`taskId`／`workLogId`／`projectId`はいずれも型上`number`（呼び出し元の`WorkTrackingPanel`でも`Project.id`／`Task.id`／`WorkLog.id`由来の値、またはセレクタの`Number(value)`変換結果のみが渡る）で、任意文字列がパスセグメントへ混入する経路は無い。クエリパラメータは使っておらずエスケープ漏れの懸念も無い。稼働ログの`memo`フィールド（`WorkLog.memo`）は型定義に存在するのみで`WorkTrackingPanel`では描画・送信のどちらにも使われていない（start/stopがメモを受け付けない設計と整合）。
+  - **XSS（問題なし）**: 新規ファイル一式（`workLogs.ts`／`hourlyRate.ts`／`workLogFormat.ts`／`WorkTrackingPanel.tsx`と対応するテスト）を`grep`し、`dangerouslySetInnerHTML`／`innerHTML`／`eval(`／`new Function`／`document.write`／`localStorage`／`document.cookie`／`window.open`／`location.href`／`location.search`のいずれも0件であることを確認した。案件名・タスク名・稼働ログのID・時刻・時給換算の数値はすべてJSXの式展開またはMUIコンポーネント（`Typography`／`Chip`／`MenuItem`／`DialogContentText`のテキスト子要素、`aria-label`属性値）経由でのみ描画され、危険なDOM操作の新規追加は無い。
+  - **mass assignment（問題なし）**: 計測開始・終了・削除の3操作（`startWorkLog`／`stopWorkLog`／`deleteWorkLog`）はいずれもリクエストボディを送らない実装（`options.body`未指定）で、`workLogs.test.ts`でも`init?.body`が`undefined`であることを検証済み。フォーム入力を伴う操作が無いためクライアントから`is_deleted`等の書き込み禁止フィールドを送信できる経路自体が存在しない。`types.ts`に追加した`WorkLog`型に`is_deleted: boolean`があるが、これはAPIレスポンス（`WorkLogRead`、`backend/app/schemas.py`で確認）を受け取るための読み取り専用の型であり、入力スキーマとしては使われていない（既存の`ProjectPatchResponse`等と同じ「レスポンス型にis_deletedを含める」パターンの踏襲）。
+  - **論理削除の徹底（問題なし・フロント側の担保範囲で確認）**: 削除は`DELETE /work-logs/{id}`を叩くのみで、削除成功後は`reloadWorkLogs`（一覧の再取得）と`reloadHourlyRate`（時給換算の再取得）を呼び直しており、画面が独自にフィルタして「消したことにする」実装にはなっていない（サーバー側の`is_deleted`フィルタ結果をそのまま描画する構造で、バックエンドは本タスクで無変更）。
+  - **エラーハンドリング（問題なし）**: `WorkTrackingPanel`のエラー表示は既存の`toDisplayMessage(error)`（`api/errors.ts`、無変更）を経由するのみで、スタックトレースや内部パス、SQL文字列を組み立てて表示するコードは新規ファイルに無い。計測開始・終了・削除の失敗は稼働ログ一覧側の`Alert severity="error"`に、案件一覧・時給換算・タスク一覧の失敗はそれぞれ独立した`Alert`に出しており、いずれも`ApiError`のメッセージ（401／HTTPエラー＋`detail`／network／invalidResponse）をそのまま表示するだけである。
+  - **CORS・シークレット管理（対象外・問題なし）**: 本タスクはバックエンド・`Dockerfile`・環境変数の取り扱いに変更が無く、CORS設定（`allow_credentials=False`＋オリジン列挙のfail-closed）は維持。新規ファイルにハードコードされたAPI Key・接続先URLは無く（`config.ts`経由の`VITE_API_BASE_URL`読み出しのみ）、テストコードのキーも`my-key`等のダミーのみ。
+  - **実行による裏付け**: `PATH`にNode 24を通した上で`npm run typecheck`（エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`を実際に再実行し、**13ファイル・103 passed**（stderr相当のwarning出力なし）を確認した。実装メモの「セルフチェック」記載は「130 passed」だが、これは誤記と見られる（案件管理画面53件＋タスク管理画面の新規23件＝76件、＋本タスクの新規27件＝103件で実測値と一致する）。テストのpass自体・件数の実態には問題は無く、Critical/High相当の指摘ではないためLowとして記録するに留める。
+  - 【Low（差し戻し対象外・記録のみ）】上記のとおり実装メモの新規テスト件数表記「新規27件＝130件中」は実測（103件）と不一致（正しくは「新規27件＝103件中」と思われる）。実害は無いが、次回以降の実装メモ作成時に既存件数の積み上げ計算を再確認することを推奨する。
+  - 【Low（既出・本タスクでの劣化ではない）】`ProjectsPanel`で既に指摘済みの「`reload`系に競合制御が無い」点（`AbortController`未使用、高速な選択切り替えで先行リクエストの応答が後着し得る）は、本タスクの`reloadProjects`／`reloadHourlyRate`／`reloadTasks`／`reloadWorkLogs`にも同様に存在する。表示内容は常にサーバーが`is_deleted=false`等で絞った当人のデータであり機密性の問題ではないため、今回も差し戻し対象とはしない。
+  - 総評: 認証は`apiRequest`単一経路、フォーム入力を伴わない設計のためmass assignmentの入力経路が存在しない、危険なDOM操作・URL組み立ての追加なし、エラーメッセージの内部情報漏洩なし。Critical/High相当の指摘なし。
+- 性能エバリュエーターのフィードバック: **合格。** 実行環境（Node 24へPATH設定後）で以下を実測し、全て成功・受け入れ条件7件すべてに対応するテストの存在とpassを確認した。
+  - `npm run test`（vitest run）: 13ファイル・**103 passed**、stderr 0バイト（warning 0件）。既存76件（案件管理53件＋タスク管理23件）は無修正で全pass、本タスクの新規は27件（`api/workLogs.test.ts` 4件、`api/hourlyRate.test.ts` 2件、`workLogFormat.test.ts` 10件、`components/WorkTrackingPanel.test.tsx` 11件）で、103件は実装メモ・セキュリティエバリュエーターの実測値と一致。
+  - `npm run typecheck`（tsc -b）: エラーなし（exit 0）。
+  - `npm run lint`（oxlint --deny-warnings）: 指摘なし（exit 0）。
+  - `npm run build`（tsc -b && vite build）: 成功（exit 0、558 modules transformed）。
+  - バックエンド `uv run pytest -v`: 206 passed、warning出力なし（`-W error`相当の裏取りとしてログ全文をgrepしたが"warnings summary"等の出力は無く、ヒットした"warning"文字列はステータス遷移警告ロジックのテスト名のみ）。バックエンドは本タスクで無変更のため回帰なし。
+  - `uv run ruff check`: All checks passed!
+  - 受け入れ条件7件をテストで個別に裏付け確認:
+    1. 計測の開始/終了と画面反映: `WorkTrackingPanel.test.tsx`「タスクを選んで計測を開始すると、進行中のログとして一覧に反映される」「進行中のログに対して計測終了すると、終了済みとして表示が変わる」で確認。
+    2. 進行中/終了済みの視覚的区別: 同テストで`.MuiChip-label`セレクタにより「進行中」→「終了済み」のラベル切り替えを確認。ただし**テストはChipのテキストラベルのみを検証しており、実装メモが挙げる背景色（`action.hover`）・Chipの`color="warning"`等の色によるスタイル面の区別はテストで裏付けられていない**（jsdomでの計算済みスタイル検証は一般に困難なため実務上妥当な範囲ではあるが、テスト不足として記録）。
+    3. 同一タスク内多重計測・別タスク/別案件同時計測: 「多重計測・同時計測」describe内の2テストで確認（2件同時「進行中」、別タスク・別案件それぞれ独立してPOSTが飛ぶこと）。
+    4. 稼働ログ一覧表示・各ログの稼働時間確認: 計測終了テストで「1時間30分」表示を確認。`workLogFormat.test.ts`で1時間未満丸め・想定外データでの`-`表示等の境界値も個別に確認済み。
+    5. 削除と一覧からの消失: 「稼働ログの削除」describe内の2テスト（削除実行→消失、キャンセル→残存）で確認。
+    6. 時給換算結果の表示: 「時給換算」describe内のテストで報酬額・合計稼働時間・換算時給の表示を確認。
+    7. 稼働時間0（換算不可）でも画面が破綻しない: 「合計稼働時間が0の場合でも画面が破綻せず、換算できない旨が表示される」「進行中のログのみの場合も合計稼働時間0として画面が破綻しない」の2テストで、完了ログ0件・進行中ログのみの2パターンとも確認。
+  - WorkLogの`ended_at`が`NULL`の間は「進行中」として扱われる境界値は`workLogFormat.test.ts`「終了時刻が未設定なら『進行中』を返す」で確認。時給換算の合計稼働時間0（進行中ログのみ含む）の挙動は上記7番のテストで確認。
+  - 実装メモの新規テスト件数記載を実測した。実装メモの「テスト（Vitest、新規27件＝130件中）」（本ファイル該当箇所）・「セルフチェック」の「130 passed」は、本評価時点でも実測値（`npm run test`で13ファイル・103 passed）と不一致のままである。内訳（新規27件＝`api/workLogs.test.ts` 4件＋`api/hourlyRate.test.ts` 2件＋`workLogFormat.test.ts` 10件＋`WorkTrackingPanel.test.tsx` 11件、既存76件＝案件管理53件＋タスク管理23件）と実測は一致しており、「130」という総数のみが誤記と見られる。セキュリティエバリュエーターの指摘どおりLow（記録のみ、差し戻し対象外）として扱い、本評価でも差し戻し理由には含めない。
+  - 指摘（テスト不足、差し戻し対象外の軽微事項）: 上記2.のとおり、視覚的区別のうち色によるスタイル面はテストで未検証（テキストラベルの区別のみ検証）。実害は無く合格の判断は変えないが、次回以降類似のスタイル系受け入れ条件がある場合はCSSクラス・`sx`経由のスタイル存在確認等での補強を推奨する。
+  - 総評: pytest/ruff/vitest/typecheck/lint/build全て成功、warningなし、受け入れ条件7件すべてに対応するテストが存在しpassしている。上記の軽微なテスト不足はCritical/High相当ではなく差し戻し対象としない。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 選考管理画面（企業・選考ステップ）

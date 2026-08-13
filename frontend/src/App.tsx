@@ -9,6 +9,7 @@ import { clearApiKey, loadApiKey, saveApiKey } from './api/apiKeyStorage'
 import { ApiKeyPanel } from './components/ApiKeyPanel'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { TasksPanel } from './components/TasksPanel'
+import { WorkTrackingPanel } from './components/WorkTrackingPanel'
 import { getApiBaseUrl } from './config'
 
 export default function App() {
@@ -48,6 +49,8 @@ export default function App() {
         <ProjectsPanel apiKey={apiKey} />
 
         <TasksPanel apiKey={apiKey} />
+
+        <WorkTrackingPanel apiKey={apiKey} />
       </Stack>
     </Container>
   )
