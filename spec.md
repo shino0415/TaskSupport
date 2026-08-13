@@ -943,19 +943,67 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 案件管理画面
-- status: 未着手
+- status: 完了
 - 概要: 案件の一覧・絞り込み・詳細表示・登録・編集・削除をブラウザ上で行えるようにする。基盤セットアップ完了後に着手する。
 - 受け入れ条件:
-  - [ ] 案件一覧が画面に表示され、ステータスによる絞り込みができる
-  - [ ] 一覧から個別の案件詳細を表示できる
-  - [ ] 入力フォームから案件を新規登録でき、登録内容が一覧・詳細に反映される
-  - [ ] 案件の各項目（ステータス含む）を編集でき、変更内容が画面に反映される
-  - [ ] ステータスの逆行時にAPIが返す警告が画面上でユーザーに提示され、かつ更新自体は妨げられない
-  - [ ] 案件を削除でき、削除後は一覧・詳細から参照できなくなる
-  - [ ] 必須項目の未入力や通信エラー時に、原因が判別できるメッセージが表示される
-  - [ ] 一覧が0件の場合も表示が破綻せず、件数が0であることが分かる
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 案件一覧が画面に表示され、ステータスによる絞り込みができる
+  - [x] 一覧から個別の案件詳細を表示できる
+  - [x] 入力フォームから案件を新規登録でき、登録内容が一覧・詳細に反映される
+  - [x] 案件の各項目（ステータス含む）を編集でき、変更内容が画面に反映される
+  - [x] ステータスの逆行時にAPIが返す警告が画面上でユーザーに提示され、かつ更新自体は妨げられない
+  - [x] 案件を削除でき、削除後は一覧・詳細から参照できなくなる
+  - [x] 必須項目の未入力や通信エラー時に、原因が判別できるメッセージが表示される
+  - [x] 一覧が0件の場合も表示が破綻せず、件数が0であることが分かる
+- 実装メモ（技術判断とその理由）:
+  - **画面構成（既存の単一ページ構成を踏襲、ルーターは導入しない）**: 基盤タスクで作った `App`（API Key保持）＋パネルの構成をそのまま拡張し、`ProjectsPanel` を「案件管理画面」（一覧・絞り込み・登録・編集・削除の入口）に作り替えた。詳細・フォーム・削除確認はMUIの`Dialog`で表示する。ルーティングライブラリの追加は本タスクの受け入れ条件に不要で、後続タスク（横断一覧からの遷移）で必要になった時点でも上に載せられるため、スコープを増やさない選択をした。
+  - **状態の持ち先**: 案件データの取得・更新は`ProjectsPanel`（コンテナ）に集約し、`App`はAPI Keyのみを持つ形へ整理した。`ProjectDetailDialog`は自身で`GET /projects/{id}`を叩く（一覧の値を使い回さない）。これにより「削除後は詳細から参照できない（404になる）」ことが画面上で確認できる。
+  - **APIクライアントの拡張（既存構成の再利用）**: `src/api/client.ts`の`apiRequest`（`X-API-Key`付与・`ApiError`のkind分類）をそのまま使い、`src/api/projects.ts`に`fetchProjects`（`status`クエリ）・`fetchProject`・`createProject`・`updateProject`・`deleteProject`を追加。`fetchProjects`はステータス未指定時にクエリを付けない（`?status=`で空文字を送らない）。ステータス値は`encodeURIComponent`でエスケープする。
+  - **型**: `PROJECT_STATUSES`（提案中/契約中/納品済み/完了/見送り）と`ProjectStatus`を`src/api/types.ts`に定義。`Project.status`はAPIのレスポンスが`str`のため`string`のままにし（未知の値が来ても表示が壊れない）、フォーム・絞り込みの入力値にのみ`ProjectStatus`を使う。`ProjectPatchResponse`は`Project & { warning: string | null }`。
+  - **フォーム検証（`src/projectForm.ts`）**: 描画から独立した純粋関数`validateProjectForm`／`toProjectInput`／`toProjectFormValues`として切り出した（コンポーネントと同居させるとlintの`react(only-export-components)`に触れるため別モジュール）。必須は name／client_name／reward／applied_date／platform で、未入力時は項目ごとのメッセージをその入力欄の下に出す。rewardは整数のみ（負値はAPI側が許容するため画面でも弾かない＝APIの契約より厳しくしない）。deadline・memoは任意で、空欄は`null`として送る（APIはnullでのクリアを許可）。日付は`type="date"`入力でYYYY-MM-DD形式を担保。フォームは`noValidate`にし、指摘はブラウザ標準のツールチップではなく画面上のメッセージで行う。
+  - **ステータス逆行時の警告（決定事項どおり非ブロッキング）**: `PATCH`のレスポンスの`warning`がnullでなければ、一覧上部に`Alert severity="warning"`で「案件を更新しました（変更は保存されています）。<APIのwarning本文>」を表示する。確認ダイアログで更新を止めたりロールバックしたりはしない（入力ミス訂正を妨げないという方針に従う）。警告なしの更新・登録・削除は`severity="success"`の通知で、いずれも閉じるボタンで消せる。
+  - **エラー表示の出し分け**: 一覧取得の失敗はパネル内の`Alert severity="error"`、登録・更新の失敗は**ダイアログを閉じずに**フォーム内へ表示（入力内容を失わせないため）。文言は既存の`ApiError`分類（401／HTTPエラー＋detail／通信失敗＋CORS確認／接続先未設定）をそのまま使う。削除の失敗は一覧側のエラー表示に出す。
+  - **操作ボタンのラベル**: 行内のボタンは表示上は「詳細／編集／削除」だが、どの案件に対する操作か支援技術・テストから判別できるよう`aria-label`に案件名を含めた（例: `案件「LP制作」を削除`）。
+  - **テスト（Vitest、53件＝基盤の24件＋新規29件）**: `src/api/projects.test.ts`（各操作のURL・メソッド・ボディ・`Content-Type`・warning受け取り・204）、`src/projectForm.test.ts`（必須未入力・空白のみ・整数以外・任意項目・変換結果）、`src/components/ProjectsPanel.test.tsx`（論理削除とwarningまで模した簡易APIサーバーを`fetch`スタブで用意し、一覧／0件／絞り込み（`?status=`）／絞り込み解除／詳細が`GET /projects/{id}`であること／詳細404時のメッセージ／登録→一覧・詳細への反映／必須未入力で送信しないこと／登録失敗時に入力保持のままエラー表示／編集の反映／逆行warningの提示と更新の成立／削除の確認・一覧からの消失／削除キャンセル／401表示）。MUIのDialogは開いている間、背後がaria-hiddenになるため、閉じきってからロール検索するヘルパーを用意している。
+  - **実ブラウザでの動作確認（Playwright + Chromium headless、実APIに対して）**: バックエンドを`API_KEY`・`CORS_ALLOW_ORIGINS=http://localhost:5173`・一時DB（`DATABASE_URL`をスクラッチ領域のファイルに指定。開発用`app.db`は未使用・未変更）で18010番に起動し、Vite開発サーバー（5173）を`VITE_API_BASE_URL=http://localhost:18010`で起動して、実ブラウザから以下を確認した（確認後、サーバー・一時DBとも停止・削除済み）。
+    - 0件表示（「取得件数: 0 件」「案件は0件です。」）→ 未入力で「登録する」→ 5項目すべての未入力メッセージ表示、POSTは送られない。
+    - 新規登録 → 「案件を登録しました。」と一覧反映。APIにも`{"name":"実機確認案件",...,"status":"契約中"}`として保存されていることをcurl相当で確認。
+    - 詳細 → `GET /projects/1`の内容（案件名・クライアント・ステータス・報酬123,456・応募日・納期・プラットフォーム・メモ）が表示。
+    - 順行更新（契約中→納品済み）→ 「案件を更新しました。」のみ（警告なし）。
+    - 逆行更新（納品済み→提案中）→ 「案件を更新しました（変更は保存されています）。納品済み から 提案中 への変更です。意図的な変更か確認してください。」が表示され、**同時に名前とステータスの変更はDBに保存済み**であることをAPIから確認（＝更新はブロックされていない）。
+    - 絞り込み（完了）→ 該当1件のみ表示、「すべて」に戻すと2件に戻る。
+    - 削除 → 確認ダイアログ →「案件「絞り込み確認用」を削除しました。」、一覧から消え、APIでも`GET /projects/2`が404（論理削除）。
+    - 誤ったAPI Key → 「認証エラー（HTTP 401）: API Keyが正しくありません。…」が一覧側にもフォーム送信時にも表示され、フォームの入力内容は保持される。API停止時 → 「APIサーバーに接続できませんでした（http://localhost:18010）。…CORSの許可オリジン設定を確認してください。」。
+    - ブラウザのコンソールエラーは401応答に伴うネットワークログのみで、JSの例外は0件。
+  - **スコープ外（意図的に未実装）**: 配下タスク・稼働ログ・時給換算の画面（後続タスク）、選考系の画面、CIワークフローへのフロントエンドジョブ追加、ルーティングの導入。
+  - **セルフチェック**: フロント＝`npm run typecheck`（tsc -b、エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`（53 passed、stderr 0バイト＝warning 0件）・`npm run build`（成功、`dist`に`localhost`の混入なし）。バックエンド＝`uv run pytest -W error` 206 passed（warning 0件）、`uv run ruff check .` All checks passed!（バックエンドのコードは無変更）。
+- セキュリティエバリュエーターのフィードバック: **Critical/High相当の問題なし。承認する。** `git status`/`git diff`で変更範囲が`frontend/src/{App.tsx,api/projects.ts,api/types.ts,components/ProjectsPanel.tsx}`（変更）＋`frontend/src/{projectForm.ts,projectForm.test.ts,api/projects.test.ts,components/ProjectFormDialog.tsx,components/ProjectDetailDialog.tsx,components/ProjectsPanel.test.tsx}`（新規）＋`spec.md`のみで、**バックエンド・`package.json`/`package-lock.json`・`Dockerfile`・`.gitignore`/`.dockerignore`・CIワークフローに変更が無い**ことを確認したうえで、既存の`api/client.ts`・`api/errors.ts`・`api/apiKeyStorage.ts`・`config.ts`・`components/ApiKeyPanel.tsx`と突き合わせ、さらに実行による裏付け（後述の実地検証）を取った。
+  - **API Keyの扱い（確定方針どおり・問題なし）**: 新規のAPI呼び出しは`fetchProjects`／`fetchProject`／`createProject`／`updateProject`／`deleteProject`の5本とも既存の`apiRequest`を経由しており、認証ヘッダー付与の経路は1箇所のままである（各関数が独自に`fetch`を呼ぶ実装にはなっていない）。`apiRequest`は`X-API-Key`ヘッダーにのみキーを載せ、URL・クエリ・ボディには一切載せない。`src/`配下に`localStorage`・`document.cookie`・`location.search`・`console.*`の使用は0件（`grep`で確認。テスト側の`localStorage`参照は「localStorageに残らないこと」の検証目的のみ）。**実地検証**: `ProjectsPanel`を`apiKey="secret-key-123"`で描画して一覧取得〜詳細取得〜PATCHまで実行し、記録した全fetch呼び出しについて (a) URLにキー文字列が含まれない、(b) `X-API-Key`ヘッダーの値が一致する、(c) リクエストボディにキーが含まれない、(d) `document.body.innerHTML`全体にキーが出現しない、をアサートして全てpassすることを確認した。キー未入力時は`apiRequest`が`fetch`前に`unauthorized`で弾く（`ProjectsPanel.reload`も`apiKey === ''`で早期リターンし、「新規登録」ボタンも無効化される）。
+  - **XSS（確認済み・問題なし）**: 追加された3コンポーネントを含め`src/`全体に`dangerouslySetInnerHTML`・`innerHTML`・`eval`・`new Function`・`document.write`は0件。案件名・クライアント名・ステータス・プラットフォーム・メモ・APIの`warning`本文・エラー`detail`はいずれもJSXの式展開（Reactの自動エスケープ）とMUIコンポーネント経由でのみ描画され、`aria-label`／`DialogContentText`の文字列連結もテキストノード／属性値として扱われる。**実地検証**: `name`に`<img src=x onerror=...>`、`client_name`に`<script>`、`platform`に`"><svg onload=alert(1)>`、`memo`に`<iframe src="javascript:...">`、PATCHの`warning`に`<img src=y onerror=...>`を返す偽APIで一覧・詳細・更新通知を描画し、`img`／`svg[onload]`／`iframe`要素がDOMに生成されず、ペイロードがそのままテキストとして表示され、`window`への副作用も発生しないことを確認した（検証用テストファイルは実行後に削除済み。`git status`が評価前と同一であることを確認）。
+  - **URL組み立て（確認済み・問題なし）**: `fetchProjects`は`status`が未指定または空文字のときクエリ自体を付けず、指定時のみ`?status=${encodeURIComponent(...)}`とする。値の出所はMUIのSelect（`PROJECT_STATUSES`の5値＋「すべて」）に限定されており、仮に任意文字列が入っても`&`・`#`・`/`・空白がエスケープされるためクエリ追加やパス変更は起きない。`fetchProject`／`updateProject`／`deleteProject`のパスに埋め込む`projectId`は型上`number`で、APIレスポンス由来の`project.id`のみが渡る。ベースURLは`config.ts`の環境変数読み出し（末尾スラッシュ正規化）のままで、`apiRequest`が`${baseUrl}${path}`と連結する構造は変更されていない。**参考実測**: バックエンド側も`?status=`にSQLインジェクション文字列（`契約中' OR 1=1--`）を与えると`ProjectStatus`のEnum検証で422となり、クエリはSQLAlchemyのORM経由のため文字列結合は発生しない。
+  - **論理削除の徹底（確認済み・問題なし）**: 画面は削除判定を自前で行わず、一覧は`GET /projects`、詳細は一覧の値を使い回さず`GET /projects/{id}`を都度叩く実装で、いずれもバックエンドの`is_deleted=false`フィルタが効く。削除は`DELETE /projects/{id}`（バックエンドは`is_deleted = True`のみで物理削除なし。`db.delete(`／`DELETE FROM`／`.delete()`の全文検索は0件で従来どおり）。削除後は`reload()`で一覧を取り直し、開いていた詳細ダイアログが同一IDなら閉じる。**実地検証**（TestClientで実測）: (1) 削除済み案件への`PATCH`は404で、`is_deleted`を`false`に戻す「復活」はできない、(2) `PATCH`のボディに`is_deleted: true`・`id: 999`を混ぜても`ProjectUpdate`に該当フィールドが無くPydanticが無視するためレコードは変化しない（mass assignmentなし。フロント側の`ProjectInput`型にも`id`・`is_deleted`は含まれない）、(3) 削除後の一覧は空、(4) API Keyなしのリクエストは401。編集フォームの送信内容は`toProjectInput`が生成する8項目に限定されている。
+  - **ステータス逆行warningの扱い（方針どおり・問題なし）**: `handleSubmit`は`updateProject`の結果の`warning`が非nullのとき`Alert severity="warning"`で「案件を更新しました（変更は保存されています）。<APIのwarning本文>」を出すだけで、更新のブロック・ロールバック・再送はしない（`PATCH`は1回のみ）。偽APIで逆行更新を行い、警告表示と同時に一覧・詳細へ変更後の値が反映されることを確認した。決定事項「ステータス変更はブロックしない」から逸脱していない。
+  - **エラーハンドリング（確認済み・問題なし）**: 表示メッセージは既存の`ApiError`分類（config／unauthorized／http＋`detail`／network／invalidResponse）をそのまま使い、スタックトレース・内部パス・SQL文字列は含まない。`extractDetail`はJSONでないボディ（FastAPIの500は`Internal Server Error`のプレーンテキスト）で例外を握って空文字を返すため、HTTPステータスのみの通知に落ちる。`toDisplayMessage`が`error.message`をそのまま出すのはApiError以外の予期しない例外だが、`fetch`由来の例外は`AbortError`を除き`try`内で`ApiError('network', ...)`へ変換されるため、ヘッダー値（＝API Key）を含みうるランタイム例外文言が画面へ出る経路は塞がれている。
+  - **CORS・シークレット管理・依存（確認済み・問題なし）**: バックエンド無変更のため`allow_credentials=False`＋環境変数列挙のfail-closedは維持（`git diff`で確認）。`credentials`は送らずCookie不使用のためCSRF経路も無い。`npm run build`後の`dist/assets/index-*.js`を`grep`し、混入しているのは`X-API-Key`（ヘッダー名）・`project-tracker.api-key`（storageキー名）・`VITE_API_BASE_URL`（環境変数名）の文字列のみで、キーの実値も`localhost:*`も0件、sourcemapも未出力。`npm audit`は**0 vulnerabilities**（prod 85／dev 161／total 245）で、本タスクでの依存追加も無い（`package.json`・`package-lock.json`とも未変更）。新規テストのキーは`valid-key`／`my-key`等のダミーのみ。
+  - **バックエンドの非劣化（確認済み）**: `uv run pytest` 206件全pass。グローバル`Depends(verify_api_key)`＋`docs_url`/`redoc_url`/`openapi_url`のnull、`secrets.compare_digest`による定数時間比較、生SQLの不在、`is_deleted`フィルタの維持を再確認した。
+  - 【Low（差し戻し対象外・記録のみ）】一覧取得`reload()`にはリクエストの中断・順序保証が無く（`ProjectDetailDialog`は`AbortController`を使っているのに対し非対称）、絞り込みを高速に切り替えると先行リクエストの応答が後着して、現在の絞り込み条件と一致しない一覧が表示され得る。表示される内容は常にサーバーが`is_deleted=false`で絞った当人のデータであり機密性の問題ではないが、後続画面でも同じ`reload`パターンを踏襲する前提なら、世代カウンタか`AbortController`での取り消しを入れておくと堅い。
+  - 【Low（差し戻し対象外・記録のみ）】画面側は`is_deleted`を防御的に確認していない（APIが返した配列をそのまま描画する）。現状はバックエンドのフィルタで担保されており実測でも漏れは無いため実害はないが、多層防御としては一覧描画時に`is_deleted`を弾く／型から`is_deleted`を落とす選択肢もある。
+  - 【Low（差し戻し対象外・記録のみ）】API Keyの「クリア」実行後、案件一覧のデータ自体は消える（`projects`が`null`に戻ることを確認）が、`notice`（例:「案件「LP制作」を削除しました。」＝案件名を含む）と、開いたままの登録・編集フォームの入力値は画面に残る。共有端末での残留情報という軽微な観点であり、キー自体はsessionStorageから削除されている。
+  - 【Low（既出・本タスクでの劣化ではない）】配信HTML（`frontend/index.html`）にCSPの`meta`が無く、依存ライブラリ経由等でXSSが成立した場合はsessionStorage上のキーが読める。これは決定事項「API Keyのブラウザ側での扱い」で受容済みのトレードオフであり、本差分で悪化していない（危険な描画は0件）。将来ホスティング側でCSPヘッダーを付ける余地がある。
+  - 総評: 認証ヘッダー付与の単一経路化、キーのURL/DOM/ビルド成果物への非露出、危険な描画の不在、クエリのエスケープ、論理削除・mass assignmentの非バイパス、warning非ブロッキングのいずれも実行による裏付けを取れた。Critical/High相当の指摘なし。
+- 性能エバリュエーターのフィードバック: **合格（受け入れ条件8件すべてテストで裏付け済み）。statusを「完了」に更新する。**
+  - **実行結果**: フロントエンド＝`npm run typecheck`（tsc -b、エラーなし）／`npm run lint`（oxlint --deny-warnings、指摘なし・exit 0）／`npm run test`（vitest run、6ファイル・53 passed、stdout/stderrともwarning相当の出力なし。stderrは0バイトを実測）／`npm run build`（成功、`dist/assets/index-*.js`生成）。バックエンド＝`uv run pytest -v` 206 passed（出力全文をwarningの語で検索したが、ヒットはすべて`..._backward_transition_returns_warning`等のテスト名で、pytestのwarnings summaryセクション自体が出力されていないことを確認＝warning 0件）／`uv run ruff check` All checks passed!。`git status`は`frontend/src/{App.tsx,api/projects.ts,api/types.ts,components/ProjectsPanel.tsx}`（変更）＋`frontend/src/{projectForm.ts,projectForm.test.ts,api/projects.test.ts,components/ProjectFormDialog.tsx,components/ProjectDetailDialog.tsx,components/ProjectsPanel.test.tsx}`（新規）＋`spec.md`のみで、セキュリティエバリュエーターの申告どおりバックエンドは無変更。
+  - **受け入れ条件ごとの確認（すべて`src/components/ProjectsPanel.test.tsx`で担保）**:
+    1. 一覧表示・ステータス絞り込み: 「案件一覧と件数を表示する」「ステータスで絞り込むとstatusクエリ付きで取得し、該当分だけ表示する」「絞り込みを『すべて』に戻すと全件表示に戻る」でpass。絞り込み解除まで確認しているのが良い。
+    2. 一覧から個別詳細表示: 「一覧から詳細を開くとGET /projects/{id}の内容を表示する」でpass。詳細が一覧の値の使い回しでなく`GET /projects/{id}`を叩くことまで`server.requests`でアサートしている。
+    3. 新規登録と一覧・詳細への反映: 「フォームから登録でき、一覧と詳細に反映される」でpass。POSTボディの内容、一覧反映、登録直後の詳細再取得での反映まで確認。
+    4. 編集と画面反映: 「各項目を編集でき、変更内容が一覧に反映される」でpass。PATCHのURL・ボディ・一覧表示の両方をアサート。
+    5. ステータス逆行時の警告と非ブロッキング: 「ステータス逆行時はAPIの警告を表示しつつ、更新自体は成立する」でpass。警告文言の表示と同時に一覧・詳細双方に変更後の値（提案中）が反映されることまで確認しており、「妨げられない」の検証として十分。
+    6. 削除と一覧・詳細からの除外: 「確認のうえ削除でき、削除後は一覧から参照できなくなる」（一覧からの消失・DELETE呼び出し・詳細ボタンの消失）と「削除済みの案件の詳細は参照できず、404と分かるメッセージを表示する」（詳細からの除外）の2テストで一覧・詳細の両方を担保。
+    7. 必須未入力・通信エラー時のメッセージ: 「必須項目が未入力なら項目ごとのメッセージを表示し、送信しない」（5項目それぞれの個別メッセージとPOST未送信）と「登録時の通信エラーは原因が分かる形でフォームに表示され、入力内容は保持される」（`TypeError: Failed to fetch`をスタブしCORS言及・入力保持まで確認）、加えて「一覧取得に失敗すると原因が分かるメッセージを表示する」（401）でpass。
+    8. 0件表示: 「0件でも表示が破綻せず0件と分かる」で「取得件数: 0 件」「案件は0件です。」の両方を確認。
+  - **境界値・エッジケースの確認**: 本タスクはCRUD画面でありステータス遷移ロジック自体・論理削除ロジック自体・WorkLog・時給換算は対象外（バックエンドの既存テストで別途担保済み、206件全pass）。フロントエンド固有の境界値として、絞り込み解除（全件に戻る）、詳細の使い回し禁止（削除後404）、警告ありの更新でも一覧・詳細双方に反映される非ブロッキング挙動、報酬額の整数以外・空白のみの必須項目判定（`src/projectForm.test.ts`）を確認済み。
+  - **テスト不足の指摘（Low、差し戻し対象外）**: セキュリティエバリュエーターも指摘済みの`reload()`に競合制御が無い点（絞り込み高速切替時の表示不整合）について、性能上もテストが存在しない。表示に影響しうる不具合ではあるが受け入れ条件には明記されていないため本タスクの合否には影響させない。後続のタスク管理画面など同パターンを踏襲する画面で同種の問題が積み重なる場合は、そちらのレビューで指摘する。
+  - **総評**: pytest・ruff・npm run typecheck/lint/test/buildすべて成功、warning 0件、受け入れ条件8件全てに対応する自動テストが存在し実際にpassしている。Critical/High/Medium相当の指摘なし。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド タスク管理画面
