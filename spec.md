@@ -6,7 +6,7 @@
 ## 技術構成
 
 - FastAPI + Pydantic
-- SQLite + SQLAlchemy（`Base.metadata.create_all`で初期化、Alembic不使用）
+- SQLite + SQLAlchemy（スキーマはマイグレーション管理の仕組みで追跡・適用する。詳細は「## 実装タスク」のマイグレーション関連タスクを参照）
 - 認証: 簡易API Key方式（本人専用ツールのため）
 - テスト: pytest（ステータス遷移の警告ロジックの単体テスト、FastAPI TestClientでのエンドポイントテスト）
 - CI/CD: GitHub Actions（lint: ruff → test: pytest → build: Dockerマルチステージ → deploy）
@@ -234,6 +234,15 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 ### フロントエンドのルーティング方針（確定: 軽量ルーティングを導入する）
 
 「フロントエンド 横断一覧画面（予定選考・進行中稼働）」タスクの受け入れ条件「一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる」の実現方式としてユーザーが選択した。それまでの各画面タスク（案件・タスク・稼働計測・選考管理）はいずれも「単一ページ構成を踏襲し、ルーターは導入しない」という実装メモ上の判断（`## 決定事項`未確定のgenerator裁量）を積み重ねてきたが、横断一覧からの遷移という要件を機に、ここで明示的にルーター（react-router、またはURLハッシュの手動パースなど軽量な実装）を導入する方針へ切り替える。ユーザーの判断理由は「ルーターがあった方が使いやすい」。具体的なライブラリ選定（react-router-dom等）・URL構造（例: `#/projects/1`）・既存4画面への遡及適用の要否は実装時の技術的詳細としてgeneratorが判断してよい。
+
+### 既存の開発用DB（backend/app.db）のマイグレーション管理への移行方法（確定: 現状スキーマを初期マイグレーション適用済みとして扱う）
+
+開発用DBには既に複数テーブルにデータ（案件・選考データ等）が入っているため、マイグレーション管理の仕組みを導入する際にこのDBを作り直す（データを破棄する）選択肢と、現状スキーマをそのまま「初期マイグレーション適用済み」として扱う（マイグレーション履歴だけを追記し、既存のテーブル構造・データ自体には手を加えない）選択肢があった。ユーザーは後者を選択した。開発中に登録した既存データを保持する。以降のマイグレーションが現状スキーマと本当に一致しているかは、実装時のレビュー・動作確認で担保する。
+
+### 本番相当環境へのマイグレーション適用の自動化方針（確定: CI/CDパイプラインに自動組み込みする）
+
+既存のCI/CDパイプライン（lint→test→Dockerビルド、実デプロイは対象外）にマイグレーション適用のステップを自動で組み込む方針とし、手動実行運用は採らない。デプロイのたびにスキーマが確実に最新化されることを優先した。意図しないタイミングでの自動適用や適用失敗時の切り戻しについては、実装時にパイプラインが失敗する（後続のデプロイに進ませない）形で安全側に倒すこと。
+
 
 ## 実装タスク
 
@@ -1298,3 +1307,64 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - **論理削除・親詳細の子情報非包含・WorkLog・時給換算エンドポイントの回帰確認**: これらのテスト（`test_delete_*_marks_is_deleted_and_excludes_from_list`系、`test_get_*_detail_does_not_include_child_*_info`系、`test_start_work_log_allows_multiple_running_logs_for_same_task`・`test_start_work_log_allows_concurrent_logs_across_tasks_and_projects`、`test_hourly_rate_zero_total_hours_*`系等）はこのリファクタリングの変更範囲（`app/status_transitions.py`・`app/schemas.py`・`app/models.py`のステータス関連の型注釈のみ、`app/routers/*.py`は無変更）と直接関係しないが、`git diff --stat HEAD`で変更ファイルを確認した上で170件全件PASSにこれらが含まれていることを個別にログで確認し、意図しない副作用が無いことを確かめた。
   - **不足の指摘**: 無し。今回のリファクタリングは型注釈・Enum定義のみで振る舞いの変更を伴わないため、新規に必要となるテストケースは見当たらない。
   - コードは変更していない（`Read`のみで`Edit`は使用していない）。
+
+### タスク: マイグレーション管理基盤の導入
+- status: 完了
+- 概要: 今後のDBスキーマ変更を追跡し、安全に適用・巻き戻しできる仕組みを導入する。現在の5テーブル（Project/Task/WorkLog/Company/InterviewStep）のスキーマを最初の管理対象として登録し、以降のモデル変更はこの仕組み上の変更単位として追加していく運用に切り替える。既存の開発用DB（backend/app.db）をこの仕組みの管理下に移す具体的な方法は「既存開発用DBのマイグレーション管理への移行」タスクで別途扱う。
+- 受け入れ条件:
+  - [ ] テーブルが何も無い状態のDBに対して仕組みを適用すると、現在の「## テーブル設計」通りの全5テーブル（is_deletedを含む全カラム）が作成される
+  - [ ] スキーマの変更内容を1つの単位として追加でき、その単位を最新の状態まで適用すること、および直前の状態へ巻き戻すことの両方がコマンド操作で行える
+  - [ ] 対象のDBに対して、現在どの変更単位まで適用済みかを確認できる
+  - [ ] 試しに加えた1つのスキーマ変更（例: いずれかのテーブルへの列追加）について、適用・巻き戻しの両方で意図通りに反映・復元されることを確認できる
+  - [ ] 既存の自動テストが、この仕組みで準備したDBに対しても全て通過する
+- 実装メモ:
+  - マイグレーションツールにAlembicを採用（`uv add alembic`）。設定一式は`backend/`配下に配置した: `backend/alembic.ini`、`backend/migrations/env.py`、`backend/migrations/versions/522c9ff7a611_create_initial_schema.py`（初期リビジョン、down_revision=None）。`uv run`はカレントディレクトリを`backend/`にしても実行できるため、`cd backend && uv run alembic upgrade head`のような形での運用を想定している。
+  - `backend/alembic.ini`の`sqlalchemy.url`はあえて空にした。`backend/migrations/env.py`が、Alembic Config経由の明示的な上書き（`Config.set_main_option("sqlalchemy.url", ...)`。テストで使用）を最優先し、無指定時は`app.database.DATABASE_URL`（＝`DATABASE_URL`環境変数、未設定時は`sqlite:///./app.db`）にフォールバックする。これによりURLの決め方をアプリ本体と1本化しつつ、テストからは容易に一時DBへ差し替えられる。`target_metadata`は`app.database.Base.metadata`（`app.models`をimportして登録）を直接参照するため、モデル定義がスキーマの正であり続ける。SQLiteは列変更・削除の直接ALTERに制約が多いため、`render_as_batch=True`を常時有効化した（一時テーブルへの作り替えを介するAlembicのbatchモードで安全に適用する）。
+  - 初期リビジョンは、空の一時DBに対する`alembic revision --autogenerate`で生成し、内容が現行の`app/models.py`（テーブル設計通りの全5テーブル・全カラム・外部キー）と一致することを確認した上でruffのフォーマットのみ適用した（手で書き換えてはいない）。
+  - 本タスクのスコープは「空DB・テスト用DBに対する仕組みの整備」のみであり、既存の開発用DB（`backend/app.db`、既にデータが入っている）には一切触れていない。`git status`・チェックサム比較でapp.dbが変更されていないことを確認済み。同じ理由で、アプリ起動時の初期化（`app/main.py`の`lifespan`→`app/database.init_db()`）は従来通り`Base.metadata.create_all`のままとし、Alembicへの切り替えは行っていない（app.dbを次回起動時に触ってしまわないため）。dev DBをAlembic管理下に移す作業は次タスク「既存開発用DBのマイグレーション管理への移行」で行う。
+  - 受け入れ条件4点目（試しに加えた1つのスキーマ変更の適用・巻き戻し）は、実装時に`company`テーブルへの列追加を行うリビジョンファイルを一時的に作成し、`alembic upgrade head`→列が追加されることを確認→`alembic downgrade -1`→列が復元されることを確認、という手順をCLIで実施した上で、スキーマ設計をspec.md通りに保つため検証後にそのリビジョンファイルは削除した（正式な変更単位としては残していない）。自動テスト（`tests/test_migrations.py::test_trial_column_addition_can_be_applied_and_rolled_back`）では、リビジョンファイルのupgrade()/downgrade()が内部で呼ぶのと同じAlembic Operations API（`MigrationContext`+`Operations`、`batch_alter_table`）を直接使い、companyテーブルへの列追加・削除が意図通り反映・復元されることを再現可能な形で検証している。
+  - 受け入れ条件5点目（既存の自動テストがこの仕組みで準備したDBに対しても全て通過する）について、既存8ファイルのテストfixture（`Base.metadata.create_all`で一時DBを都度作る形。DBモデル定義とDB初期化タスク等、既に評価済みのタスクの成果物）はAlembic導入前の設計のまま変更していない（スコープ外の既存タスクの実装・受け入れ根拠を本タスクの都合で書き換えないため）。代わりに`tests/test_migrations.py`に、`alembic upgrade head`で準備した一時DBを`get_db`のオーバーライド先として使うFastAPI TestClientフィクスチャ（`migrated_client`）を追加し、案件系（Project作成→タスク作成→稼働ログ開始→論理削除→一覧除外、親詳細に子情報を含まないこと）・選考系（Company作成→InterviewStep作成→論理削除→一覧除外）の代表的な受け入れ条件をAlembicが準備したDBに対して実地確認した。
+- テスト: `backend/tests/test_migrations.py`（新規、7件）
+  - `test_upgrade_head_creates_all_tables_matching_spec` / `test_upgrade_head_is_deleted_defaults_to_false_at_db_level`: 空DBへの`alembic upgrade head`適用で全5テーブル・全カラム（名前の集合一致）が作成され、is_deletedがDBレベルでデフォルトfalseになることを検証（受け入れ条件1点目）。
+  - `test_current_revision_tracks_applied_state`: 未適用時は`None`、`upgrade head`後は最新リビジョンID、`downgrade base`後は再び`None`になることを検証（受け入れ条件3点目）。
+  - `test_downgrade_and_reupgrade_roundtrip`: `upgrade head`→`downgrade -1`（テーブル消滅）→再度`upgrade head`（テーブル復元）のコマンド操作による往復を検証（受け入れ条件2点目）。
+  - `test_trial_column_addition_can_be_applied_and_rolled_back`: companyテーブルへの列追加・削除が適用・巻き戻し双方で意図通りになることを検証（受け入れ条件4点目）。
+  - `test_project_task_crud_works_against_migrated_db` / `test_company_interview_step_crud_works_against_migrated_db`: Alembicで準備したDBに対してFastAPIアプリの案件系・選考系の代表的なエンドポイント（作成・親詳細の子情報非包含・論理削除・一覧除外）が問題なく動作することを検証（受け入れ条件5点目）。
+  - `uv run pytest`は213件全てpass（既存206件+新規7件、回帰なし、warning 0件）。`uv run ruff check`も`All checks passed!`。
+- セキュリティエバリュエーターのフィードバック（合格）:
+  - 【判定】合格。Critical/High相当の問題は見つからなかった。以下、確認した観点と結果。
+  - **シークレット/DB接続情報のハードコード**: `backend/alembic.ini`は`sqlalchemy.url`を意図的に空にしており、`backend/migrations/env.py`の`get_url()`が`Config.set_main_option`での明示的上書き（テスト時）→無ければ`app.database.DATABASE_URL`（`DATABASE_URL`環境変数、未設定時`sqlite:///./app.db`）にフォールバックする実装になっており、本番DB URL・API Key等のハードコードは無いことをファイル全文確認で裏付けた。`grep`で両ファイルおよび`test_migrations.py`を横断検索したが、実際の秘密情報（実キー等）は見つからず、`test_migrations.py`内の`TEST_API_KEY = "test-secret-key"`はテスト専用のダミー値。ロギング設定（`[logger_sqlalchemy] level = WARNING`）もSQL文やパラメータをINFO/DEBUGで出力する設定にはなっていない。
+  - **render_as_batch=Trueの影響**: `is_deleted`フィルタはアプリ層（ルーター）のクエリ条件であり、Alembicのbatchモード（SQLite向けの一時テーブル作り替え）はDDLのみに関与するため、この設定自体が論理削除ロジックを損なう余地はない。外部キー制約についても、初期リビジョンの`ForeignKeyConstraint`は`app/models.py`のFK定義（`task.project_id -> project.id`、`work_log.task_id -> task.id`、`interview_step.company_id -> company.id`）と同様に`ondelete`未指定（デフォルトNO ACTION）で一致しており、batchモード経由でCASCADE削除等が意図せず追加されている事実はない。
+  - **初期リビジョンとモデル定義の一致**: `522c9ff7a611_create_initial_schema.py`と`app/models.py`を全5テーブル・全カラムについて突き合わせ、型（Integer/String/Text/Date/DateTime/Boolean）・nullable・`is_deleted`の`server_default`（DB上は`sa.text("0")` / モデル上は`false()`で同義）・PK・FKいずれも過不足なく一致することを確認した。
+  - **サプライチェーン**: 追加依存は`alembic>=1.19.1`のみ。`uv.lock`にPyPI registry・sdist/wheelのハッシュが記録されており、`uv sync --locked`で改ざん検知が効く形になっている。Alembic自体はSQLAlchemy公式のマイグレーションツールで、既知の深刻な脆弱性情報も特になし。
+  - **既存開発用DB（app.db）への非影響**: `git diff --stat HEAD`で本タスクの変更が`pyproject.toml`・`uv.lock`・`spec.md`の更新と、`backend/alembic.ini`・`backend/migrations/`・`backend/tests/test_migrations.py`の新規追加のみであり、`app/database.py`・`app/main.py`は無変更であることを確認した（`init_db()`は従来通り`Base.metadata.create_all`のまま）。`backend/app.db`は`.gitignore`で追跡対象外だが、実ファイルを直接開いて`sqlite_master`を確認したところテーブルは`project/company/task/interview_step/work_log`の5つのみで`alembic_version`テーブルは存在せず（＝`alembic upgrade`が一度も適用されていない証跡）、また`stat`によるファイルの更新日時（2026-08-12 20:42、Change/Modify時刻とも同一）が本タスクの初期リビジョンファイルの`Create Date`（2026-08-13 22:46）より前であることも確認し、実装メモの「app.dbには一切触れていない」という主張を裏付けた。`.github/workflows/ci.yml`も本タスクでは無変更（CI組み込みは別タスクのスコープ通り）であることも確認した。
+  - **その他（参考情報、指摘ではない）**: `app/database.py`冒頭のコメント「Alembic等のマイグレーションツールは使わないため」は本タスクによりAlembicが導入されたことで実態と食い違いが生じているが、このファイルは本タスクの変更範囲外（`git diff`で無変更を確認済み）であり、セキュリティ上の問題でもないため、指摘としては挙げず今後のコメント整理の参考として記載するに留める。
+- 性能エバリュエーターのフィードバック: (合格)
+  - 【判定】合格。`uv run pytest -v`は213件全てpass（既存206件+新規7件、回帰なし）。`-W error::DeprecationWarning`でも再実行したがwarningは0件。`uv run ruff check`も`All checks passed!`。
+  - 受け入れ条件1点目（空DBへの全5テーブル作成、is_deleted含む）: `test_upgrade_head_creates_all_tables_matching_spec`でテーブル名集合・全カラム名集合の一致を、`test_upgrade_head_is_deleted_defaults_to_false_at_db_level`でis_deletedのDBレベルdefault falseを確認。テストで裏付けあり。合格。
+  - 受け入れ条件2点目（変更単位の追加・最新適用・直前巻き戻しがコマンド操作で行える）: `test_downgrade_and_reupgrade_roundtrip`で`command.upgrade`/`command.downgrade`によるhead⇔baseの往復を確認。ただし現状リビジョンが1本のみ（`down_revision=None`）のため、このテストの`downgrade -1`は実質`downgrade base`と同義であり、2本以上のリビジョンを跨いだ部分的な巻き戻し（chain）を自動テストで実地検証してはいない（実装メモに手動CLI確認の記録はある）。Alembco自体のリビジョンチェイン機構への信頼を前提にすれば許容範囲だが、テスト網羅の観点では軽微な指摘として記録する。
+  - 受け入れ条件3点目（適用状況確認）: `test_current_revision_tracks_applied_state`で未適用None→upgrade後head一致→downgrade base後再びNoneを確認。合格。
+  - 受け入れ条件4点目（列追加の適用・巻き戻し確認）: `test_trial_column_addition_can_be_applied_and_rolled_back`でcompanyテーブルへの列追加・削除が反映・復元されることを確認。合格。
+  - 受け入れ条件5点目（既存の自動テストがこの仕組みで準備したDBでも全て通過する）: 実装メモの通り、既存8ファイルのテストfixtureは変更せず、代わりに`migrated_client`フィクスチャを使う新規2テスト（案件系・選考系の代表的なCRUD/論理削除/親詳細の子情報非包含）を追加する方式で検証している。この2テストは通過しているが、受け入れ条件の文言「既存の自動テストが...全て通過する」を厳密に読むと、既存206件のテスト関数そのものをAlembic準備DBに対して再実行したわけではなく、その一部シナリオを模した新規テストのみでの裏付けに留まる（ステータス警告の境界値・時給換算・WorkLogの同時進行等、既存テストで担保している他の受け入れ条件はAlembic準備DB側では未検証）。もっとも、初期リビジョンとモデル定義のカラム・型・FK一致はテスト（条件1点目）とセキュリティレビューの双方で個別に裏付けられており、Alembicが作るスキーマとcreate_allが作るスキーマに構造的差異は無いと判断できるため、実務上のリスクは低いと評価する。合否判定には影響させないテスト網羅の指摘として記録する。
+  - 【参考情報・Low】セキュリティエバリュエーターの指摘同様、`backend/app/database.py`冒頭のコメント「Alembic等のマイグレーションツールは使わない」が本タスク導入により実態と食い違っている。本タスクの変更範囲外（`git diff`で無変更を確認済み）であり合否には影響しないが、次にこのファイルを触る機会があればコメントを更新すべき。
+  - `backend/app.db`が本タスクで変更されていないことも`git status`で再確認した。
+- 差し戻し回数: 0
+
+### タスク: 既存開発用DBのマイグレーション管理への移行
+- status: 未着手
+- 概要: 「既存の開発用DB（backend/app.db）のマイグレーション管理への移行方法」の決定（確定: 現状スキーマを初期マイグレーション適用済みとして扱う。「## 決定事項」参照）に沿って、開発用DBには既に複数テーブルにデータが入っているため、マイグレーション管理基盤の導入後、このDBを安全に管理下へ移す。
+- 受け入れ条件:
+  - [ ] 「## 未決定事項（要ユーザー判断）」の該当決定に沿った方法で、開発用DBがマイグレーション管理下に置かれる
+  - [ ] 移行後、開発用DBに対してマイグレーションの適用状況確認・新規スキーマ変更の適用が問題なく行える
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
+- 差し戻し回数: 0
+
+### タスク: CI/CDパイプラインへのマイグレーション適用組み込みの検討
+- status: 未着手
+- 概要: 「本番相当環境へのマイグレーション適用の自動化方針」の決定（確定: CI/CDパイプラインに自動組み込みする。「## 決定事項」参照）に沿って、CI/CDパイプラインにマイグレーション適用のステップを追加する。
+- 受け入れ条件:
+  - [ ] CI/CDパイプラインの実行時にマイグレーションが適用され、適用に失敗するとパイプラインが失敗する
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
+- 差し戻し回数: 0
