@@ -80,8 +80,11 @@ describe('API Keyを入力しての疎通', () => {
     await user.type(screen.getByLabelText('API Key'), 'valid-key')
     await user.click(screen.getByRole('button', { name: '保存して接続' }))
 
-    expect(await screen.findByText('ポートフォリオサイト制作')).toBeInTheDocument()
-    expect(screen.getByText('取得件数: 1 件')).toBeInTheDocument()
+    // App にはタスク管理・稼働計測・選考管理の各画面も同居し、同じ /projects や
+    // 同型のレスポンスを独自に取得するため、案件管理画面固有の表示確認は
+    // 「案件管理」領域に絞って検証する。
+    expect(await within(projectsRegion()).findByText('ポートフォリオサイト制作')).toBeInTheDocument()
+    expect(within(projectsRegion()).getByText('取得件数: 1 件')).toBeInTheDocument()
     const [url, init] = vi.mocked(fetch).mock.calls[0]!
     expect(url).toBe(`${BASE_URL}/projects`)
     const headers = (init?.headers ?? {}) as Record<string, string>
@@ -108,7 +111,7 @@ describe('API Keyを入力しての疎通', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('ポートフォリオサイト制作')).toBeInTheDocument()
+    expect(await within(projectsRegion()).findByText('ポートフォリオサイト制作')).toBeInTheDocument()
     const [, init] = vi.mocked(fetch).mock.calls[0]!
     const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers[API_KEY_HEADER]).toBe('saved-key')
@@ -120,7 +123,7 @@ describe('API Keyを入力しての疎通', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    await screen.findByText('取得件数: 0 件')
+    await within(projectsRegion()).findByText('取得件数: 0 件')
     await user.click(screen.getByRole('button', { name: 'クリア' }))
 
     expect(window.sessionStorage.getItem(API_KEY_STORAGE_KEY)).toBeNull()
@@ -133,8 +136,8 @@ describe('API Keyを入力しての疎通', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('取得件数: 0 件')).toBeInTheDocument()
-    expect(screen.getByText('案件は0件です。')).toBeInTheDocument()
+    expect(await within(projectsRegion()).findByText('取得件数: 0 件')).toBeInTheDocument()
+    expect(within(projectsRegion()).getByText('案件は0件です。')).toBeInTheDocument()
   })
 })
 

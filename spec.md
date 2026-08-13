@@ -1136,19 +1136,63 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 選考管理画面（企業・選考ステップ）
-- status: 未着手
+- status: 完了
 - 概要: 企業の一覧・登録・詳細・削除と、企業配下の選考ステップの一覧・追加・編集・削除をブラウザ上で行えるようにする。案件系の画面とは独立しているため、基盤セットアップ完了後であれば着手できる。
 - 受け入れ条件:
-  - [ ] 企業一覧が表示され、企業を新規登録できる
-  - [ ] 企業詳細を表示でき、企業を削除すると以降一覧・詳細から参照できなくなる
-  - [ ] 企業配下の選考ステップ一覧を表示でき、選考ステップを追加できる
-  - [ ] 選考ステップの各項目（種別・予定日・準備状況・結果・メモ）を編集でき、変更内容が画面に反映される
-  - [ ] 準備状況・結果の逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない（両方同時に逆行した場合も内容が分かる形で提示される）
-  - [ ] 選考ステップを削除でき、削除後は一覧に表示されなくなる
-  - [ ] 企業詳細のレスポンスに選考ステップが含まれることを前提とせず、ステップ一覧を別途取得して表示している
-  - [ ] 予定日が未設定の選考ステップでも表示が破綻しない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 企業一覧が表示され、企業を新規登録できる
+  - [x] 企業詳細を表示でき、企業を削除すると以降一覧・詳細から参照できなくなる
+  - [x] 企業配下の選考ステップ一覧を表示でき、選考ステップを追加できる
+  - [x] 選考ステップの各項目（種別・予定日・準備状況・結果・メモ）を編集でき、変更内容が画面に反映される
+  - [x] 準備状況・結果の逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない（両方同時に逆行した場合も内容が分かる形で提示される）
+  - [x] 選考ステップを削除でき、削除後は一覧に表示されなくなる
+  - [x] 企業詳細のレスポンスに選考ステップが含まれることを前提とせず、ステップ一覧を別途取得して表示している
+  - [x] 予定日が未設定の選考ステップでも表示が破綻しない
+- 実装メモ（技術判断とその理由）:
+  - **画面構成（1画面に企業＋選考ステップを統合、既存パターンの踏襲）**: 案件管理画面（一覧＋詳細ダイアログ＋削除、`GET /companies/{id}`を都度叩く詳細）とタスク管理画面（親を選んでその配下の子一覧を別APIで取得する構成）の2パターンを1つの`CompaniesPanel`に統合した。企業テーブルの各行に「詳細」（`CompanyDetailDialog`を開く）「選考ステップ」（`selectedCompanyId`をセットし、下に選考ステップテーブルを表示）「削除」の3操作を持たせる。Companyには更新エンドポイントが無い（POST/GET/GET{id}/DELETEのみ、`app/routers/companies.py`で確認）ため、`CompanyFormDialog`は新規登録専用（編集モードを持たない）にした。`App.tsx`に`CompaniesPanel`を追加し、ルーティングは導入していない（既存タスクの決定を継続）。
+  - **企業選択と選考ステップの取得（親詳細に子情報を含めない構造の徹底）**: 選考ステップ一覧は企業テーブルの「選考ステップ」ボタンで`selectedCompanyId`を設定し、`GET /companies/{id}/interview-steps`を都度取得して表示する。企業詳細ダイアログ（`GET /companies/{id}`）とは完全に別の状態・別のAPI呼び出しであり、詳細ダイアログを開いても選考ステップは取得しない（逆も同様）。これにより「企業詳細のレスポンスに選考ステップが含まれることを前提としない」を構造的に満たす（バックエンドが将来子情報を詳細に含めるようになっても、この呼び出し経路を変えない限り影響を受けない）。
+  - **API・型（既存の分割方針を踏襲）**: `src/api/companies.ts`（`fetchCompanies`/`fetchCompany`/`createCompany`/`deleteCompany`）・`src/api/interviewSteps.ts`（`fetchInterviewSteps`/`createInterviewStep`/`updateInterviewStep`/`deleteInterviewStep`）を追加、いずれも既存の`apiRequest`のみを経由する。`src/api/types.ts`に`Company`/`CompanyInput`・`InterviewStep`/`InterviewStepInput`/`InterviewStepPatchResponse`・`INTERVIEW_STEP_PREP_STATUSES`（準備中/準備万端/完了）・`INTERVIEW_STEP_RESULTS`（未定/通過/不通過）を追加。`prep_status`/`result`はAPIレスポンスが`str`のため型は`string`のまま保持し、フォーム変換時のみ既知の値へフォールバックする（`projectForm.ts`/`taskForm.ts`と同じ考え方）。`InterviewStepInput`は作成・更新の両方に使う単一の型（`ProjectInput`と同じ設計）とし、新規追加時も`prep_status`/`result`を明示的に送る（バックエンドの`InterviewStepCreate`の既定値＝準備中/未定と一致させる）。
+  - **フォーム検証（`src/companyForm.ts`・`src/interviewStepForm.ts`）**: `companyForm.ts`は企業名のみの必須項目（更新が無いため編集用の変換関数は持たない）。`interviewStepForm.ts`は`type`（種別）のみ必須とし、予定日・メモは空欄を`null`として送る（バックエンドがnullでのクリアを許可する仕様に合わせる。`date`は`_INTERVIEW_STEP_REQUIRED_UPDATE_FIELDS`に含まれずnullable=Trueのため妥当）。種別はバックエンドが自由文字列（「書類選考／一次面接／二次面接／最終面接など」で列挙が確定していない）のため、ステータスのようなセレクトではなくテキスト入力とし、ヘルパーテキストで具体例を示した。
+  - **準備状況・結果の逆行警告（両方同時の場合を含め非ブロッキング）**: バックエンド（`app/routers/interview_steps.py`）はprep_status・resultそれぞれの逆行を個別に`check_backward_transition`で判定し、両方が同時に逆行した場合は`" / "`区切りで1つの`warning`文字列に結合して返す（`backend/tests/test_interview_steps.py`の`test_update_interview_step_both_prep_status_and_result_backward_returns_combined_warning`で確認済みの仕様）。フロントエンドはこの結合済み文字列をそのまま`Alert severity="warning"`に「選考ステップを更新しました（変更は保存されています）。<warning本文>」として表示するのみで、個別に分解・整形し直さない。これにより「両方同時に逆行した場合も内容が分かる形で提示される」を満たしつつ、更新自体はブロック・ロールバックしない（案件・タスク管理画面と同じ非ブロッキング方針）。
+  - **企業削除時の選考ステップ選択の解除**: 選択中の企業を削除した場合、`selectedCompanyId`を未選択に戻す（`reloadSteps`が依存する`selectedCompanyId`の変化で自動的に選考ステップ一覧もクリアされる）。詳細ダイアログが同一企業を開いていた場合も閉じる（案件管理画面の削除時の挙動を踏襲）。
+  - **予定日未設定の表示**: 選考ステップテーブルの「予定日」列は`step.date ?? '未定'`で表示する（タスク管理画面の`task.memo ?? '-'`等と同じ「null許容フィールドの表示」パターン）。フォームの予定日は`type="date"`入力で空欄を許容し、`toInterviewStepInput`が空文字を`null`に変換する。
+  - **エラー表示の出し分け**: 企業一覧・選考ステップ一覧はそれぞれ独立した`Alert severity="error"`を持つ（既存パネルと同じ「一覧ごとに個別のエラー領域を持つ」パターン）。企業の登録失敗・選考ステップの登録/更新失敗はダイアログ内へ表示し入力内容を保持する。削除（企業・選考ステップとも確認後）の失敗はそれぞれの一覧側のエラー領域に表示する。
+  - **App.test.tsxとの整合（既存タスクで確立した回帰対応の踏襲）**: `CompaniesPanel`も独自に`GET /companies`を叩くため、`App.test.tsx`の一部テスト（フェッチスタブが全エンドポイントに同一のプロジェクト形状データを返す都合上、企業一覧にも同じ`name`のデータが表示されてしまい`取得件数: N 件`等のテキストが複数ヒットする）で、`案件管理`領域に絞っていなかった4件（`入力したキーで認証付きリクエストし、取得内容を表示する`／`保持済みのキーがあればリロード後も再入力なしで取得する`／`クリアすると保持したキーを破棄して未入力状態に戻る`／`0件でも表示が破綻せず0件と分かる`）を`within(projectsRegion())`でスコープするよう修正した（挙動そのものは変更していない。TasksPanel追加時に同種の回帰へ行った対応と同じ性質）。`CompaniesPanel`のルート`Paper`には`component="section"` `aria-label="選考管理"`を付与し、他パネルと同様にランドマークを分離した。ボタンラベルは他パネルの「新規登録」「再読み込み」との重複を避けるため、それぞれ「企業を新規登録」「企業一覧を再読み込み」「選考ステップを追加」「選考ステップ一覧を再読み込み」というドメイン固有の文言にした（`App.test.tsx`の`screen.getByRole('button', { name: '再読み込み' })`が案件管理画面のボタンのみを一意に指し続けられるようにするため）。
+  - **テスト（Vitest、新規44件＝147件中）**: `src/api/companies.test.ts`（4件、URL・メソッド・ボディ・204）、`src/api/interviewSteps.test.ts`（4件、URL・メソッド・ボディ・warning受け取り・204）、`src/companyForm.test.ts`（4件）、`src/interviewStepForm.test.ts`（10件、必須未入力・空白のみ・予定日任意・既存値からの変換・未知prep_status/resultのフォールバック・null変換）、`src/components/CompaniesPanel.test.tsx`（22件、企業一覧・0件表示・新規登録・企業名未入力時に送信しないこと・企業詳細の表示・削除済み企業の詳細404・企業削除の確認と一覧/詳細からの除外・削除キャンセル・選考ステップ一覧の表示とGET先URL・0件表示・予定日未設定でも破綻しないこと・企業詳細と選考ステップ一覧が別々に取得されること・選考ステップ追加と種別未入力時に送信しないこと・各項目編集の反映・準備状況単独の逆行警告・結果単独の逆行警告・両方同時逆行時の結合警告・選考ステップ削除の確認と一覧からの除外/キャンセル・企業一覧/選考ステップ一覧それぞれの取得失敗時のエラー表示）。既存103件（案件管理53件＋タスク管理23件＋稼働計測・時給換算27件）は4件のスコープ修正（`App.test.tsx`、挙動は無変更）のみで、新規44件と合わせて`npm run test`合計147件が全pass（実測値、内訳: 11+4+9+4+2+4+6+4+4+4+22+15+11+11+10+8+8+10=147）。
+  - **実ブラウザでの動作確認（Playwright + Chromium headless、実APIに対して）**: バックエンドを`API_KEY`・`CORS_ALLOW_ORIGINS=http://127.0.0.1:5190`・一時DB（`DATABASE_URL`をスクラッチ領域の一時ファイルに指定。開発用`app.db`は未使用・未変更）で18010番に起動し、Vite開発サーバー（5190）を`VITE_API_BASE_URL=http://127.0.0.1:18010`で起動して、実ブラウザから以下を確認した（確認後、サーバー・一時DB・playwrightの一時セットアップとも停止・削除済み）。
+    - 企業2社（「実機テスト株式会社」「削除確認用企業」）と、前者の配下に選考ステップ2件（「書類選考」予定日未設定・「一次面接」予定日2026-09-01/準備状況=完了/結果=通過）をcurlで用意。「選考管理」領域で「取得件数: 2 件」表示。
+    - 企業詳細→「実機テスト株式会社」の内容を`GET /companies/1`から表示することを確認。
+    - 「選考ステップを表示」→選考ステップ一覧2件表示。予定日未設定の行が「未定」と表示され、画面が破綻しない（種別「書類選考」・予定日「未定」・準備状況「準備中」・結果「未定」・メモ「未定日」の各列が独立して正しく表示され、"未定"という文字列の重複（予定日未設定と結果=未定）でも表の意味は列単位で判別できる）。
+    - 「選考ステップを追加」→種別「最終面接」・予定日2026-10-01・メモ入力→追加→「選考ステップを追加しました。」と一覧への反映を確認。
+    - 「一次面接」を編集し、準備状況を完了→準備中、結果を通過→未定へ**同時に**変更して更新→「選考ステップを更新しました（変更は保存されています）。完了 から 準備中 への変更です。意図的な変更か確認してください。 / 通過 から 未定 への変更です。意図的な変更か確認してください。」が表示され、`GET /companies/1/interview-steps`をAPIから直接確認して`prep_status`が実際に「準備中」・`result`が実際に「未定」に**保存済み**であることを確認した（＝両方同時逆行時も警告表示と同時に更新はブロックされていない）。
+    - 「書類選考」を削除→確認→「選考ステップ「書類選考」を削除しました。」、APIでも`GET /companies/1/interview-steps`から論理削除済みステップが除外されることを確認。
+    - 「削除確認用企業」を削除→確認→「企業「削除確認用企業」を削除しました。」、一覧から消え、APIでも`GET /companies/2`が404（論理削除、一覧・詳細の両方から参照不能）。
+    - 誤ったAPI Key→「選考管理」領域に「認証エラー（HTTP 401）: API Keyが正しくありません。…」が表示される。
+    - ブラウザのコンソールエラーは401応答に伴うネットワークログのみ（5件）、JSの例外（`pageerror`）は0件。
+  - **スコープ外（意図的に未実装）**: 横断一覧画面（`/interview-steps/upcoming`）（後続タスク）、CIワークフローへのフロントエンドジョブ追加、企業の編集（バックエンドに更新エンドポイントが無いため対象外）。
+  - **セルフチェック**: フロント＝`npm run typecheck`（tsc -b、エラーなし）・`npm run lint`（oxlint --deny-warnings、指摘なし）・`npm run test`（147 passed、stderrを実測して0バイト＝warning 0件を確認）・`npm run build`（成功）。バックエンド＝`uv run pytest -W error` 206 passed（warning 0件、無変更）、`uv run ruff check .` All checks passed!（バックエンドのコードは無変更）。
+- セキュリティエバリュエーターのフィードバック: **Critical/High相当の問題なし。承認する。** `git status`/`git diff`で変更範囲が`frontend/src/{App.tsx,App.test.tsx,api/types.ts}`（変更）＋`frontend/src/{api/companies.ts,api/companies.test.ts,api/interviewSteps.ts,api/interviewSteps.test.ts,companyForm.ts,companyForm.test.ts,interviewStepForm.ts,interviewStepForm.test.ts,components/CompaniesPanel.tsx,components/CompaniesPanel.test.tsx,components/CompanyDetailDialog.tsx,components/CompanyFormDialog.tsx,components/InterviewStepFormDialog.tsx}`（新規）＋`spec.md`のみであることを確認した。**バックエンド・`package.json`/`package-lock.json`・`Dockerfile`・`.gitignore`/`.dockerignore`・CIワークフローに差分は無い**（`git diff --stat`で該当パスの出力が空であることを確認）。既存の`api/client.ts`（`apiRequest`）・`api/errors.ts`・`backend/app/routers/companies.py`・`backend/app/routers/interview_steps.py`・`backend/app/schemas.py`・`backend/app/main.py`と突き合わせて確認した。
+  - **認証（単一経路・問題なし）**: 新規の`src/api/companies.ts`（`fetchCompanies`/`fetchCompany`/`createCompany`/`deleteCompany`）と`src/api/interviewSteps.ts`（`fetchInterviewSteps`/`createInterviewStep`/`updateInterviewStep`/`deleteInterviewStep`）は全8関数とも独自に`fetch`を呼ばず、既存の`apiRequest`のみを経由している。`apiRequest`は未入力キーを`unauthorized`として送信前に弾き、`X-API-Key`ヘッダーにのみキーを載せる（URL・クエリ・ボディには載らない）。バックエンド側も`app/main.py`でグローバル依存関係`dependencies=[Depends(verify_api_key)]`が全ルーターに適用済み（`companies.router`・`interview_steps.router`とも個別の`Depends`追加は無いが、グローバル依存関係を通っているため未認証アクセスは401になる）。`verify_api_key`自体（`secrets.compare_digest`使用）は本タスクで変更されていない。
+  - **インジェクション（問題なし）**: `backend/app/routers/companies.py`・`interview_steps.py`とも生SQL文字列結合は無く、SQLAlchemyのORM（`db.query(...).filter(...)`）のみを使用。フロント側のURL組み立ては`/companies/${companyId}`・`/interview-steps/${interviewStepId}`のようにテンプレートリテラルで数値IDを埋め込む形のみで、これらの値は`Company.id`/`InterviewStep.id`（APIレスポンス由来のnumber、またはReactの`state`に保持したオブジェクトのid）に限定されており、ユーザーが自由入力できる文字列は含まれない（企業名・種別・メモ等のTEXT項目はいずれもJSONボディの値としてのみ送信され、URLやログ出力・外部コマンドには一切渡らない）。`src/`配下に`console.*`の使用は0件（grep確認）。
+  - **XSS（問題なし）**: 新規ファイル（`api/companies.ts`・`api/interviewSteps.ts`・`companyForm.ts`・`interviewStepForm.ts`・`components/CompaniesPanel.tsx`・`CompanyDetailDialog.tsx`・`CompanyFormDialog.tsx`・`InterviewStepFormDialog.tsx`）を対象に`dangerouslySetInnerHTML`・`innerHTML`・`eval(`・`new Function`・`document.write`をgrepし、いずれも0件であることを確認した。企業名・選考ステップの種別／メモ／`prep_status`／`result`／APIの`warning`本文・エラー`detail`は、`CompaniesPanel.tsx`・`CompanyDetailDialog.tsx`ともJSXの式展開（Reactの自動エスケープ）とMUIコンポーネント経由でのみ描画されており、`aria-label`に含めている企業名・選考ステップ種別（例: `` `企業「${company.name}」を削除` ``）も属性値として扱われるためスクリプト実行の経路にならない。
+  - **mass assignment（問題なし）**: `backend/app/schemas.py`の`InterviewStepUpdate`は`type`/`date`/`prep_status`/`result`/`memo`の5フィールドのみで`id`・`company_id`・`is_deleted`は定義されておらず、フロント側の`InterviewStepInput`型（`companyForm.ts`/`interviewStepForm.ts`が生成する`toCompanyInput`/`toInterviewStepInput`の戻り値）にもこれらは含まれない。仮に追加のプロパティを混ぜて送信しても、Pydanticのデフォルト挙動（未定義フィールドは無視）により`update_interview_step`の`payload.model_dump(exclude_unset=True)`には反映されない。`CompanyRead`/`InterviewStepRead`（レスポンス用スキーマ）と`CompanyCreate`/`InterviewStepCreate`/`InterviewStepUpdate`（入力用スキーマ）は分離されており、`id`/`is_deleted`はレスポンス側にのみ存在する。企業には更新エンドポイントが無く（`companies.py`はPOST/GET/GET{id}/DELETEのみ）、`CompanyFormDialog`も新規登録専用でPATCH相当の処理を持たないため、企業側でmass assignmentが成立する余地自体が無い。
+  - **論理削除の徹底（問題なし）**: `list_companies`・`get_company`（`_get_active_company_or_404`経由）・`list_interview_steps`・`update_interview_step`/`delete_interview_step`（`_get_active_interview_step_or_404`経由）はいずれも`is_deleted.is_(False)`フィルタを通る。`delete_company`/`delete_interview_step`は`is_deleted = True`をセットして`commit`するのみで、`db.delete(...)`や`DELETE FROM`相当の物理削除は無い（grep・目視で確認）。フロント側も`CompanyDetailDialog`が一覧の値を使い回さず`GET /companies/{id}`を都度叩き、`CompaniesPanel`の選考ステップ一覧も`GET /companies/{id}/interview-steps`を都度取得する構造のため、削除済みデータが画面に残り続けることはない（削除後は`reloadCompanies`/`reloadSteps`で取り直し、選択中の企業・開いていた詳細ダイアログが削除対象と同一なら選択解除・ダイアログを閉じる実装になっている）。
+  - **エラーハンドリング（問題なし）**: 表示メッセージは既存の`ApiError`分類（`toDisplayMessage`）をそのまま使っており、本タスクで新規追加したエラー整形ロジックは無い。`backend`側の404（`Company not found`/`InterviewStep not found`）・422（Pydanticバリデーション）はいずれも定型メッセージで、スタックトレースや内部パス、SQLクエリ文字列を含まない。
+  - **CORS・シークレット管理（問題なし）**: バックエンド・`package.json`/`package-lock.json`・`.gitignore`/`.dockerignore`に差分が無いため、既存の`allow_credentials=False`＋環境変数列挙のfail-closad設定は維持されている。新規テストコード中のAPI Keyはいずれも`my-key`/`valid-key`等のダミー値のみで、実キーやDB接続情報のハードコードは無い。
+  - **準備状況・結果の逆行警告の非ブロッキング（方針どおり・問題なし）**: `update_interview_step`は`warning`をレスポンスに含めるだけで、逆行検知時に更新を拒否・ロールバックする分岐は無い（`for field, value in update_data.items(): setattr(...)` の後に必ず`db.commit()`する）。フロントの`handleSubmitStep`も`updated.warning`の値に応じて通知の`severity`を出し分けるだけで、PATCH自体は1回のみ・確認ダイアログでのブロックも無く、決定事項「ステータス変更はブロックしない」から逸脱していない。両方同時逆行時の`" / "`結合済み文字列もそのまま表示するのみで、フロント側での分解・再解釈（＝表示ロジックのバグで一部の警告が握りつぶされるリスク）も無い。
+  - 総評: 認証ヘッダー付与の単一経路化、危険な描画の不在、URL組み込み値の型・出所の限定、mass assignmentの成立余地なし（企業側はそもそも更新エンドポイント自体が存在しない）、論理削除フィルタの徹底、逆行warningの非ブロッキング表示のいずれもコード読解で裏付けが取れた。Critical/High相当の指摘なし。statusを「性能評価待ち」に更新する。
+- 性能エバリュエーターのフィードバック: **問題なし。承認する。** 実行結果は以下のとおり。
+  - **フロントエンド**: `npm run typecheck`（`tsc -b`）エラーなし。`npm run lint`（`oxlint --deny-warnings`）指摘なし・exit 0。`npm run test`（`vitest run`）18ファイル・147件全pass、stderrを実測して0バイト（＝warning・console出力とも0件）を確認。`npm run build`成功（`dist/`生成、566モジュール変換）。
+  - **バックエンド**: `uv run pytest -v` 206 passed、出力全文をwarning有無で確認しwarningセクション・DeprecationWarning等の出力は0件。`uv run ruff check .` All checks passed!。バックエンドは本タスクで無変更（`git status`で`backend/`配下に差分なしを確認済み）であり回帰も無い。
+  - **受け入れ条件8件の検証**（すべて`frontend/src/components/CompaniesPanel.test.tsx`の該当testで裏付けを実測確認）:
+    1. 企業一覧が表示され新規登録できる → `企業一覧と件数を表示する`／`フォームから新規登録でき、一覧に反映される` PASS
+    2. 企業詳細表示・削除後は一覧/詳細から参照不可 → `詳細を開くと GET /companies/{id} の内容を表示する`／`確認のうえ削除でき、削除後は一覧・詳細から参照できなくなる`（削除済み企業のGET 404時のメッセージ表示テストも別途あり） PASS
+    3. 選考ステップ一覧表示・追加 → `企業を選ぶと選考ステップ一覧が表示され...`／`フォームから追加でき、一覧に反映される` PASS
+    4. 各項目編集で画面反映 → `各項目を編集でき、変更内容が反映される`（種別・準備状況の変更後表示を実際にアサート） PASS
+    5. 逆行warningの提示・非ブロッキング（同時逆行含む） → `準備状況の逆行時は...`／`結果の逆行時は...`／`準備状況・結果が両方同時に逆行した場合、両方の内容が分かる警告が表示される`の3テストとも、警告表示後に`stepsTable()`から更新後の値が実際に反映されていることまで確認しており、境界値（片方ずつ・両方同時）を網羅している PASS
+    6. 選考ステップ削除・一覧から除外 → `確認のうえ削除でき、削除後は一覧に表示されなくなる`（行数を`within(stepsTable())`で厳密確認） PASS
+    7. 企業詳細に選考ステップを含めない構造 → `企業詳細と選考ステップ一覧は別々に取得される（企業詳細に選考ステップを含めない）`（`GET /companies/1`と`GET /companies/1/interview-steps`の両方が個別に呼ばれたことをリクエストログで確認） PASS
+    8. 予定日未設定でも表示が破綻しない → `予定日が未設定の選考ステップでも表示が破綻しない` PASS
+  - 受け入れ条件・境界値ともテストによる裏付けが取れており、テスト不足も見当たらない。既存回帰（案件管理53件・タスク管理23件・稼働計測/時給換算27件・API/フォーム系）も含め147件全pass、バックエンド206件も無変更で全pass。statusを「完了」に更新する。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 横断一覧画面（予定選考・進行中稼働）

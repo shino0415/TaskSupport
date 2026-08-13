@@ -7,6 +7,7 @@ import Typography from '@mui/material/Typography'
 
 import { clearApiKey, loadApiKey, saveApiKey } from './api/apiKeyStorage'
 import { ApiKeyPanel } from './components/ApiKeyPanel'
+import { CompaniesPanel } from './components/CompaniesPanel'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { TasksPanel } from './components/TasksPanel'
 import { WorkTrackingPanel } from './components/WorkTrackingPanel'
@@ -51,6 +52,8 @@ export default function App() {
         <TasksPanel apiKey={apiKey} />
 
         <WorkTrackingPanel apiKey={apiKey} />
+
+        <CompaniesPanel apiKey={apiKey} />
       </Stack>
     </Container>
   )

@@ -79,3 +79,51 @@ export type HourlyRate = {
   total_work_hours: number
   hourly_rate: number | null
 }
+
+export type Company = {
+  id: number
+  name: string
+  is_deleted: boolean
+}
+
+/** 企業の登録で送信する内容。 */
+export type CompanyInput = {
+  name: string
+}
+
+/** InterviewStep.prep_statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
+export const INTERVIEW_STEP_PREP_STATUSES = ['準備中', '準備万端', '完了'] as const
+
+export type InterviewStepPrepStatus = (typeof INTERVIEW_STEP_PREP_STATUSES)[number]
+
+/** InterviewStep.resultの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
+export const INTERVIEW_STEP_RESULTS = ['未定', '通過', '不通過'] as const
+
+export type InterviewStepResult = (typeof INTERVIEW_STEP_RESULTS)[number]
+
+export type InterviewStep = {
+  id: number
+  company_id: number
+  type: string
+  date: string | null
+  // 表示は取得した値をそのまま扱う（APIのレスポンスはstrのため、未知の値でも壊れないようにする）
+  prep_status: string
+  result: string
+  memo: string | null
+  is_deleted: boolean
+}
+
+/** 選考ステップの作成・更新で送信する内容。 */
+export type InterviewStepInput = {
+  type: string
+  date: string | null
+  prep_status: InterviewStepPrepStatus
+  result: InterviewStepResult
+  memo: string | null
+}
+
+/** PATCH /interview-steps/{id} のレスポンス。逆行遷移時のみwarningが入る
+ * （prep_status・result両方が同時に逆行した場合は" / "区切りで1つの文字列にまとめられる）。 */
+export type InterviewStepPatchResponse = InterviewStep & {
+  warning: string | null
+}
