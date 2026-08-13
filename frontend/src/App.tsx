@@ -9,32 +9,29 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-
 import { clearApiKey, loadApiKey, saveApiKey } from './api/apiKeyStorage'
 import { ApiKeyPanel } from './components/ApiKeyPanel'
 import { CompaniesPanel } from './components/CompaniesPanel'
+import { NavBar } from './components/NavBar'
 import { OverviewPanel } from './components/OverviewPanel'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { TasksPanel } from './components/TasksPanel'
 import { WorkTrackingPanel } from './components/WorkTrackingPanel'
 import { getApiBaseUrl } from './config'
 
-type PanelsProps = {
+type ProjectsPageProps = {
   apiKey: string
   initialDetailProjectId?: number | null
-  initialDetailCompanyId?: number | null
   initialTaskProjectId?: number | null
   initialHighlightTaskId?: number | null
 }
 
-/** 5画面すべてを1ページにまとめた表示。ルートごとに、対応する画面へ初期選択状態を渡す。 */
-function Panels({
+/** 「案件ページ」（`/projects`）— 案件管理・タスク管理・稼働計測の3画面をまとめて表示する。 */
+function ProjectsPage({
   apiKey,
   initialDetailProjectId = null,
-  initialDetailCompanyId = null,
   initialTaskProjectId = null,
   initialHighlightTaskId = null,
-}: PanelsProps) {
+}: ProjectsPageProps) {
   return (
     <>
-      <OverviewPanel apiKey={apiKey} />
-
       <ProjectsPanel apiKey={apiKey} initialDetailProjectId={initialDetailProjectId} />
 
       <TasksPanel
@@ -44,33 +41,41 @@ function Panels({
       />
 
       <WorkTrackingPanel apiKey={apiKey} />
-
-      <CompaniesPanel apiKey={apiKey} initialDetailCompanyId={initialDetailCompanyId} />
     </>
   )
 }
 
-/** `/projects/:projectId` — 案件管理画面の詳細ダイアログを開いた状態で表示する。 */
+type CompaniesPageProps = {
+  apiKey: string
+  initialDetailCompanyId?: number | null
+}
+
+/** 「選考ページ」（`/companies`）— 企業・選考ステップ管理画面を表示する。 */
+function CompaniesPage({ apiKey, initialDetailCompanyId = null }: CompaniesPageProps) {
+  return <CompaniesPanel apiKey={apiKey} initialDetailCompanyId={initialDetailCompanyId} />
+}
+
+/** `/projects/:projectId` — 案件ページの案件詳細ダイアログを開いた状態で表示する。 */
 function ProjectDetailRoute({ apiKey }: { apiKey: string }) {
   const { projectId } = useParams()
   const id = Number(projectId)
-  return <Panels apiKey={apiKey} initialDetailProjectId={Number.isNaN(id) ? null : id} />
+  return <ProjectsPage apiKey={apiKey} initialDetailProjectId={Number.isNaN(id) ? null : id} />
 }
 
-/** `/companies/:companyId` — 選考管理画面の詳細ダイアログを開いた状態で表示する。 */
+/** `/companies/:companyId` — 選考ページの企業詳細ダイアログを開いた状態で表示する。 */
 function CompanyDetailRoute({ apiKey }: { apiKey: string }) {
   const { companyId } = useParams()
   const id = Number(companyId)
-  return <Panels apiKey={apiKey} initialDetailCompanyId={Number.isNaN(id) ? null : id} />
+  return <CompaniesPage apiKey={apiKey} initialDetailCompanyId={Number.isNaN(id) ? null : id} />
 }
 
-/** `/tasks/:projectId/:taskId` — タスク管理画面で対象案件を選択し、対象タスクを目立たせた状態で表示する。 */
+/** `/tasks/:projectId/:taskId` — 案件ページのタスク管理で対象案件を選択し、対象タスクを目立たせた状態で表示する。 */
 function TaskDetailRoute({ apiKey }: { apiKey: string }) {
   const { projectId, taskId } = useParams()
   const projectIdNumber = Number(projectId)
   const taskIdNumber = Number(taskId)
   return (
-    <Panels
+    <ProjectsPage
       apiKey={apiKey}
       initialTaskProjectId={Number.isNaN(projectIdNumber) ? null : projectIdNumber}
       initialHighlightTaskId={Number.isNaN(taskIdNumber) ? null : taskIdNumber}
@@ -107,6 +112,8 @@ export default function App() {
             </Typography>
           </div>
 
+          <NavBar />
+
           <ApiKeyPanel savedApiKey={apiKey} onSave={handleSave} onClear={handleClear} />
 
           {apiKey === '' && (
@@ -114,13 +121,15 @@ export default function App() {
           )}
 
           <Routes>
-            <Route path="/" element={<Panels apiKey={apiKey} />} />
+            <Route path="/" element={<OverviewPanel apiKey={apiKey} />} />
+            <Route path="/projects" element={<ProjectsPage apiKey={apiKey} />} />
             <Route path="/projects/:projectId" element={<ProjectDetailRoute apiKey={apiKey} />} />
-            <Route path="/companies/:companyId" element={<CompanyDetailRoute apiKey={apiKey} />} />
             <Route
               path="/tasks/:projectId/:taskId"
               element={<TaskDetailRoute apiKey={apiKey} />}
             />
+            <Route path="/companies" element={<CompaniesPage apiKey={apiKey} />} />
+            <Route path="/companies/:companyId" element={<CompanyDetailRoute apiKey={apiKey} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Stack>

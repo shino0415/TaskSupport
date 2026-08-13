@@ -243,6 +243,10 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 
 既存のCI/CDパイプライン（lint→test→Dockerビルド、実デプロイは対象外）にマイグレーション適用のステップを自動で組み込む方針とし、手動実行運用は採らない。デプロイのたびにスキーマが確実に最新化されることを優先した。意図しないタイミングでの自動適用や適用失敗時の切り戻しについては、実装時にパイプラインが失敗する（後続のデプロイに進ませない）形で安全側に倒すこと。
 
+### フロントエンドの画面構成分割の単位（確定: 「案件ページ」「選考ページ」の2ページ＋横断一覧のランディング。詳細表示はモーダル維持）
+
+「1ページに5パネルが詰め込まれすぎている」というユーザーの所感を受け、画面構成を分割するにあたり、案件管理・タスク管理・稼働計測を「案件ページ」に、企業管理・選考ステップ管理を「選考ページ」にそれぞれ集約する2ページ構成とする（`## 決定事項`の「フロントエンドで実装する画面の範囲」で確立済みの「案件系・選考系」という分類に沿う）。横断一覧（予定選考・進行中稼働）はこれまでどおりアプリの入口（ランディング、`/`）として位置づけ、そこから「案件ページ」「選考ページ」へのナビゲーションを追加する。各ページ内部の表示形態（一覧・作成/編集フォーム・詳細のモーダルダイアログ表示）は既存の実装を変更せず、そのまま踏襲する（＝詳細表示を専用ルート化する方針は採らない）。ページのまとめ方を変えるだけで、既存タスクで実装済みの機能・受け入れ条件自体は変更しない。
+
 
 ## 実装タスク
 
@@ -1271,6 +1275,82 @@ pytestでの単体テストの対象として、この関数の境界値（同�
     - 未知パス（例: `/unknown-path`）へアクセスした際に`/`へリダイレクトされることを直接検証するテストが無い。実装が外部入力に依存しない固定リダイレクトであるため優先度は低いが、将来ルートが増えた際の回帰検知のために追加を推奨する。
     - `TaskDetailRoute`/`ProjectDetailRoute`/`CompanyDetailRoute`が非数値パラメータ（例: `/projects/abc`）を受け取った場合に`initialDetail*Id`が`null`になり詳細ダイアログが自動的に開かないこと（`Number.isNaN`分岐）を直接検証する単体テストが無い。セキュリティエバリュエーターがコードレビューでこの分岐の安全性（無視されるのみで例外・インジェクションに繋がらない）を確認済みではあるが、動作面のテストとしては不足している。
   - コードは変更していない（`Read`のみで`Edit`は使用していない）。
+- 差し戻し回数: 0
+
+### タスク: フロントエンド画面構成の「案件ページ」「選考ページ」への分割とナビゲーションバー導入
+- status: 完了
+- 概要: 現在1ページに縦に並んでいる案件管理・タスク管理・稼働計測・選考管理の4パネルを、「案件ページ」（案件管理・タスク管理・稼働計測の3パネルを集約）と「選考ページ」（企業管理・選考ステップ管理の2パネルを集約）の2ページに分割し、画面のどこからでも他のページへ切り替えられるナビゲーションを追加する。横断一覧（予定選考・進行中稼働）はアプリの入口（ランディング）として位置づける。各パネルが提供する機能・表示内容自体（既存タスクで実装済みの受け入れ条件、詳細のモーダルダイアログ表示を含む）は変更しない、ページのまとめ方のみのリファクタリングである（「## 決定事項」の「フロントエンドの画面構成分割の単位」参照）。
+- 受け入れ条件:
+  - [x] アプリを開くと横断一覧画面が表示される
+  - [x] どの画面を表示しているときも、「案件ページ」「選考ページ」それぞれへクリック操作で切り替えられるナビゲーションが常に見える
+  - [x] 「案件ページ」「選考ページ」はそれぞれ固有のURLを持ち、ブラウザの「戻る」「進む」操作やそのURLを直接開く操作でそのページが表示される
+  - [x] 「案件ページ」では案件管理・タスク管理・稼働計測の3パネルが、「選考ページ」では企業管理・選考ステップ管理の2パネルが、それぞれ従来どおり一覧・作成・更新・削除・稼働開始/終了・時給換算などの機能ごと利用できる
+  - [x] 存在しないURLを開いた場合も画面が真っ白になったりエラーで壊れたりせず、何らかの妥当な画面（例: 横断一覧）に案内される
+- 実装メモ（技術判断とその理由）:
+  - **ルート構成の変更**: `App.tsx`の単一の`Panels`コンポーネント（5パネルを1つのFragmentにまとめてルートごとに初期選択状態だけ切り替える構成）を廃止し、`ProjectsPage`（`ProjectsPanel`・`TasksPanel`・`WorkTrackingPanel`の3パネル）と`CompaniesPage`（`CompaniesPanel`の1パネル、内部で企業管理・選考ステップ管理の両方を提供する既存構成をそのまま踏襲）の2つのページコンポーネントに分割した。ルートは`/`（`OverviewPanel`単体）・`/projects`・`/projects/:projectId`・`/tasks/:projectId/:taskId`・`/companies`・`/companies/:companyId`の6種類とし、`/projects/:projectId`と`/tasks/:projectId/:taskId`はいずれも`ProjectsPage`に初期選択状態（`initialDetailProjectId`／`initialTaskProjectId`＋`initialHighlightTaskId`）を渡すラッパー（`ProjectDetailRoute`／`TaskDetailRoute`、実装自体は既存タスクからの流用で変更なし）を経由する。未知のパスは既存どおり`<Route path="*" element={<Navigate to="/" replace />} />`で`/`へフォールバックする（実装自体は前タスクから変更なし、対象パスが増えただけ）。
+  - **ナビゲーションバー（新規`components/NavBar.tsx`）**: 常時表示させるため`Routes`の外側、`ApiKeyPanel`の直前（タイトルの直後）に配置した。API Key未入力時にもナビゲーションだけは操作できる（各ページ自体はAPI Key未入力なら「取得できません」等の個別エラー・案内を出す既存の挙動をそのまま踏襲するため、ナビゲーション側でAPI Keyの有無による出し分けはしていない）。実装は`useLocation()`で現在のpathnameを見て、`/`・`/projects`（`/projects/*`・`/tasks/*`の両方にマッチ、タスク管理も「案件ページ」の一部のため）・`/companies`（`/companies/*`にマッチ）のいずれに該当するかを判定し、該当するボタンに`aria-current="page"`を付与する。ボタンは`Button component={RouterLink} to="..."`としてアンカー要素（`role="link"`）としてレンダリングされるようにした（MUIの`Tabs`/`Tab`は`role="tab"`になり、複数の独立した「ページ」を切り替えるという用途に対しては`role="link"`の方が意味的に適切と判断し採用した）。
+  - **ProjectsPanel/CompaniesPanel/TasksPanel/WorkTrackingPanel/OverviewPanelの実装自体は無変更**: 本タスクは「ページのまとめ方のみのリファクタリング」（決定事項）であるため、上記5コンポーネントは`git diff`上でも変更なし。`App.tsx`側でどのページにどのパネルを配置するかを変更しただけ。
+- テスト（Vitest、171件中、5件追加）: `src/App.test.tsx`に新規`describe('画面構成の分割とナビゲーション')`を追加。
+  - 「アプリを開くと横断一覧画面が表示される」: `/`表示時に横断一覧領域は表示され、案件管理・選考管理の領域は存在しないことを確認。
+  - 「ナビゲーションバーはどの画面でも表示され、クリックで案件ページ・選考ページへ切り替えられる」: `role="navigation", name: "ページナビゲーション"`のランドマークが常に存在すること、「案件ページ」クリックで案件管理・タスク管理・稼働計測の3領域が現れること、「選考ページ」クリックで選考管理領域が現れ案件管理領域は消えること、「横断一覧」クリックで横断一覧領域に戻れることを1つのテストで一気通貫に検証。
+  - 「固有のURLを持ち、直接開いても同じ画面が表示される」: `window.history.pushState`で`/projects`・`/companies`へ直接遷移した状態から`render(<App />)`し、それぞれ対応するパネルが表示されることを確認（`BrowserRouter`は現在の`location`を初期状態として描画するため、直接URLを開く操作と挙動的に同一）。
+  - 「ブラウザの「戻る」「進む」操作でも対応するページが表示される」（差し戻し対応で追加）: `NavBar`のリンクをクリックして`/projects`→`/companies`と実際にルーター経由でナビゲートした後、`window.history.back()`を呼び`waitFor`内で案件管理領域が（選考管理領域が消えた状態で）現れることを確認し、続けて`window.history.forward()`を呼び`waitFor`内で選考管理領域が（案件管理領域が消えた状態で）再び現れることを確認する。性能エバリュエーターが実機確認した「単独の`pushState`ではpopstateが発火しないが、実際のルーター経由ナビゲート後の`history.back()`/`forward()`は`waitFor`で安定して検証できる」という手順をそのまま踏襲した。
+  - 「存在しないURLを開いても画面が壊れず横断一覧に案内される」: `/no-such-page`を開いても横断一覧領域が表示されることを確認。
+  - 既存の「API Keyを入力しての疎通」「エラー表示」describe内のテスト（`ProjectsPanel`固有の表示・エラーを検証するもの）は、`ProjectsPanel`が`/projects`配下に移動したことに伴い、`render(<App />)`の前に`window.history.pushState(null, '', '/projects')`する`renderProjectsPage()`ヘルパーを新設して置き換えた（検証内容・アサーション自体は変更していない）。既存の「横断一覧からの画面遷移」describe（前タスクで実装済み、`/companies/:id`・`/projects/:id`・`/tasks/:id/:id`への遷移を検証）は、ルーティング先が`CompaniesPage`／`ProjectsPage`に変わった後もそのままPASSすることを確認済み（対象パネル自体は無変更のため）。
+  - `src/components/ProjectsPanel.test.tsx`・`CompaniesPanel.test.tsx`・`TasksPanel.test.tsx`・`WorkTrackingPanel.test.tsx`・`OverviewPanel.test.tsx`は無変更（各パネル単体は`apiKey`等のpropsのみで動作しページ構成に依存しないため、既存のテストがそのまま有効）。
+  - **セルフチェック（差し戻し対応後）**: フロント＝`npm run test -- --run`（19 Test Files / 171 Tests すべてPASS、stderrへリダイレクトして0バイトを確認しwarning 0件）・`npm run typecheck`（`tsc -b`、エラーなし）・`npm run lint`（`oxlint --deny-warnings`、指摘なし）・`npm run build`（成功、500KB超チャンクサイズの情報メッセージのみ）。`git status --porcelain -- frontend/src/App.test.tsx`のみが変更対象で、`git diff --stat -- backend/`が空であることを確認し、本修正がフロントエンドのテスト追加のみであることを裏付けた。
+  - **スコープ外（意図的に未実装、次タスクで対応）**: 横断一覧の各リンク（企業/案件/タスクの詳細へ）が新しいページ構成上でも正しいURLへ遷移し詳細ダイアログ・ハイライトが機能することの重ねての検証は、次タスク「詳細ダイアログへの既存ディープリンクの新画面構成への追従」のスコープ。今回のセルフチェックで既存の「横断一覧からの画面遷移」describe 3件がそのままPASSしていることを確認済みだが、専用の深掘り検証は次タスクに委ねる。
+- セキュリティエバリュエーターのフィードバック:
+  - `git diff`／`git status`で変更範囲を確認: `frontend/src/App.tsx`（ルート再編）・`frontend/src/App.test.tsx`（テスト追従）・新規`frontend/src/components/NavBar.tsx`の3点のみ。`ProjectsPanel.tsx`／`TasksPanel.tsx`／`WorkTrackingPanel.tsx`／`CompaniesPanel.tsx`／`OverviewPanel.tsx`・`api/apiKeyStorage.ts`・`api/projects.ts`・`api/types.ts`はいずれも`git status --porcelain`上変更なしで、概要記載どおり「各パネルの内部実装は無変更」であることをコード上裏付けられた。バックエンド（`backend/`）にも変更なし。
+  - **API Keyの扱い**: `App.tsx`の`apiKey`状態管理（`loadApiKey`/`saveApiKey`/`clearApiKey`、`useState`）はルート再編の前後で変更なし。`NavBar`は`Button component={RouterLink} to="..."`で静的な`'/'`・`'/projects'`・`'/companies'`のみを遷移先に持ち、APIキーやその他の値をURLクエリ・パスに埋め込む処理は一切無い。ページ遷移時にAPIキーがURLへ露出する経路は無いことを確認した。
+  - **XSS/インジェクション**: `NavBar.tsx`の`NAV_ITEMS`はハードコードされた定数配列（`to`/`label`ともにリテラル文字列）で、ユーザー入力やURLパラメータをそのまま埋め込む箇所は無い。`dangerouslySetInnerHTML`等の危険な描画APIも新規コード中に存在しない。`isActive`判定は`pathname.startsWith(...)`のみで、`pathname`を画面に描画したりHTML/属性へ注入したりする処理も無い。
+  - **ディープリンクの認可・データ取得経路**: `/projects/:projectId`→`ProjectDetailRoute`→`ProjectsPage`→`ProjectsPanel`、`/companies/:companyId`→`CompanyDetailRoute`→`CompaniesPage`→`CompaniesPanel`、`/tasks/:projectId/:taskId`→`TaskDetailRoute`→`ProjectsPage`（`TasksPanel`に`initialSelectedProjectId`/`initialHighlightTaskId`を伝播）と、いずれも従来と同一のPanelコンポーネントをそのままレンダリングする経路になっており、`apiKey`もpropsでそのまま渡っている。Panel内部が無変更である以上、`apiRequest`経由の認証ヘッダー付与・`is_deleted=false`フィルタ・mass assignment対策など既存タスクで確認済みの防御は引き続き有効。ルート再編によってこれらの経路を迂回する新しい取得手段は追加されていない。
+  - **その他**: `Route path="*" element={<Navigate to="/" replace />} />`は前タスクから変更なし（未知パスは`/`へのフォールバックのみで、パス文字列をエラーメッセージ等に反映しないためオープンリダイレクト等のリスクなし）。CORS設定・シークレット管理・エラーハンドリング関連のファイルは本タスクで一切触れられていない。
+  - 【結論】Critical/High相当の問題は無い。本タスクは概要どおり「ページのまとめ方のみ」の純粋なリファクタリングであり、認証・認可・データ取得経路に変化は無く、新規コード（`NavBar.tsx`及び`App.tsx`のルート再編部分）にも静的な定数のみを扱うためインジェクション/XSSの経路は見当たらない。statusを「性能評価待ち」に更新する。
+  - **（再レビュー、差し戻し1回目の修正後）** `git diff --stat`／`git status --porcelain`で今回の差分を確認: `frontend/src/App.test.tsx`（+94/-13程度、テスト1件追加とヘルパー関数`renderProjectsPage`名の周辺コメント整理）のみで、`frontend/src/App.tsx`・新規`frontend/src/components/NavBar.tsx`はいずれも本ラウンドで変更されていないことを確認した（`git diff frontend/src/App.tsx`の内容は前回レビュー時と同一、`NavBar.tsx`は`git status`上コンテンツ変更なし）。`stat`によるファイル更新時刻でも`NavBar.tsx`（23:35:05）・`App.tsx`（23:35:29）がいずれも`App.test.tsx`の更新（23:46:57、今回の修正）より前であることを確認し、アプリケーションコードが不変であることを裏付けた。`backend/`配下も`git diff --stat -- backend/`で差分なし。
+  - 追加された唯一のテストケース（`'ブラウザの「戻る」「進む」操作でも対応するページが表示される'`）の内容を確認: `NavBar`のリンククリックによる実ナビゲーション後に`window.history.back()`/`forward()`を呼び、対応する`region`の出現/消失を`waitFor`で検証するのみで、新しい入力の受け取り・DOM注入・外部リソースの呼び出し・秘密情報の埋め込みは無い。テスト内で使用しているAPI Key文字列（`'saved-key'`）は同ファイル内の既存テストでも使われているダミー値で、実際のシークレットではない。
+  - 【結論】Critical/High相当はもちろん、Low相当の新たな懸念も見当たらない。アプリケーションコード（`App.tsx`／`NavBar.tsx`／各Panel）は前回承認時から不変であり、今回追加されたのはテストケース1件のみでセキュリティ上の意味を持つ変更点は無い。前回の承認内容（API Key露出経路無し、静的定数のみのナビゲーション、ディープリンクは既存Panelの認証・`is_deleted`フィルタ・mass assignment対策をそのまま経由）は引き続き有効。statusを「性能評価待ち」に更新する（差し戻し回数は1のまま据え置き）。
+- 性能エバリュエーターのフィードバック:
+  - 【判定】不合格。pytest/ruff/vitest/typecheck/lint/buildはいずれも問題ないが、受け入れ条件3「固有のURL...ブラウザの「戻る」「進む」操作...でそのページが表示される」のうち「戻る」「進む」操作を検証するテストが欠落しており、テスト不足として差し戻す。
+  - **バックエンド**: `uv run pytest -v`で213件全てPASS、warning 0件（`grep -iE "warning"`でヒットしたのはテスト名文字列のみで`warnings summary`セクションは出力なし）。`uv run ruff check`は`All checks passed!`。`git diff --stat -- backend/`が空であることを確認し、本タスクがフロントエンドのみの変更であることを裏付けた（回帰確認目的、本タスクの直接の変更対象ではない）。
+  - **フロントエンド**: `export PATH="$HOME/.local/lib/node-v24.19.0-linux-x64/bin:$PATH"`の上、`npm run test -- --run`で19 Test Files/170 Tests全てPASS、stderrは0バイトでwarning 0件。`npm run typecheck`（`tsc -b`）エラーなし。`npm run lint`（`oxlint --deny-warnings`）指摘なし。`npm run build`成功（500KB超チャンクサイズの情報メッセージのみ、既存タスクから継続している既知の非ブロッキング事項）。
+  - **受け入れ条件の個別検証**:
+    - 「アプリを開くと横断一覧画面が表示される」: `src/App.test.tsx`の`アプリを開くと横断一覧画面が表示される`でカバーされておりPASS。
+    - 「ナビゲーションが常に見え、クリックで案件ページ・選考ページへ切り替えられる」: `ナビゲーションバーはどの画面でも表示され...`でカバーされておりPASS。`NavBar.tsx`のコードも確認し、`aria-current="page"`の付与・`role="navigation"`ランドマークの実装を裏付けた。
+    - 「固有のURLを持ち、URLを直接開く操作でそのページが表示される」: `「案件ページ」「選考ページ」は固有のURLを持ち、直接開いても同じ画面が表示される`でカバーされておりPASS。
+    - **「固有のURLを持ち、ブラウザの「戻る」「進む」操作でそのページが表示される」: 未カバー。** spec.mdの実装メモでは「jsdom環境での`history.back()`のpopstateイベント発火が非同期かつシミュレーションが不安定なため専用テストは追加していない」「URL直接オープン後の初期描画のテストで実質的にカバーされる」と説明されているが、これを検証するため`vitest`でスクラッチ用の一時テストファイルを作成し実機確認したところ、（1）レンダー後に`window.history.pushState`を単独で呼んでも`popstate`が発火せずBrowserRouterは再描画しない（＝「URL直接オープン」と「戻る/進む」は実装上別経路であり、直接オープンのテストでは戻る/進むの経路を検証したことにならない）一方、（2）`NavBar`のリンクをクリックして実際にルーター経由でナビゲートした後に`window.history.back()`／`window.history.forward()`を呼ぶと、`waitFor`内で問題なく`popstate`が発火し画面が正しく切り替わることを確認した（`Test Files 1 passed / Tests 1 passed`、タイムアウトやフレークは発生せず）。すなわち「不安定」という説明の裏付けは取れず、`waitFor`を使えば安定して検証可能であることを実機で確認した。このスクラッチテストはコード変更を残さないよう検証後に削除済み（`git status --porcelain frontend/`で追跡対象ファイルへの変更が無いことを確認）。
+    - 「各ページで機能ごと利用できる（一覧・作成・更新・削除・稼働開始/終了・時給換算等）」: 各パネル（`ProjectsPanel`/`TasksPanel`/`WorkTrackingPanel`/`CompaniesPanel`）自体は無変更で既存のパネル単体テスト（`ProjectsPanel.test.tsx`等）がそのままPASSしていること、および`/projects`・`/companies`表示時に3パネル・2パネルの領域が揃って存在することを`App.test.tsx`で確認しておりPASS。
+    - 「未知URLを開いても画面が壊れず横断一覧に案内される」: `存在しないURLを開いても画面が壊れず横断一覧に案内される`でカバーされておりPASS。
+  - **指摘**: 受け入れ条件3の「戻る」「進む」操作について、実装自体（`react-router-dom`のBrowserRouter標準機能）は問題ないと考えられるが、専用のテストケースが欠落しており受け入れ条件がテストで担保されていない。上記の実機確認で「実装可能かつ`waitFor`で安定して検証できる」ことを確認済みなので、`src/App.test.tsx`の「画面構成の分割とナビゲーション」describe内に、実際のリンククリックでページ遷移した後に`window.history.back()`／`window.history.forward()`を呼び、対応する画面へ戻る/進むことを確認するテストケースを追加することを推奨する（テスト追加自体はgeneratorの役割のため本エバリュエーターでは実施しない）。
+  - コードは変更していない（`Read`と一時的なスクラッチ検証用ファイルの作成・削除のみ、`Edit`はapp/testコードに対して未使用）。
+  - statusを「修正待ち」に、差し戻し回数を1に更新する。
+  - 対応（差し戻しへの修正）: `src/App.test.tsx`の`describe('画面構成の分割とナビゲーション')`に、性能エバリュエーターが実機確認した手順（実際のルーター経由ナビゲート後に`window.history.back()`／`forward()`を`waitFor`で確認する）をそのまま踏襲したテスト`'ブラウザの「戻る」「進む」操作でも対応するページが表示される'`を追加した。`NavBar`のリンククリックで`/`→`/projects`→`/companies`と遷移した後、`history.back()`で案件管理領域（かつ選考管理領域が消えていること）を、`history.forward()`で選考管理領域（かつ案件管理領域が消えていること）を`waitFor`内でそれぞれ確認する。実装メモの「jsdom環境が不安定なため専用テストを省略した」という記述はエバリュエーターの実機確認で裏付けが取れなかったため削除し、追加したテストの説明に置き換えた。`npm run test -- --run`（19 Test Files / 171 Tests、既存170件+新規1件、全てPASS、stderr 0バイトでwarning 0件）・`npm run typecheck`・`npm run lint`・`npm run build`（いずれも既存と同じく問題なし、buildは500KB超チャンクサイズの情報メッセージのみ）を確認した。変更ファイルは`frontend/src/App.test.tsx`のみ（`git status --porcelain`で確認）で、バックエンド・アプリケーションコードへの変更はない。statusを「セキュリティ評価待ち」に更新する。
+  - **（再評価、差し戻し1回目の修正後）** 【判定】合格。前回指摘した「戻る」「進む」操作の未カバーが今回追加されたテストで解消されたことを確認したうえで、テストスイート全体・受け入れ条件5件すべてを再検証した。
+    - **変更範囲の確認**: `git status --porcelain -- frontend/ backend/`は`frontend/src/App.test.tsx`のみが変更、`frontend/src/App.tsx`・`frontend/src/components/NavBar.tsx`はそれぞれ`stat`のmtimeが`App.test.tsx`（23:46:57）より前（23:35:29／23:35:05）であることを確認し、アプリケーションコードが前回レビュー時から不変であることを裏付けた。
+    - **追加テストの内容確認**: `src/App.test.tsx`399行目の`'ブラウザの「戻る」「進む」操作でも対応するページが表示される'`を読み、`NavBar`のリンククリックで`/`→`/projects`→`/companies`と実際のルーター経由でナビゲートした後に`window.history.back()`／`window.history.forward()`を呼び、対応する`region`の出現/消失（選考管理と案件管理が排他的に表示されること）を`waitFor`内で検証していることを確認した。前回自分が実機確認した「単独の`pushState`ではpopstateが発火しないが、実ルーターナビゲート後の`history.back()`/`forward()`は`waitFor`で安定して検証できる」という手順をそのまま踏襲しており、指摘は解消された。
+    - **バックエンド回帰確認**: `uv run pytest -v`で213件全てPASS、`2>&1 | grep -iE "warning"`のヒットはテスト名文字列（`*_returns_warning`等）のみで`warnings summary`セクションは出力なし（warning 0件）。`uv run ruff check`は`All checks passed!`。本タスクの直接の変更対象ではないが回帰なしを確認。
+    - **フロントエンド**: `export PATH="$HOME/.local/lib/node-v24.19.0-linux-x64/bin:$PATH"`の上、`npm run test -- --run`で19 Test Files/171 Tests全てPASS（出力ログを`grep -icE "warn"`で確認し0件、stderrへの出力も無し）。`npm run typecheck`（`tsc -b`）エラーなし。`npm run lint`（`oxlint --deny-warnings`）指摘なし。`npm run build`成功（`tsc -b && vite build`、500KB超チャンクサイズの情報メッセージのみで既存タスクから継続する既知の非ブロッキング事項）。
+    - **受け入れ条件5件の個別再検証**:
+      - 「アプリを開くと横断一覧画面が表示される」: `アプリを開くと横断一覧画面が表示される`でカバー、PASS。
+      - 「ナビゲーションが常に見え、クリックで案件ページ・選考ページへ切り替えられる」: `ナビゲーションバーはどの画面でも表示され...`でカバー、PASS。
+      - 「固有のURLを持ち、URLを直接開く操作／ブラウザの「戻る」「進む」操作でそのページが表示される」: 直接開く操作は`「案件ページ」「選考ページ」は固有のURLを持ち、直接開いても同じ画面が表示される`、戻る/進む操作は今回追加された`ブラウザの「戻る」「進む」操作でも対応するページが表示される`でそれぞれカバー、両方PASS。**前回の指摘はこれで解消。**
+      - 「各ページで機能ごと利用できる」: 各パネル単体テスト（無変更で既存どおりPASS）＋`App.test.tsx`での3パネル/2パネル領域の存在確認でカバー、PASS。
+      - 「未知URLを開いても画面が壊れず横断一覧に案内される」: `存在しないURLを開いても画面が壊れず横断一覧に案内される`でカバー、PASS。
+    - **指摘**: 無し。テスト不足・バグともに見当たらなかった。
+    - コードは変更していない（`Read`・`Bash`（テスト実行/git確認）のみ、`Edit`は未使用）。
+    - statusを「完了」に更新する。差し戻し回数は1のまま据え置き（今回は不合格ではないため加算しない）。
+- 差し戻し回数: 1
+
+### タスク: 詳細ダイアログへの既存ディープリンクの新画面構成への追従
+- status: 未着手
+- 概要: 「## 決定事項」の「フロントエンドの画面構成分割の単位」（確定: 詳細表示はモーダル維持）に沿って、画面構成を「案件ページ」「選考ページ」の2ページへ分割した後も、横断一覧の各項目から辿れる案件・タスク・企業の詳細画面へのディープリンク（分割前の単一ページ構成で実現していたもの）が、分割後の画面構成でも変わらず機能することを保証する。詳細表示のモーダルダイアログ自体（`ProjectDetailDialog`／`CompanyDetailDialog`等）は作り直さず、リンク先のパスが新しいページ構成（`案件ページ`／`選考ページ`）上のURLに変わる点への追従が中心。
+- 受け入れ条件:
+  - [ ] 横断一覧の選考ステップの項目から、対応する企業の詳細（選考ページ上）を直接開くリンクを辿れる
+  - [ ] 横断一覧の進行中稼働ログの項目から、対応する案件の詳細（案件ページ上）を直接開くリンクを辿れる
+  - [ ] 横断一覧の進行中稼働ログの項目から、対応するタスク（案件ページ上、対象タスクであることが分かる状態）を直接開くリンクを辿れる
+  - [ ] 上記いずれのリンクも、画面分割前と同様にURLを直接開いた場合や再読み込みした場合に同じ詳細が表示される
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
 - 差し戻し回数: 0
 
 ## 型安全性リファクタリング（実装タスク一覧の外）
