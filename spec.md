@@ -1351,13 +1351,33 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 - 差し戻し回数: 0
 
 ### タスク: 既存開発用DBのマイグレーション管理への移行
-- status: 未着手
+- status: 完了
 - 概要: 「既存の開発用DB（backend/app.db）のマイグレーション管理への移行方法」の決定（確定: 現状スキーマを初期マイグレーション適用済みとして扱う。「## 決定事項」参照）に沿って、開発用DBには既に複数テーブルにデータが入っているため、マイグレーション管理基盤の導入後、このDBを安全に管理下へ移す。
 - 受け入れ条件:
-  - [ ] 「## 未決定事項（要ユーザー判断）」の該当決定に沿った方法で、開発用DBがマイグレーション管理下に置かれる
-  - [ ] 移行後、開発用DBに対してマイグレーションの適用状況確認・新規スキーマ変更の適用が問題なく行える
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 「## 未決定事項（要ユーザー判断）」の該当決定に沿った方法で、開発用DBがマイグレーション管理下に置かれる
+  - [x] 移行後、開発用DBに対してマイグレーションの適用状況確認・新規スキーマ変更の適用が問題なく行える
+- 実装メモ:
+  - 作業前に`backend/app.db`を`backend/app.db.bak_pre_migration`としてコピーし、バックアップを確保した上で作業した（作業完了・検証後にこのバックアップファイルは削除済み。`backend/app.db`自体は`.gitignore`の`*.db`で追跡対象外のため、バックアップもリポジトリには残さない）。
+  - 移行前に`backend/app.db`の実データを確認したところ、5テーブルとも0件（開発中に登録したデータは既にクリアされた状態）で、`alembic_version`テーブルは存在しなかった。テーブル構造（`PRAGMA table_info`で全カラム名・型・not null・default値を確認）は、直前タスクで作成済みの初期リビジョン`522c9ff7a611_create_initial_schema.py`が生成するスキーマと完全一致していることを確認した上で移行した。
+  - 「## 決定事項」の確定方針（現状スキーマを初期マイグレーション適用済みとして扱う。DBを作り直さない）に沿い、`cd backend && uv run alembic stamp head`を実行した。`stamp`はDDLを一切実行せず`alembic_version`テーブルに現在のリビジョンID（`522c9ff7a611`）を記録するのみのコマンドであり、既存の5テーブルの構造・データには触れない。実行前後で`backend/app.db.bak_pre_migration`と`backend/app.db`の全テーブル（`alembic_version`を除く）のスキーマ（`PRAGMA table_info`）およびデータ（`SELECT *`）が完全一致することをPythonスクリプトで比較し、既存のテーブル構造・データが一切変化していないことを確認した。差分は`alembic_version`テーブルの追加（1行、値`522c9ff7a611`）のみ。
+  - `uv run alembic current`が空出力（未適用）→`stamp head`後は`522c9ff7a611 (head)`を返すことを確認し、適用状況確認が問題なく行えることを検証した（受け入れ条件2点目・前半）。
+  - 新規スキーマ変更の適用が問題なく行えることを検証するため、`uv run alembic revision -m "trial add column for verification"`で一時的なリビジョン（companyテーブルへの列追加、`down_revision=522c9ff7a611`）を作成し、`backend/app.db`に対して`alembic upgrade head`→companyテーブルに`trial_col`列が追加されたことを確認→`alembic downgrade -1`→列が復元され`alembic current`が`522c9ff7a611`に戻ることを確認、かつ全テーブルの行数が0件のまま変化していないことを確認した。マイグレーション管理基盤の導入タスクと同じ理由（スキーマ設計をspec.md通りに保つため）で、検証後にこの一時リビジョンファイルは削除し、正式な変更単位としては残していない（受け入れ条件2点目・後半）。
+  - 本タスクの変更は`backend/app.db`（gitignore対象、リポジトリ管理外）に対する`alembic_version`テーブルの追加のみであり、`backend/migrations/`配下・`backend/alembic.ini`・アプリケーションコードのいずれも変更していない。
+- テスト: 本タスクは既存の開発用DBという単一の実体に対する一度限りの移行作業であり、新規に追加すべきロジック（純粋関数・エンドポイント）は無いため、新規の自動テストファイルは追加していない。代わりに上記の実装メモに記載した通り、移行前後のスキーマ・データの完全一致比較、および`alembic current`/`upgrade`/`downgrade`のCLI操作による適用状況確認・新規スキーマ変更の適用検証を実地で行った。既存の自動テスト（マイグレーション管理基盤導入タスクで追加した`backend/tests/test_migrations.py`を含む）への影響は無いため、`uv run pytest`で213件全てPASS（回帰なし、warning 0件）・`uv run ruff check`で`All checks passed!`であることを確認した。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High相当の問題なし）。以下を実機で検証した。
+  - **コード差分の確認**: `git diff --stat`（作業ツリー）は`spec.md`のみが変更対象であることを確認。念のため`git diff HEAD -- backend/app backend/migrations backend/alembic.ini`も実行し出力0件（無変更）であることを確認した。`git log`で`backend/app`・`backend/migrations`・`backend/alembic.ini`を最後に変更したコミットは前タスク「マイグレーション管理基盤（Alembic）を導入」（9ca7af2）であり、本タスクでの変更は無いことを確認。
+  - **`alembic stamp`の妥当性・DB実態の検証**: `backend/app.db`を直接開き（Pythonの`sqlite3`経由）、テーブル一覧・`alembic_version`の中身・全5テーブルの行数・`PRAGMA table_info`相当のカラム構成を独立に確認した。結果、`alembic_version`テーブルには`522c9ff7a611`の1行のみが存在し、`project`/`task`/`interview_step`/`work_log`/`company`の5テーブルは全て0行、カラム構成（型・not null・default）は`522c9ff7a611_create_initial_schema.py`の`upgrade()`定義と完全一致していた。`company`テーブルに検証用の`trial_col`のような余分なカラムは残っておらず、trialリビジョンの`upgrade`/`downgrade`往復が実装メモの記載通りきれいに戻されていることも裏付けられた。実装メモの「移行前後で差分は`alembic_version`テーブルの追加のみ」という主張と、実際のDB状態は矛盾していない。
+  - **一時ファイルの後片付け**: `backend/app.db.bak_pre_migration`、trialリビジョンの`.py`ファイルはいずれもファイルシステム上に存在しないことを確認（`find backend -iname "*.bak*" -o -iname "*trial*"`で該当なし）。リポジトリにも余計な差分は残っていない。
+  - **[Low/informational・ブロッキングではない]** `backend/migrations/versions/__pycache__/a1a2d59aaa18_trial_add_column_for_verification.cpython-312.pyc`という、削除済みのはずのtrialリビジョンのコンパイル済みバイトコードが1件残存していた。`__pycache__/`はルートの`.gitignore`で除外されておりリポジトリには一切混入しない上、対応する`.py`ソースが存在しないためAlembicの`ScriptDirectory`が`versions/`配下を走査する際にも拾われず（`.py`ファイル基準で読み込まれるため）機能・セキュリティ上の実害はない。ただし実装メモの「一時リビジョンファイルは削除し...残していない」という記述を厳密に読むとバイトコードキャッシュの消し残しがあるため、次回同種の作業時は`find . -name __pycache__ -exec rm -rf {} +`等でのクリーンアップも合わせて行うと望ましい（差し戻しは不要）。
+  - **本番相当環境との整合**: 「## 決定事項」に本番相当環境向けの別方針（CI/CDパイプラインへの`alembic upgrade`自動組み込み、手動`stamp`運用は採らない）が既に定義されており、本タスクの`stamp`操作は開発用の既存SQLiteファイル1点に閉じたスコープで、本番相当環境の移行導線とは独立していることを確認した。実装メモに実行コマンド（`alembic stamp head`等）・検証手順・確認結果が具体的に記載されており、同種の状況（スキーマが完成済みの既存DBを後からマイグレーション管理下に置く）が再発した場合の参考手順としても十分な情報量である。
+  - **秘密情報・認証・CORS・論理削除**: 本タスクはDBファイルに対する`alembic_version`追記のみでアプリケーションコード・設定ファイルの変更を伴わないため、認証・CORS・論理削除フィルタ・エラーハンドリング等のエンドポイント関連の観点は前タスクからの差分なし（該当なし）。DB接続文字列・APIキー等のハードコードや、今回の操作ログへの秘密情報出力も無い。
+- 性能エバリュエーターのフィードバック: 合格。以下を実機で検証した。
+  - **コード差分**: `git status --short` / `git diff HEAD -- backend/app backend/migrations backend/alembic.ini`はいずれも無変更であることを確認。本タスクの変更は`spec.md`のみ。
+  - **受け入れ条件1点目（開発用DBがマイグレーション管理下に置かれる）**: `backend/app.db`を直接`sqlite3`経由で開き検証。`alembic_version`テーブルは`522c9ff7a611`の1行のみ、`project`/`task`/`interview_step`/`work_log`/`company`の5テーブルは全て0行、`company`テーブルのカラム構成（`id`/`name`/`is_deleted`のみ）に検証用の余分な列が残っていないことを確認。実装メモ・セキュリティレビューの記載と一致。
+  - **受け入れ条件2点目（適用状況確認・新規スキーマ変更の適用）**: `uv run alembic current`が`522c9ff7a611 (head)`を返すことを確認（適用状況確認が問題なく行える）。さらに独自に一時リビジョン（`company`への列追加）を作成し`alembic upgrade head`→列追加を`PRAGMA table_info`で確認→`alembic downgrade -1`→列が復元され`alembic current`が`522c9ff7a611`に戻り、全5テーブルが0行のまま変化していないことを確認。新規スキーマ変更の適用・巻き戻しが問題なく行えることを再現検証できた（受け入れ条件2点目を実地で裏付け）。検証用リビジョンファイルは検証後に削除済み。
+  - **セキュリティレビューのLow指摘の確認・対応**: `find backend -path "*migrations/versions/__pycache__*"`で、指摘通り削除済みのはずのtrialリビジョン（`a1a2d59aaa18_trial_add_column_for_verification.cpython-312.pyc`）のバイトコードキャッシュが1件残存していることを実機で確認した。`.gitignore`対象でリポジトリには混入せず、`.py`ソースが存在しないため`alembic`の`ScriptDirectory`走査にも影響しない（`alembic current`/`heads`/`history`の出力に異常なし）ため実害なしという指摘内容も再現確認した。今回、上記の独自検証で生成した一時リビジョンの`.pyc`も含め`find backend -type d -name __pycache__ -exec rm -rf {} +`で`backend/migrations`配下の`__pycache__`を掃除し、`git status --short backend/`が無変更であることを確認済み（記録のみ・差し戻し対象外の指摘だったが、ついでに解消した）。
+  - **テストスイート**: `uv run pytest -v`で213件全てPASS、warning 0件（再現確認）。`backend/tests/test_migrations.py`の7件（`upgrade`/`downgrade`往復、trial列の追加・巻き戻し、CRUD疎通等）を含め回帰なし。`uv run ruff check`は`All checks passed!`。
+  - **テストカバレッジについて**: 本タスクは既存DB1点に対する一度限りの運用作業であり新規ロジックを含まないため、実装メモの通り新規自動テストファイルは追加されていない。この判断は受け入れ条件の性質（CLI操作の実地確認で担保可能）と整合しており、上記の通り実地再現で受け入れ条件2点とも裏付けが取れたため、テスト不足としての指摘はしない。
 - 差し戻し回数: 0
 
 ### タスク: CI/CDパイプラインへのマイグレーション適用組み込みの検討
