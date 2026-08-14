@@ -3,6 +3,8 @@
 起動時（lifespan）にDBファイル・テーブルが存在しなければ自動生成する。
 """
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,13 +13,22 @@ from fastapi import Depends, FastAPI
 from app.auth import verify_api_key
 from app.cors import configure_cors
 from app.database import init_db
+from app.demo_reset import start_background_task
 from app.routers import companies, company_tasks, interview_steps, projects, tasks, work_logs
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
-    yield
+    # オプトイン（環境変数）していない限りNoneが返り、何も起動しない。
+    demo_reset_task = start_background_task()
+    try:
+        yield
+    finally:
+        if demo_reset_task is not None:
+            demo_reset_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await demo_reset_task
 
 
 def create_app() -> FastAPI:

@@ -1719,3 +1719,44 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - **テスト不足の指摘（Low）**: ステータス警告の「同一ステータス・隣接遷移・飛び越え遷移」パターンをUIレベルで個別に検証するテストは無い（逆行1パターンのみ）。前述の通りフロントエンド側のロジックが薄いため今回は合格判定に影響しないと判断したが、将来`CompaniesPanel.tsx`側の警告表示条件分岐が複雑化した場合に備え、他パターンのテスト追加を推奨する。
   - 総評: pytest対象外（バックエンド変更なし）、vitest・typecheck・lintは全てpass、warningも無く、受け入れ条件8件は全てテストで裏付けられているため合格とする。
 - 差し戻し回数: 0
+
+### タスク: デモ環境用データの自動定期リセット（Web本体プロセス内バックグラウンド実行への切り替え）
+
+- status: 完了
+- 概要: 「デモ環境用シードデータ投入スクリプトの追加」タスクは外部のスケジューラ（別サービスのCron Job等）からCLI経由で呼び出す想定で実装したが、Railwayでは永続ボリュームを1サービスにしか接続できず、Web本体サービス（SQLiteファイルを持つ）とは別のCron Jobサービスからは同じDBファイルにアクセスできないことが判明した。このためデモ環境でのダミーデータリセットを、Web本体サービス自身のプロセス内で一定間隔ごとに自動実行する方式に切り替える。既存の`seed()`関数はそのまま流用する。この処理は公開デモ環境専用の挙動であり、通常運用・ローカル開発・既存の開発用DB（実データ）では絶対に動いてはならないため、明示的にオプトインした場合にのみ有効化する。
+- 受け入れ条件:
+  - [x] オプトインの設定を行わずにアプリを起動・稼働させた場合、時間が経過しても自動リセットは一切発生せず、既存の開発用DB（実データ）やローカル開発環境のデータが自動的に消去されることはない
+  - [x] オプトインの設定を行ってアプリを起動すると、外部の何かを呼び出すことなく、アプリが稼働し続けている間、一定間隔（未設定時は24時間ごと）で自動的にダミーデータへのリセットが実行される
+  - [x] 自動リセットが実行されるたびに、実行日時が分かるログが出力され、稼働環境のログ上で動作確認ができる
+  - [x] この自動リセット処理はHTTPエンドポイントとして公開されず、API経由で外部から呼び出すことはできない
+  - [x] 自動リセットが有効な状態でも通常のAPIリクエストの処理はブロックされず、アプリは通常どおり応答し続ける
+  - [x] 既存の`seed()`関数自体の挙動、および既存のCLIからの単発実行（コマンド一つでの手動実行）はこのタスクによって変更されない
+  - [x] オプトインしていない場合に自動リセットが発生しないこと、オプトインした場合に周期的な自動リセットの仕組みが実際に機能することを検証する自動テストがある
+- 実装メモ:
+  - **本体（`backend/app/demo_reset.py`、新規）**: どのルーターにも登録されない独立モジュール。`is_enabled()`（環境変数`DEMO_AUTO_RESET_ENABLED`が`"true"`/`"1"`（大文字小文字不問）のときのみTrue、未設定・それ以外は全てFalseのfail closed）・`get_interval_seconds()`（環境変数`DEMO_AUTO_RESET_INTERVAL_HOURS`、未設定時は24時間）・`run_reset_once()`（`SessionLocal`でセッションを開いて既存の`seed_demo_data.seed()`をそのまま呼び出し、commit後に実行日時とテーブルごとの投入件数を`logging`（`app.demo_reset`ロガー、INFOレベル）に出力）・`run_periodic_reset()`（`interval_seconds`ごとに`reset_fn`を無限に呼び続ける非同期関数）・`start_background_task()`（`is_enabled()`がFalseなら何もせず`None`を返し、Trueなら`asyncio.create_task`でバックグラウンドタスクを起動して返す）の5関数で構成。環境変数名・間隔の単位（時間）・ロガー名等はAPI契約に影響しない内部実装の技術的詳細としてgeneratorが決定した。
+  - **ブロッキング回避（技術判断）**: `run_reset_once()`はSQLAlchemyの同期セッションを使う同期関数のため、`run_periodic_reset()`内では`await asyncio.to_thread(reset_fn)`で別スレッドに退避して実行する。これにより自動リセット実行中もイベントループ自体は塞がれず、通常のAPIリクエスト処理（本アプリの全エンドポイントは`def`の同期関数だがStarletteのスレッドプール経由で処理される）がブロックされない。`test_run_periodic_reset_does_not_block_the_event_loop`で、リセット処理が実行中でも別の非同期タスクが並行して進行することを実証している。
+  - **main.pyへの結線（`backend/app/main.py`）**: `lifespan`内で`init_db()`の直後に`start_background_task()`を呼び、返り値（オプトインしていなければ`None`）を保持する。アプリ終了時（`finally`節）にタスクが存在すればキャンセルし、`CancelledError`を握りつぶして待機することでクリーンに停止する。オプトインしていない場合は`start_background_task()`が`None`を返すのみで、`asyncio.create_task`自体が一切呼ばれないため、時間が経過しても自動リセットは発生しない。
+  - **既存`seed()`・CLI単発実行への非影響**: `backend/app/seed_demo_data.py`は一切変更していない（`git diff`で無変更を確認）。`run_reset_once()`は`seed()`をそのまま呼ぶだけの薄いラッパーであり、`seed()`自体のロジック（冪等性・投入データ内容等）には手を加えていない。CLIエントリーポイント（`python -m app.seed_demo_data`）・`main()`関数も無変更のため、既存の単発手動実行の挙動は変わらない。
+  - **HTTPエンドポイントとして非公開**: `demo_reset.py`はどのルーターにも登録されず、`app/main.py`の`app.include_router(...)`呼び出しにも追加していない。`test_demo_reset_is_not_exposed_as_an_http_endpoint`で`openapi()`の全パスに`"demo"`・`"reset"`のいずれも含まれないことを確認済み。
+- テスト:
+  - `backend/tests/test_demo_reset.py`（新規、22件）: `is_enabled()`（未設定時False・真値パターン複数・それ以外の値でFalse）／`get_interval_seconds()`（デフォルト24時間・環境変数からの上書き）／`run_reset_once()`（一時DBへの再投入・件数の返却、実行日時と`"自動リセット"`を含むログがINFOレベルで1件出力されること）／`run_periodic_reset()`（短い間隔で複数回`reset_fn`が呼ばれ続けること、`reset_fn`実行中も別の非同期タスクが並行して進行しイベントループをブロックしないこと）／`start_background_task()`（オプトイン無しでは`None`を返し何も起動しない、オプトインありでは実際にタスクを起動し`reset_fn`が呼ばれること）／HTTPエンドポイントとして非公開であること／アプリ全体（`TestClient`でlifespanを実際に走らせる結線テスト、`app.database.engine`・`SessionLocal`を一時DBに差し替え）で、オプトイン無しでは時間が経過しても`run_reset_once`が一度も呼ばれないこと・オプトインありでは短い間隔設定のもとで複数回呼ばれる（周期的に機能する）ことを検証。
+  - `uv run pytest -v`は269件全てpass（既存247件+本タスクの新規22件、回帰なし）。`uv run pytest -W error::DeprecationWarning`でも269件pass（warning 0件）。同一のtest_demo_reset.pyのみを3回連続実行してもフレーキーにならないことを確認済み。`uv run ruff check`は`All checks passed!`。
+- セキュリティエバリュエーターのフィードバック: 承認（Critical/High相当の問題なし）。`backend/app/demo_reset.py`（新規）・`backend/tests/test_demo_reset.py`（新規）・`backend/app/main.py`の差分（`git diff HEAD -- backend/app/main.py`で確認、実質的な変更はlifespanへのdemo_reset結線のみ。`company_tasks`ルーター登録行は本タスクとは無関係の既存コミット由来）を確認した。
+  - **fail closed（オプトイン）**: `is_enabled()`は`os.environ.get(ENABLED_ENV_VAR, "").strip().lower() in {"1", "true"}`であり、環境変数未設定・空文字・想定外の値は全てFalseに倒れる（デフォルト拒否）。`start_background_task()`は`is_enabled()`がFalseの場合`asyncio.create_task`自体を一切呼ばずNoneを返すのみで、`app.main.lifespan`側もNoneなら何もしない実装になっており、コードパス上オプトインなしで自動リセットが発火する経路は存在しない。`test_app_running_without_opt_in_never_triggers_automatic_reset`はTestClientで実際にlifespanを走らせ、意図的に極短間隔（`0.0000001`時間）に設定した上で`run_reset_once`が一度も呼ばれないことを実地検証しており、判定ロジックのバグも検知できる構成になっている。実行して22件全てpassすることを確認した。
+  - **実データ保護**: `demo_reset.py`はどのルーター（`app/routers/`配下）にも登録されず、`app/main.py`の`include_router`呼び出しにも追加されていない。`test_demo_reset_is_not_exposed_as_an_http_endpoint`で`openapi()`の全パスに`"demo"`・`"reset"`を含むものがないことを確認済みで、HTTP経由での誤発火・悪用経路はない。`run_reset_once()`が呼び出す`seed()`自体は本タスクの変更対象外（`backend/app/seed_demo_data.py`は無変更、`git status`でも未変更）で、全テーブル物理削除＋固定ダミーデータ投入という挙動自体は既存タスク（デモ環境用シードデータ投入スクリプトの追加）で既にレビュー済み・承認済みの挙動であり、本タスクはその起動トリガーをCLI単発実行からプロセス内定期実行に変えたのみ。
+  - **認証・CORS・シークレット管理への影響なし**: `app/auth.py`・`app/cors.py`は本タスクで変更されていない。`demo_reset.py`は生SQLやユーザー入力を扱わず、ログ出力も投入件数（`dict[str, int]`）と実行日時のみでシークレットやスタックトレースの漏洩はない。
+  - **参考情報（Low、ブロッキングではない）**: 唯一の安全弁が単一の環境変数`DEMO_AUTO_RESET_ENABLED`であるため、本番/個人利用環境のデプロイ設定に誤ってこの変数をtrueで設定してしまった場合、実データが不可逆に全消去されるリスクがある。ただし`run_periodic_reset()`は起動直後ではなく`interval_seconds`経過後に初回実行される（デフォルト24時間）ため、起動時に出力される「デモ環境用データの自動リセットを有効化しました」ログに気づく猶予がある。また現状の`.railway/railway.ts`（未コミットのスキャフォールド）にはこの環境変数の設定は無い。この設計自体は今回のspecで明示的に受け入れられているオプトイン方式と整合しており差し戻し理由にはしないが、将来デプロイ設定を扱うタスクでは環境変数名の取り違え防止（例: デモ用と本番用でRailwayのenvironmentを分離する運用の徹底）に注意を促したい。
+  - テストは`uv run pytest tests/test_demo_reset.py -q`で22件全てpassすることを実地確認した。
+- 性能エバリュエーターのフィードバック: 承認。
+  - `uv run pytest -v`を実行し269件全てpass（既存247件+本タスク新規22件）、warningは0件（`-W error::DeprecationWarning`でも269件pass）。`uv run ruff check`も`All checks passed!`。`tests/test_demo_reset.py`のみ3回連続実行してもフレーキーにならないことを確認した。
+  - 受け入れ条件を1件ずつテストで確認:
+    - オプトインなしで自動リセットが一切発生しない: `test_start_background_task_returns_none_when_not_opted_in`・`test_app_running_without_opt_in_never_triggers_automatic_reset`（TestClientで実際にlifespanを起動し、極短間隔`0.0000001`時間の設定下でも`run_reset_once`が0回であることを実地検証）でpass。
+    - オプトインありで外部呼び出し無しに一定間隔（デフォルト24時間）で自動実行: `test_get_interval_seconds_defaults_to_24_hours`・`test_start_background_task_creates_a_task_when_opted_in`・`test_app_running_with_opt_in_triggers_periodic_automatic_reset`（極短間隔で複数回呼ばれることを実地検証）でpass。
+    - 実行日時が分かるログ出力: `test_run_reset_once_logs_execution_datetime`でpass（`caplog`でINFOレベル1件・当日日付・「自動リセット」の文言を確認）。
+    - HTTPエンドポイントとして非公開: `test_demo_reset_is_not_exposed_as_an_http_endpoint`でpass（`openapi()`の全パスに"demo"/"reset"を含まないことを確認）。
+    - 自動リセット実行中も通常のAPIリクエスト処理がブロックされない: `test_run_periodic_reset_does_not_block_the_event_loop`でpass。ただし本テストは`asyncio.to_thread`という実装機構そのものを直接検証するもので、実際のHTTPリクエスト（TestClient経由の`client.get(...)`等）がリセット実行中に応答を返せることまでを検証するEnd-to-Endテストは無い。Starletteの同期エンドポイントも同じスレッドプール機構に依拠しているため技術的な裏付けとしては妥当であり、ブロッキング判定を覆すバグでもないため合格の判断は変えないが、より直接的な検証としてテスト追加の余地がある（Low、次回以降のテスト強化候補として記録）。
+    - `seed()`自体・CLI単発実行が無変更: `git diff`で`backend/app/seed_demo_data.py`が本タスクのコミット後に変更されていないことを確認（最終変更コミットは`9b5af86`のみ）。`test_seed_script_runs_as_standalone_command`等の既存テストも回帰なくpass。
+    - オプトイン有無それぞれの自動テストの存在: 上記の通り存在し、いずれもpass。
+  - 追加確認: `is_enabled()`の真偽判定の境界値（`"true"/"True"/"TRUE"/"1"`→True、`""/"false"/"0"/"no"/"yes"/半角スペース`→False）をパラメタライズテストで網羅している点、`start_background_task()`のTask生成有無の分岐を両方カバーしている点を確認した。
+  - 総評: pytest・ruffともに全てpass、warning無し、受け入れ条件7件は全てテストで裏付けられているため合格とする。
+- 差し戻し回数: 0
