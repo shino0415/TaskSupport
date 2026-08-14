@@ -45,8 +45,12 @@ RUN mkdir -p /app/data && chown appuser:appuser /app/data
 ENV PATH="/app/.venv/bin:$PATH" \
     DATABASE_URL="sqlite:////app/data/app.db"
 
-USER appuser
+# entrypoint.shがroot権限でchownした後にappuserへ落とすため、ここではUSERを固定しない
+# （永続ボリュームを/app/dataにマウントする環境では、マウント時点の所有者がroot初期値に
+# 上書きされるため、ビルド時のchownだけでは不十分。詳細はentrypoint.shのコメント参照）
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/entrypoint.sh"]
