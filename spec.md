@@ -1592,19 +1592,42 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 
 ### タスク: 企業タスク（CompanyTask）CRUD API一式
 
-- status: 未着手
+- status: 完了
 - 概要: 「## 決定事項」の「企業タスク（CompanyTask）のステータス設計」に沿い、企業配下の企業タスクの作成・一覧取得・更新（ステータス変更を含む）・論理削除ができるAPIを実装する。ステータスは「未着手/処理中/完了」の3値とし、既存の`check_backward_transition`による逆行警告ロジックをそのまま適用する。「企業タスク（CompanyTask）のデータモデル定義とマイグレーション追加」タスクの完了後に着手する。
 - 受け入れ条件:
-  - [ ] 企業配下に企業タスクを作成できる
-  - [ ] 企業配下の企業タスク一覧取得では is_deleted=false の企業タスクのみが返る
-  - [ ] 企業タスクの各項目（名前・ステータス・メモ）を更新できる
-  - [ ] ステータスを逆行させて更新すると200とともに警告フィールドが返り、更新自体はブロックされない。順当な遷移（同一・隣接・飛び越え）では警告フィールドは含まれない
-  - [ ] 企業タスクを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる
-  - [ ] 存在しない企業id・企業タスクidを指定した場合はエラー（404等）が返る
-  - [ ] 稼働ログ（WorkLog）・時給換算に関するエンドポイントや項目は企業タスクに一切追加されない
-  - [ ] 既存のTask（案件配下）向けのエンドポイント・挙動には変更が生じていない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 企業配下に企業タスクを作成できる
+  - [x] 企業配下の企業タスク一覧取得では is_deleted=false の企業タスクのみが返る
+  - [x] 企業タスクの各項目（名前・ステータス・メモ）を更新できる
+  - [x] ステータスを逆行させて更新すると200とともに警告フィールドが返り、更新自体はブロックされない。順当な遷移（同一・隣接・飛び越え）では警告フィールドは含まれない
+  - [x] 企業タスクを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる
+  - [x] 存在しない企業id・企業タスクidを指定した場合はエラー（404等）が返る
+  - [x] 稼働ログ（WorkLog）・時給換算に関するエンドポイントや項目は企業タスクに一切追加されない
+  - [x] 既存のTask（案件配下）向けのエンドポイント・挙動には変更が生じていない
+- 実装メモ:
+  - **ルーター（`backend/app/routers/company_tasks.py`、新規）**: 既存の`app/routers/tasks.py`（案件配下Task）とほぼ同一のCRUDパターンを踏襲。`POST /companies/{company_id}/company-tasks`（作成）・`GET /companies/{company_id}/company-tasks`（一覧、is_deleted=falseのみ）・`PATCH /company-tasks/{company_task_id}`（更新、`TaskPatchResponse`同様の`warning`フィールド付きレスポンス）・`DELETE /company-tasks/{company_task_id}`（論理削除）の4本。URLセグメントは既存の`interview-steps`と同じケバブケースで`company-tasks`とした。親（企業）・対象（企業タスク）それぞれについて`is_deleted=False`かつ存在確認する`_get_active_*_or_404`ヘルパーも既存パターンを踏襲。
+  - **ステータス警告ロジックの再利用**: 決定事項どおり新規グラフは作らず、`app.status_transitions.TASK_STATUS_GRAPH`と`check_backward_transition`をそのままインポートして`tasks.py`のPATCH実装と同一の判定コードにした。
+  - **スキーマ（`backend/app/schemas.py`）**: `CompanyTaskBase`/`CompanyTaskCreate`/`CompanyTaskRead`/`CompanyTaskUpdate`/`CompanyTaskPatchResponse`を`TaskBase`等と同型で追加。`CompanyTaskCreate.status`・`CompanyTaskUpdate.status`の型注釈には既存の`TaskStatus`（`app.status_transitions`）をそのまま再利用し、新規Enumは追加していない。`CompanyTaskUpdate`はTaskUpdate同様、DB上nullable=falseな`name`/`status`への明示的null指定を422で弾く`model_validator`を持つ（`memo`はnullable=trueのためnullクリアを許容）。
+  - **main.pyへの登録**: `app.routers.company_tasks`をimportし、`app.include_router(company_tasks.router)`を追加。既存のprojects/tasks/work_logs/companies/interview_stepsルーターの登録順・書き方は変更していない。
+  - **稼働ログ・時給換算・親詳細への子情報混入がないことの確認**: `CompanyTaskRead`/`CompanyTaskPatchResponse`に`started_at`/`ended_at`/`hourly_rate`相当のフィールドは無く、`/company-tasks`配下にWorkLog系エンドポイント（start/stop等）も追加していない。`CompanyRead`（企業詳細）は本タスクで変更しておらず、企業タスク一覧を含まないまま（「## 全体設計方針」の親詳細に子情報を含めない方針に合致）。
+  - **既存Task向けエンドポイントへの非影響**: `backend/app/routers/tasks.py`・`backend/app/schemas.py`内の既存Task関連クラス・`backend/app/routers/work_logs.py`には一切変更を加えていない（新規クラス・新規ルーターファイルの追加のみ）。
+- テスト:
+  - `backend/tests/test_company_tasks.py`（新規）: 既存`test_tasks.py`と同型の構成で以下を検証。作成（入力内容の反映・`is_deleted`のmass assignment拒否・存在しない/論理削除済み企業idへの404）、一覧取得（論理削除済み除外・複数件返却・存在しない/論理削除済み企業idへの404）、企業詳細（`GET /companies/{id}`）に`company_tasks`キーが含まれないこと、更新（各項目更新・memoのnullクリア・name/statusへの明示null422・存在しない/削除済みidへの404）、ステータス警告（逆行時のみwarning、同一/隣接/飛び越えはwarningなし、status未変更時はwarningなし）、削除（is_deleted化・一覧除外・存在しないidへの404・二重削除の404）、企業タスクのレスポンスに`started_at`/`ended_at`が含まれないこと、認証必須（401）。
+  - `uv run pytest -v`は240件全てpass（既存215件+本タスクの新規25件、回帰なし）。`uv run pytest -W error::DeprecationWarning`でも240件pass（warning 0件）。`uv run ruff check`は`All checks passed!`。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High無し）。以下を確認した。
+  - 【レビュー範囲】`git diff`で本タスクの差分（`backend/app/routers/company_tasks.py`新規、`backend/app/schemas.py`のCompanyTask関連スキーマ追加、`backend/app/main.py`のルーター登録、`backend/tests/test_company_tasks.py`新規）を確認した。
+  - **認証**: `verify_api_key`は`app/main.py`の`FastAPI(dependencies=[Depends(verify_api_key)])`でアプリ全体のグローバル依存関係として登録されており、`company_tasks.router`もこれに含まれるため個別のdependencies指定は不要で正しい。`verify_api_key`本体（`app/auth.py`）は環境変数未設定・ヘッダー未指定時にfail closed、比較は`secrets.compare_digest`で定数時間比較になっており問題なし。`test_endpoints_require_api_key`で401を検証済みで、実際に`uv run pytest backend/tests/test_company_tasks.py`で25件全てpassすることも手元で再現確認した。
+  - **インジェクション**: `company_tasks.py`は全てSQLAlchemy ORMの`db.query(...).filter(...)`のみで生SQL文字列結合は無い。`name`/`memo`等のユーザー入力をログ出力や外部コマンドに渡す箇所も無い。
+  - **mass assignment**: `POST`は`CompanyTaskCreate`（`name`/`memo`/`status`のみ）を`model_dump()`し、`company_id`はパスパラメータから明示的に設定しているため、リクエストボディで`company_id`や`id`/`is_deleted`を上書きすることはできない（`test_create_company_task_rejects_mass_assignment_of_is_deleted`で検証済み）。`PATCH`も`CompanyTaskUpdate`（`name`/`status`/`memo`のみ）を`exclude_unset=True`で`model_dump()`した範囲のみ`setattr`しており、`id`/`company_id`/`is_deleted`を更新する経路は無い。入力スキーマ（`CompanyTaskCreate`/`CompanyTaskUpdate`）と出力スキーマ（`CompanyTaskRead`/`CompanyTaskPatchResponse`）も分離されている。
+  - **論理削除の徹底**: 一覧取得・単体取得ヘルパー（`_get_active_company_or_404`/`_get_active_company_task_or_404`）は全て`is_deleted.is_(False)`でフィルタしており漏れは無い。`DELETE`エンドポイントは`company_task.is_deleted = True`のみで物理削除（`db.delete()`等）は行っていない。
+  - **エラーハンドリング**: 例外は`HTTPException(status_code=404, detail="...")`の簡潔な固定文言のみで、スタックトレースやSQLクエリ文字列等の内部情報を含まない。カスタム例外ハンドラの追加も無い。
+  - **CORS**: 本タスクでは`app/cors.py`に変更は無く、既存のfail-closed設定（環境変数未設定時は全許可0件、`allow_credentials=False`、ワイルドカード不使用）がそのまま新規エンドポイントにも適用される。危険な組み合わせは無い。
+  - **シークレット管理**: 新規ファイルにAPIキー・DB接続情報のハードコードは無い（テストコード中の`TEST_API_KEY = "test-secret-key"`はテスト専用の値で本番シークレットではない）。ログ出力箇所も無い。
+  - 総評: Critical/High相当の問題は見つからなかったため合格とする。
+- 性能エバリュエーターのフィードバック: 合格。以下を確認した。
+  - `uv run pytest -v`（backend/配下）は240件全てpass（既存215件+本タスクの新規`test_company_tasks.py`25件）、warning 0件。既存`test_tasks.py`（15件）・`test_work_logs.py`（16件）にも回帰なしで、既存Task（案件配下）向けエンドポイントへの非影響を確認した。`uv run ruff check`は`All checks passed!`。
+  - 受け入れ条件を1つずつテストで確認: 作成（`test_create_company_task_reflects_input_in_response`）／一覧is_deleted除外（`test_list_company_tasks_excludes_deleted`）／各項目更新（name・memoは`test_update_company_task_updates_fields`・`test_update_company_task_can_clear_nullable_memo`、statusは警告系テストで実更新も検証）／ステータス警告ロジック（同一・隣接・飛び越えを`test_update_company_task_status_forward_transition_has_no_warning`の3パラメータ、逆行を`test_update_company_task_status_backward_transition_returns_warning`でそれぞれ検証、指示にある4パターン全て裏付けあり）／削除で一覧除外（`test_delete_company_task_marks_is_deleted_and_excludes_from_list`）／存在しない企業id・企業タスクidで404（作成・一覧・更新・削除それぞれで検証）／WorkLog・時給換算エンドポイント不在（`company_tasks.py`はCRUD4本のみでstart/stop等無し、`test_company_task_endpoints_do_not_add_work_log_or_hourly_rate_fields`でレスポンスにも`started_at`/`ended_at`が無いことを確認）／既存Task向け無変更（`tasks.py`・`work_logs.py`未変更、回帰テスト全pass）は全て合格。
+  - 親詳細エンドポイントへの子情報混入なしも`test_company_detail_does_not_include_company_tasks`で確認済み（`GET /companies/{id}`のレスポンスに`company_tasks`キーが無いことを直接検証）。
+  - 軽微な指摘（不合格化するほどではない）: `test_delete_company_task_marks_is_deleted_and_excludes_from_list`は一覧からの除外のみを検証しており、DBレコードの`is_deleted`フィールド自体をGETやDB直接参照で真偽検証してはいない（挙動としては一覧除外で機能的に裏付けられているため合格扱いとしたが、次回同種タスクでは論理削除のフラグ自体も直接アサートするとより厳密）。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 選考ページへの企業タスク管理UI追加

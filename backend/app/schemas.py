@@ -233,3 +233,50 @@ class InterviewStepUpdate(BaseModel):
 
 class InterviewStepPatchResponse(InterviewStepRead):
     warning: str | None = None
+
+
+# DB上nullable=FalseなCompanyTaskのカラム（PATCHで明示的なnullを許可しない項目）。
+# memoはnullable=TrueのためPATCHでのnullクリアを許可する。
+_COMPANY_TASK_REQUIRED_UPDATE_FIELDS = ("name", "status")
+
+
+class CompanyTaskBase(BaseModel):
+    name: str
+    memo: str | None = None
+
+
+class CompanyTaskCreate(CompanyTaskBase):
+    # ステータス集合はTask（案件配下）と同一のため、既存のTaskStatusをそのまま再利用する
+    # （決定事項「企業タスク（CompanyTask）のステータス設計」参照）。
+    status: TaskStatus
+
+
+class CompanyTaskRead(CompanyTaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_id: int
+    status: str
+    is_deleted: bool
+
+
+class CompanyTaskUpdate(BaseModel):
+    name: str | None = None
+    status: TaskStatus | None = None
+    memo: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_for_required_fields(self) -> Self:
+        null_required_fields = [
+            field
+            for field in _COMPANY_TASK_REQUIRED_UPDATE_FIELDS
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if null_required_fields:
+            fields = ", ".join(null_required_fields)
+            raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
+        return self
+
+
+class CompanyTaskPatchResponse(CompanyTaskRead):
+    warning: str | None = None

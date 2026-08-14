@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from app.auth import verify_api_key
 from app.cors import configure_cors
 from app.database import init_db
-from app.routers import companies, interview_steps, projects, tasks, work_logs
+from app.routers import companies, company_tasks, interview_steps, projects, tasks, work_logs
 
 
 @asynccontextmanager
@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(work_logs.router)
     app.include_router(companies.router)
     app.include_router(interview_steps.router)
+    app.include_router(company_tasks.router)
     return app
 
 
