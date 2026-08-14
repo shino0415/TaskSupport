@@ -15,3 +15,7 @@ wheels/
 
 # Environment variables
 .env
+
+# Railway IaC ツール（railway config plan/apply が参照するTypeScript SDK。
+# ルート直下にpackage.json無しでnpm installしているため専用に無視する）
+/node_modules/
