@@ -19,6 +19,12 @@ import TableRow from '@mui/material/TableRow'
 import Typography from '@mui/material/Typography'
 
 import { createCompany, deleteCompany, fetchCompanies } from '../api/companies'
+import {
+  createCompanyTask,
+  deleteCompanyTask,
+  fetchCompanyTasks,
+  updateCompanyTask,
+} from '../api/companyTasks'
 import { toDisplayMessage } from '../api/errors'
 import {
   createInterviewStep,
@@ -26,9 +32,17 @@ import {
   fetchInterviewSteps,
   updateInterviewStep,
 } from '../api/interviewSteps'
-import type { Company, CompanyInput, InterviewStep, InterviewStepInput } from '../api/types'
+import type {
+  Company,
+  CompanyInput,
+  CompanyTask,
+  CompanyTaskInput,
+  InterviewStep,
+  InterviewStepInput,
+} from '../api/types'
 import { CompanyDetailDialog } from './CompanyDetailDialog'
 import { CompanyFormDialog } from './CompanyFormDialog'
+import { CompanyTaskFormDialog } from './CompanyTaskFormDialog'
 import { InterviewStepFormDialog } from './InterviewStepFormDialog'
 
 type Props = {
@@ -45,9 +59,10 @@ type Notice = {
 const NO_SELECTION = '' as const
 
 /**
- * 企業の一覧・登録・詳細・削除と、選択した企業配下の選考ステップの一覧・追加・編集・削除を
- * まとめた画面。企業詳細（GET /companies/{id}）は選考ステップの情報を含めないため、
- * 選考ステップは別途 GET /companies/{id}/interview-steps で取得して表示する。
+ * 企業の一覧・登録・詳細・削除と、選択した企業配下の選考ステップ・企業タスクの
+ * 一覧・追加・編集・削除をまとめた画面。企業詳細（GET /companies/{id}）は選考ステップ・
+ * 企業タスクいずれの情報も含めないため、それぞれ別途 GET /companies/{id}/interview-steps・
+ * GET /companies/{id}/company-tasks で取得して表示する。
  */
 export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props) {
   const [companies, setCompanies] = useState<Company[] | null>(null)
@@ -76,6 +91,19 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
   const [isSubmittingStep, setIsSubmittingStep] = useState(false)
 
   const [deleteStepTarget, setDeleteStepTarget] = useState<InterviewStep | null>(null)
+
+  const [companyTasks, setCompanyTasks] = useState<CompanyTask[] | null>(null)
+  const [companyTasksErrorMessage, setCompanyTasksErrorMessage] = useState<string | null>(null)
+  const [isLoadingCompanyTasks, setIsLoadingCompanyTasks] = useState(false)
+
+  const [isCompanyTaskFormOpen, setIsCompanyTaskFormOpen] = useState(false)
+  const [editingCompanyTask, setEditingCompanyTask] = useState<CompanyTask | null>(null)
+  const [companyTaskFormErrorMessage, setCompanyTaskFormErrorMessage] = useState<string | null>(
+    null,
+  )
+  const [isSubmittingCompanyTask, setIsSubmittingCompanyTask] = useState(false)
+
+  const [deleteCompanyTaskTarget, setDeleteCompanyTaskTarget] = useState<CompanyTask | null>(null)
 
   const reloadCompanies = useCallback(async () => {
     if (apiKey === '') {
@@ -127,6 +155,28 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
   useEffect(() => {
     void reloadSteps()
   }, [reloadSteps])
+
+  const reloadCompanyTasks = useCallback(async () => {
+    if (apiKey === '' || selectedCompanyId === NO_SELECTION) {
+      setCompanyTasks(null)
+      setCompanyTasksErrorMessage(null)
+      return
+    }
+    setIsLoadingCompanyTasks(true)
+    setCompanyTasksErrorMessage(null)
+    try {
+      setCompanyTasks(await fetchCompanyTasks(apiKey, selectedCompanyId))
+    } catch (error) {
+      setCompanyTasks(null)
+      setCompanyTasksErrorMessage(toDisplayMessage(error))
+    } finally {
+      setIsLoadingCompanyTasks(false)
+    }
+  }, [apiKey, selectedCompanyId])
+
+  useEffect(() => {
+    void reloadCompanyTasks()
+  }, [reloadCompanyTasks])
 
   const openCreateCompanyForm = () => {
     setCompanyFormErrorMessage(null)
@@ -225,6 +275,67 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
       setStepsErrorMessage(toDisplayMessage(error))
     } finally {
       setIsSubmittingStep(false)
+    }
+  }
+
+  const openCreateCompanyTaskForm = () => {
+    setEditingCompanyTask(null)
+    setCompanyTaskFormErrorMessage(null)
+    setIsCompanyTaskFormOpen(true)
+  }
+
+  const openEditCompanyTaskForm = (companyTask: CompanyTask) => {
+    setEditingCompanyTask(companyTask)
+    setCompanyTaskFormErrorMessage(null)
+    setIsCompanyTaskFormOpen(true)
+  }
+
+  const handleSubmitCompanyTask = async (input: CompanyTaskInput) => {
+    if (selectedCompanyId === NO_SELECTION) {
+      return
+    }
+    setIsSubmittingCompanyTask(true)
+    setCompanyTaskFormErrorMessage(null)
+    try {
+      if (editingCompanyTask === null) {
+        await createCompanyTask(apiKey, selectedCompanyId, input)
+        setNotice({ severity: 'success', message: '企業タスクを追加しました。' })
+      } else {
+        const updated = await updateCompanyTask(apiKey, editingCompanyTask.id, input)
+        // ステータスの逆行はブロックされず、更新は成立したうえで警告が返る
+        setNotice(
+          updated.warning === null
+            ? { severity: 'success', message: '企業タスクを更新しました。' }
+            : {
+                severity: 'warning',
+                message: `企業タスクを更新しました（変更は保存されています）。${updated.warning}`,
+              },
+        )
+      }
+      setIsCompanyTaskFormOpen(false)
+      await reloadCompanyTasks()
+    } catch (error) {
+      setCompanyTaskFormErrorMessage(toDisplayMessage(error))
+    } finally {
+      setIsSubmittingCompanyTask(false)
+    }
+  }
+
+  const handleDeleteCompanyTask = async (companyTask: CompanyTask) => {
+    setIsSubmittingCompanyTask(true)
+    try {
+      await deleteCompanyTask(apiKey, companyTask.id)
+      setDeleteCompanyTaskTarget(null)
+      setNotice({
+        severity: 'success',
+        message: `企業タスク「${companyTask.name}」を削除しました。`,
+      })
+      await reloadCompanyTasks()
+    } catch (error) {
+      setDeleteCompanyTaskTarget(null)
+      setCompanyTasksErrorMessage(toDisplayMessage(error))
+    } finally {
+      setIsSubmittingCompanyTask(false)
     }
   }
 
@@ -421,6 +532,97 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
         </>
       )}
 
+      {selectedCompanyId !== NO_SELECTION && (
+        <>
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            sx={{ mt: 3, mb: 2, alignItems: { sm: 'center' } }}
+          >
+            <Typography variant="subtitle1" component="h3" sx={{ flexGrow: 1 }}>
+              企業タスク{selectedCompany === null ? '' : `（${selectedCompany.name}）`}
+            </Typography>
+            <Button
+              variant="contained"
+              onClick={openCreateCompanyTaskForm}
+              disabled={apiKey === ''}
+            >
+              企業タスクを追加
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => void reloadCompanyTasks()}
+              disabled={isLoadingCompanyTasks}
+            >
+              企業タスク一覧を再読み込み
+            </Button>
+          </Stack>
+
+          {isLoadingCompanyTasks && (
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <CircularProgress size={20} />
+              <Typography>読み込み中...</Typography>
+            </Stack>
+          )}
+
+          {!isLoadingCompanyTasks && companyTasksErrorMessage !== null && (
+            <Alert severity="error">{companyTasksErrorMessage}</Alert>
+          )}
+
+          {!isLoadingCompanyTasks && companyTasksErrorMessage === null && companyTasks !== null && (
+            <>
+              <Typography sx={{ mb: 1 }}>取得件数: {companyTasks.length} 件</Typography>
+              {companyTasks.length === 0 ? (
+                <Alert severity="info">企業タスクは0件です。</Alert>
+              ) : (
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>ID</TableCell>
+                        <TableCell>タスク名</TableCell>
+                        <TableCell>ステータス</TableCell>
+                        <TableCell>メモ</TableCell>
+                        <TableCell>操作</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {companyTasks.map((companyTask) => (
+                        <TableRow key={companyTask.id}>
+                          <TableCell>{companyTask.id}</TableCell>
+                          <TableCell>{companyTask.name}</TableCell>
+                          <TableCell>{companyTask.status}</TableCell>
+                          <TableCell>{companyTask.memo ?? '-'}</TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                aria-label={`企業タスク「${companyTask.name}」を編集`}
+                                onClick={() => openEditCompanyTaskForm(companyTask)}
+                              >
+                                編集
+                              </Button>
+                              <Button
+                                size="small"
+                                color="error"
+                                aria-label={`企業タスク「${companyTask.name}」を削除`}
+                                onClick={() => setDeleteCompanyTaskTarget(companyTask)}
+                              >
+                                削除
+                              </Button>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </>
+          )}
+        </>
+      )}
+
       <CompanyFormDialog
         open={isCompanyFormOpen}
         errorMessage={companyFormErrorMessage}
@@ -489,6 +691,44 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
             onClick={() => {
               if (deleteStepTarget !== null) {
                 void handleDeleteStep(deleteStepTarget)
+              }
+            }}
+          >
+            削除する
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <CompanyTaskFormDialog
+        open={isCompanyTaskFormOpen}
+        companyTask={editingCompanyTask}
+        errorMessage={companyTaskFormErrorMessage}
+        isSubmitting={isSubmittingCompanyTask}
+        onSubmit={(input) => void handleSubmitCompanyTask(input)}
+        onClose={() => setIsCompanyTaskFormOpen(false)}
+      />
+
+      <Dialog
+        open={deleteCompanyTaskTarget !== null}
+        onClose={() => setDeleteCompanyTaskTarget(null)}
+      >
+        <DialogTitle>企業タスクの削除</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {deleteCompanyTaskTarget === null
+              ? ''
+              : `企業タスク「${deleteCompanyTaskTarget.name}」を削除します。よろしいですか？`}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteCompanyTaskTarget(null)}>キャンセル</Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={isSubmittingCompanyTask}
+            onClick={() => {
+              if (deleteCompanyTaskTarget !== null) {
+                void handleDeleteCompanyTask(deleteCompanyTaskTarget)
               }
             }}
           >

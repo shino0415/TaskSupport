@@ -142,3 +142,27 @@ export type InterviewStepInput = {
 export type InterviewStepPatchResponse = InterviewStep & {
   warning: string | null
 }
+
+/** CompanyTask.statusの取りうる値。決定事項どおりTask（案件配下）と同一集合のため
+ * TASK_STATUSES/TaskStatusをそのまま再利用する（バックエンドの型再利用と対応）。 */
+export type CompanyTask = {
+  id: number
+  company_id: number
+  name: string
+  // 表示は取得した値をそのまま扱う（APIのレスポンスはstrのため、未知の値でも壊れないようにする）
+  status: string
+  memo: string | null
+  is_deleted: boolean
+}
+
+/** 企業タスクの作成・更新で送信する内容。稼働時間の計測に関する項目は持たない。 */
+export type CompanyTaskInput = {
+  name: string
+  status: TaskStatus
+  memo: string | null
+}
+
+/** PATCH /company-tasks/{id} のレスポンス。逆行遷移時のみwarningが入る。 */
+export type CompanyTaskPatchResponse = CompanyTask & {
+  warning: string | null
+}

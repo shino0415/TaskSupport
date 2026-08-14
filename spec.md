@@ -1632,17 +1632,47 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 
 ### タスク: フロントエンド 選考ページへの企業タスク管理UI追加
 
-- status: 未着手
+- status: 完了
 - 概要: 選考ページ（企業・選考ステップ管理画面）に、企業配下の企業タスクの一覧表示・追加・編集・削除を行うUIを追加する。「企業タスク（CompanyTask）CRUD API一式」タスクの完了後に着手する。
 - 受け入れ条件:
-  - [ ] 選考ページで企業を選ぶと、その企業配下の企業タスク一覧を表示できる
-  - [ ] 企業タスクを新規追加でき、追加内容が一覧に反映される
-  - [ ] 企業タスクの各項目（ステータス含む）を編集でき、変更内容が画面に反映される
-  - [ ] ステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない
-  - [ ] 企業タスクを削除でき、削除後は一覧に表示されなくなる
-  - [ ] 企業詳細のレスポンスに企業タスクが含まれることを前提とせず、企業タスク一覧を別途取得して表示している
-  - [ ] 企業タスクが0件の企業でも表示が破綻しない
-  - [ ] 既存の案件ページ（タスク管理・稼働計測・時給換算）の表示・操作には変更が生じていない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 選考ページで企業を選ぶと、その企業配下の企業タスク一覧を表示できる
+  - [x] 企業タスクを新規追加でき、追加内容が一覧に反映される
+  - [x] 企業タスクの各項目（ステータス含む）を編集でき、変更内容が画面に反映される
+  - [x] ステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない
+  - [x] 企業タスクを削除でき、削除後は一覧に表示されなくなる
+  - [x] 企業詳細のレスポンスに企業タスクが含まれることを前提とせず、企業タスク一覧を別途取得して表示している
+  - [x] 企業タスクが0件の企業でも表示が破綻しない
+  - [x] 既存の案件ページ（タスク管理・稼働計測・時給換算）の表示・操作には変更が生じていない
+- 実装メモ:
+  - **選択導線（`frontend/src/components/CompaniesPanel.tsx`）**: 企業一覧の既存「選考ステップ」ボタン（`selectedCompanyId`を設定する導線）をそのまま流用し、企業を選ぶと既存の選考ステップ一覧セクションに続けて新規の「企業タスク」セクションを表示する構成にした（ボタンを新設せず、1回の企業選択で選考ステップ・企業タスクの両方が表示される）。企業タスク一覧は`GET /companies/{id}/company-tasks`を`selectedCompanyId`をキーに別途取得しており、企業詳細（`GET /companies/{id}`）のレスポンスには依存しない。
+  - **API/フォーム/ダイアログ**: 既存のTask（案件配下）向け実装（`api/tasks.ts`・`taskForm.ts`・`TaskFormDialog.tsx`）と同型のパターンで、企業タスク専用に`frontend/src/api/companyTasks.ts`（新規）・`frontend/src/companyTaskForm.ts`（新規）・`frontend/src/components/CompanyTaskFormDialog.tsx`（新規）を追加した。既存のTask関連ファイルは一切変更していない。ステータスの選択肢は決定事項どおりTaskと同一集合のため、`api/types.ts`の既存`TASK_STATUSES`/`TaskStatus`をそのまま再利用し、新規の定数・型は追加していない（`CompanyTask`/`CompanyTaskInput`/`CompanyTaskPatchResponse`型のみ新規追加）。
+  - **ステータス警告の表示**: `TasksPanel.tsx`の`updateTask`成功時と同じパターンで、`updateCompanyTask`のレスポンスの`warning`が`null`でなければ`severity: 'warning'`のAlertで表示し、更新自体（一覧への反映）は警告の有無によらず常に行われる。
+  - **案件ページへの非影響**: 本タスクで変更・追加したファイルは`CompaniesPanel.tsx`（選考ページ側）と企業タスク専用の新規ファイルのみで、`ProjectsPanel.tsx`・`TasksPanel.tsx`・`WorkTrackingPanel.tsx`・`api/tasks.ts`・`api/projects.ts`・`api/workLogs.ts`・`api/hourlyRate.ts`等の案件ページ側ファイルには一切変更を加えていない（`git status --short`で確認）。
+- テスト:
+  - `frontend/src/companyTaskForm.test.ts`（新規）: `taskForm.test.ts`と同型で、必須項目（タスク名）の検証・フォーム値変換（未知ステータスの既定値フォールバック含む）・送信値変換（メモの空文字→null、前後空白除去）を検証。
+  - `frontend/src/components/CompaniesPanel.test.tsx`（既存ファイルへの追加）: フェイクサーバーに`GET/POST /companies/{id}/company-tasks`・`PATCH/DELETE /company-tasks/{id}`（ステータス逆行時のwarning判定を含む）を追加し、企業タスクの一覧表示（別APIからの取得であることも含む）・0件表示・追加・編集（通常更新・ステータス逆行時の警告表示と更新継続）・削除（一覧からの除外）・関連する通信エラー表示を検証する`describe`ブロックを追加。企業一覧・選考ステップ一覧・企業タスク一覧が同じ`role="table"`を持つため、列見出しで対象の表を明示的に取り出す`tableWithColumnHeader`ヘルパーへ既存の`stepsTable`実装を書き換え、`companyTasksTable`を追加した。企業タスクセクションの追加により選考ステップ一覧取得失敗時のアラート件数が変わった既存テスト2件も、実挙動に合わせて期待値を更新した。
+  - `uv run pytest`は対象外（バックエンド変更なし）。`npx vitest run`（frontend/配下）は20ファイル192件全てpass。`npm run typecheck`（`tsc -b`）はエラーなし。`npm run lint`（`oxlint --deny-warnings`）もエラーなし。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High無し）。以下を確認した。
+  - 【レビュー範囲】`git status`/`git diff`で本タスクの差分（新規: `frontend/src/api/companyTasks.ts`・`frontend/src/companyTaskForm.ts`・`frontend/src/components/CompanyTaskFormDialog.tsx`・`frontend/src/companyTaskForm.test.ts`、変更: `frontend/src/api/types.ts`・`frontend/src/components/CompaniesPanel.tsx`・`frontend/src/components/CompaniesPanel.test.tsx`）を確認した。バックエンド（`backend/`配下）への変更は無く、依存する`CompanyTask` CRUD APIは前タスクで認証・mass assignment・論理削除・CORS・シークレット管理の各観点で合格済みであることをspec.mdの当該タスクのフィードバックで確認した。
+  - **認証**: `apiRequest`（`api/client.ts`、既存・無変更）は全リクエストに`X-API-Key`ヘッダーを付与し、`apiKey`が空文字の場合は送信前にクライアント側で明示的にエラーとする実装で、`companyTasks.ts`の4関数（fetch/create/update/delete）もすべてこの共通関数経由。API Keyはコード・ビルド設定にハードコードされておらず、`console.log`等への出力も無い（grep で確認）。実際の認証可否はサーバー側`verify_api_key`（定数時間比較・fail-closed、既評価済み）に委ねられており、フロントエンドはそれを迂回するような独自ロジックを持たない。
+  - **インジェクション**: `companyTasks.ts`はテンプレートリテラルでパスに`companyId`/`companyTaskId`（いずれも`number`型）を埋め込むのみで、`name`/`memo`等のTEXT入力はJSONボディとして`fetch`に渡されるだけであり、文字列結合によるクエリ構築や外部コマンド実行は無い。表示側（`CompaniesPanel.tsx`）も`companyTask.name`/`companyTask.memo`をJSX式`{}`でそのまま出力しており、`dangerouslySetInnerHTML`・`innerHTML`・`eval`等の危険なシンクは新規ファイル・変更箇所のいずれにも無い（grep で確認）。Reactの自動エスケープにより、企業タスク名・メモにHTML/スクリプトを含む値が保存されても画面上はテキストとして表示されるのみでXSSは成立しない。
+  - **mass assignment**: フロントエンドの`CompanyTaskInput`型（`api/types.ts`）は`name`/`status`/`memo`の3項目のみで、`id`/`company_id`/`is_deleted`は含まれない。`toCompanyTaskInput`（`companyTaskForm.ts`）もこの3項目のみを生成しており、フォームや型を経由してこれらの禁止フィールドを送信する経路は無い（実効的な防御はサーバー側の`CompanyTaskCreate`/`CompanyTaskUpdate`スキーマだが、フロントエンドもこれと整合した最小限の型になっている）。表示用の`CompanyTask`型と送信用の`CompanyTaskInput`型は分離されている。
+  - **論理削除の徹底**: `deleteCompanyTask`は`DELETE /company-tasks/{id}`を呼ぶのみで、削除後は`reloadCompanyTasks`で一覧を再取得する実装（`is_deleted`のフィルタ自体はサーバー側の責務であり、前タスクで確認済み）。フロントエンド側で削除済みデータを別途保持・再表示するような回避経路も無い。
+  - **エラーハンドリング**: `companyTasksErrorMessage`・`companyTaskFormErrorMessage`は`toDisplayMessage`（`api/errors.ts`、既存・無変更）経由でのみ設定されており、これはサーバーが返す`detail`文字列かHTTPステータスに基づく定型文のみを表示する（スタックトレースや内部パスをそのまま透過表示する経路は無い）。
+  - **CORS**: 本タスクはフロントエンドのみの変更であり、`backend/app/cors.py`への変更は無い。既存のfail-closed設定（未設定時は全許可0件、ワイルドカード不使用）がそのまま適用される。
+  - **シークレット管理**: 新規ファイルにAPIキー・DB接続情報のハードコードは無い。テストファイル（`companyTaskForm.test.ts`・`CompaniesPanel.test.tsx`）で使われる`API_KEY`はテスト専用の既存定数（本タスクで新規追加していない）で本番シークレットではない。
+  - 総評: Critical/High相当の問題は見つからなかったため合格とする。
+- 性能エバリュエーターのフィードバック: 合格。以下を実際に実行して確認した（本タスクはバックエンド変更が無いため、`uv run pytest`は前タスクで検証済みとして対象外とし、`frontend/`配下のvitest・typecheck・lintを中心に検証した）。
+  - **テスト実行**: `npx vitest run`（frontend/配下）は20ファイル192件全てpass。標準出力・標準エラーいずれにもwarning／deprecation相当の出力は無かった（`grep -i "warn\|deprecat\|error"`でも該当なし）。`npm run typecheck`（`tsc -b`）はエラーなし。`npm run lint`（`oxlint --deny-warnings`）もエラーなし。`uv run ruff check`（backend、参考実行）も`All checks passed!`。
+  - **受け入れ条件ごとの確認**（対応するテストとその合否）:
+    - 「選考ページで企業を選ぶと、その企業配下の企業タスク一覧を表示できる」: `企業タスクの選択と一覧`describeの1件目でPASS。`GET /companies/{id}/company-tasks`が叩かれることも検証済み。
+    - 「企業タスクを新規追加でき、追加内容が一覧に反映される」: `企業タスクの追加`describeの1件目でPASS。POSTボディが`{name, status, memo}`のみであることも確認済み。
+    - 「企業タスクの各項目（ステータス含む）を編集でき、変更内容が画面に反映される」: `企業タスクの編集`describeの1件目でPASS。タスク名・ステータス両方の変更が一覧・PATCHボディに反映されることを確認。
+    - 「ステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない」: `企業タスクの編集`describeの2件目（完了→未着手）でPASS。警告アラート表示と一覧側のステータス反映（更新が妨げられていないこと）の両方をアサートしている。同一ステータス・隣接遷移・飛び越え遷移パターンのUI側個別テストは無いが、これらはバックエンドの状態遷移警告ロジック自体（4パターン）は前タスクで単体テスト済みであり、本タスクはフロントエンドが`warning`フィールドの有無をそのまま表示するだけの薄いラッパーである（`updated.warning === null`の分岐１つのみ）ため、逆行1パターンの確認で実装のロジック分岐は網羅されていると判断した。
+    - 「企業タスクを削除でき、削除後は一覧に表示されなくなる」: `企業タスクの削除`describeの1件目でPASS。削除確認ダイアログのキャンセル動作も別テストでPASS。
+    - 「企業詳細のレスポンスに企業タスクが含まれることを前提とせず、企業タスク一覧を別途取得して表示している」: `企業詳細と企業タスク一覧は別々に取得される`テストでPASS。`GET /companies/{id}`と`GET /companies/{id}/company-tasks`の両方が個別に呼ばれることを確認。実装（`CompaniesPanel.tsx`）も`companyTasks`を`selectedCompanyId`ベースで独立に`fetchCompanyTasks`しており、`CompanyDetailDialog`のレスポンスには依存していないことをコードでも確認した。
+    - 「企業タスクが0件の企業でも表示が破綻しない」: `企業タスクが0件の企業でも表示が破綻しない`テストでPASS（「企業タスクは0件です。」の表示を確認）。
+    - 「既存の案件ページ（タスク管理・稼働計測・時給換算）の表示・操作には変更が生じていない」: `git diff --name-only`で`ProjectsPanel.tsx`・`TasksPanel.tsx`・`WorkTrackingPanel.tsx`・`api/tasks.ts`・`api/projects.ts`・`api/workLogs.ts`・`api/hourlyRate.ts`のいずれにも差分が無いことを確認した（実装メモの記述通り）。これらのファイルに対応する既存テスト（`TasksPanel.test.tsx`等）を含むvitest全192件がpassしていることでも回帰の不在を確認した。
+  - **テスト不足の指摘（Low）**: ステータス警告の「同一ステータス・隣接遷移・飛び越え遷移」パターンをUIレベルで個別に検証するテストは無い（逆行1パターンのみ）。前述の通りフロントエンド側のロジックが薄いため今回は合格判定に影響しないと判断したが、将来`CompaniesPanel.tsx`側の警告表示条件分岐が複雑化した場合に備え、他パターンのテスト追加を推奨する。
+  - 総評: pytest対象外（バックエンド変更なし）、vitest・typecheck・lintは全てpass、warningも無く、受け入れ条件8件は全てテストで裏付けられているため合格とする。
 - 差し戻し回数: 0

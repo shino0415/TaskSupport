@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import type { Company, InterviewStep } from '../api/types'
+import type { Company, CompanyTask, InterviewStep } from '../api/types'
 import { CompaniesPanel } from './CompaniesPanel'
 
 const BASE_URL = 'http://api.test.local:8000'
@@ -34,8 +34,29 @@ const STEP_B: InterviewStep = {
   is_deleted: false,
 }
 
+const COMPANY_TASK_A: CompanyTask = {
+  id: 201,
+  company_id: 1,
+  name: '職務経歴書更新',
+  status: '未着手',
+  memo: '最新の実績を反映する',
+  is_deleted: false,
+}
+
+const COMPANY_TASK_B: CompanyTask = {
+  id: 202,
+  company_id: 1,
+  name: 'お礼メール送付',
+  status: '完了',
+  memo: null,
+  is_deleted: false,
+}
+
 /** 準備状況の逆行遷移を判定するための線形順序（バックエンドの状態遷移グラフの一部を模す）。 */
 const PREP_STATUS_ORDER = ['準備中', '準備万端', '完了']
+
+/** 企業タスクのステータス逆行遷移を判定するための線形順序（Taskと同一集合を模す）。 */
+const TASK_STATUS_ORDER = ['未着手', '処理中', '完了']
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -47,18 +68,25 @@ function jsonResponse(status: number, body: unknown): Response {
 type FakeServer = {
   companies: Company[]
   steps: InterviewStep[]
+  companyTasks: CompanyTask[]
   requests: { method: string; url: string; body: unknown }[]
 }
 
-/** 企業CRUD・選考ステップCRUD・逆行warningまで模した簡易APIサーバー。 */
-function setupFakeServer(companies: Company[], steps: InterviewStep[]): FakeServer {
+/** 企業CRUD・選考ステップCRUD・企業タスクCRUD・逆行warningまで模した簡易APIサーバー。 */
+function setupFakeServer(
+  companies: Company[],
+  steps: InterviewStep[],
+  companyTasks: CompanyTask[] = [],
+): FakeServer {
   const server: FakeServer = {
     companies: companies.map((c) => ({ ...c })),
     steps: steps.map((s) => ({ ...s })),
+    companyTasks: companyTasks.map((t) => ({ ...t })),
     requests: [],
   }
   let nextCompanyId = Math.max(0, ...companies.map((c) => c.id)) + 1
   let nextStepId = Math.max(0, ...steps.map((s) => s.id)) + 1
+  let nextCompanyTaskId = Math.max(0, ...companyTasks.map((t) => t.id)) + 1
 
   function stepWarning(before: InterviewStep, patch: Partial<InterviewStep>): string | null {
     const messages: string[] = []
@@ -80,6 +108,18 @@ function setupFakeServer(companies: Company[], steps: InterviewStep[]): FakeServ
       }
     }
     return messages.length === 0 ? null : messages.join(' / ')
+  }
+
+  function companyTaskWarning(before: CompanyTask, patch: Partial<CompanyTask>): string | null {
+    if (patch.status === undefined || patch.status === before.status) {
+      return null
+    }
+    const fromIndex = TASK_STATUS_ORDER.indexOf(before.status)
+    const toIndex = TASK_STATUS_ORDER.indexOf(patch.status)
+    if (fromIndex !== -1 && toIndex !== -1 && toIndex < fromIndex) {
+      return `${before.status} から ${patch.status} への変更です。意図的な変更か確認してください。`
+    }
+    return null
   }
 
   const handler = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -123,6 +163,33 @@ function setupFakeServer(companies: Company[], steps: InterviewStep[]): FakeServ
       }
     }
 
+    const companyTasksListMatch = /^\/companies\/(\d+)\/company-tasks$/.exec(url.pathname)
+    if (companyTasksListMatch !== null) {
+      const companyId = Number(companyTasksListMatch[1])
+      const company = server.companies.find((c) => c.id === companyId && !c.is_deleted)
+      if (company === undefined) {
+        return Promise.resolve(jsonResponse(404, { detail: 'Company not found' }))
+      }
+      if (method === 'GET') {
+        const visible = server.companyTasks.filter(
+          (t) => t.company_id === companyId && !t.is_deleted,
+        )
+        return Promise.resolve(jsonResponse(200, visible))
+      }
+      if (method === 'POST') {
+        const input = body as Omit<CompanyTask, 'id' | 'company_id' | 'is_deleted'>
+        const created: CompanyTask = {
+          ...input,
+          id: nextCompanyTaskId,
+          company_id: companyId,
+          is_deleted: false,
+        }
+        nextCompanyTaskId += 1
+        server.companyTasks.push(created)
+        return Promise.resolve(jsonResponse(201, created))
+      }
+    }
+
     const companyMatch = /^\/companies\/(\d+)$/.exec(url.pathname)
     if (companyMatch !== null) {
       const id = Number(companyMatch[1])
@@ -158,6 +225,25 @@ function setupFakeServer(companies: Company[], steps: InterviewStep[]): FakeServ
       }
     }
 
+    const companyTaskMatch = /^\/company-tasks\/(\d+)$/.exec(url.pathname)
+    if (companyTaskMatch !== null) {
+      const id = Number(companyTaskMatch[1])
+      const target = server.companyTasks.find((t) => t.id === id && !t.is_deleted)
+      if (target === undefined) {
+        return Promise.resolve(jsonResponse(404, { detail: 'CompanyTask not found' }))
+      }
+      if (method === 'PATCH') {
+        const patch = body as Partial<CompanyTask>
+        const warning = companyTaskWarning(target, patch)
+        Object.assign(target, patch)
+        return Promise.resolve(jsonResponse(200, { ...target, warning }))
+      }
+      if (method === 'DELETE') {
+        target.is_deleted = true
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+    }
+
     return Promise.resolve(jsonResponse(404, { detail: 'Not Found' }))
   }
 
@@ -183,12 +269,26 @@ async function waitForDialogClosed() {
 }
 
 /**
- * 選考ステップ一覧の表（企業一覧の表と役割上のroleが同じ"table"のため、DOM上で
- * 後に描画される選考ステップ側を明示的に取り出すヘルパー）。
+ * 企業一覧・選考ステップ一覧・企業タスク一覧はいずれも役割上のroleが同じ"table"のため、
+ * その表だけが持つ列見出しで対象の表を明示的に取り出すヘルパー。
  */
-function stepsTable() {
+function tableWithColumnHeader(headerText: string) {
   const tables = screen.getAllByRole('table')
-  return tables[tables.length - 1]!
+  const found = tables.find((table) => within(table).queryByText(headerText) !== null)
+  if (found === undefined) {
+    throw new Error(`列見出し「${headerText}」を持つ表が見つかりません`)
+  }
+  return found
+}
+
+/** 選考ステップ一覧の表（「種別」列を持つのはこの表のみ）。 */
+function stepsTable() {
+  return tableWithColumnHeader('種別')
+}
+
+/** 企業タスク一覧の表（「タスク名」列を持つのはこの表のみ）。 */
+function companyTasksTable() {
+  return tableWithColumnHeader('タスク名')
 }
 
 beforeEach(() => {
@@ -567,6 +667,193 @@ describe('選考ステップの削除', () => {
   })
 })
 
+describe('企業タスクの選択と一覧', () => {
+  it('企業を選ぶと企業タスク一覧が表示され、GET /companies/{id}/company-tasks を叩く', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [COMPANY_TASK_A, COMPANY_TASK_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+
+    expect(await screen.findByText('職務経歴書更新')).toBeInTheDocument()
+    expect(screen.getByText('お礼メール送付')).toBeInTheDocument()
+    expect(
+      server.requests.some(
+        (request) => request.method === 'GET' && request.url === '/companies/1/company-tasks',
+      ),
+    ).toBe(true)
+  })
+
+  it('企業タスクが0件の企業でも表示が破綻しない', async () => {
+    setupFakeServer([COMPANY_A], [], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+
+    expect(await screen.findByText('企業タスクは0件です。')).toBeInTheDocument()
+  })
+
+  it('企業詳細と企業タスク一覧は別々に取得される（企業詳細に企業タスクを含めない）', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [COMPANY_TASK_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await user.click(screen.getByRole('button', { name: '企業「株式会社サンプル」の詳細' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '閉じる' }))
+    await waitForDialogClosed()
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('職務経歴書更新')
+
+    expect(server.requests.some((r) => r.method === 'GET' && r.url === '/companies/1')).toBe(true)
+    expect(
+      server.requests.some((r) => r.method === 'GET' && r.url === '/companies/1/company-tasks'),
+    ).toBe(true)
+  })
+})
+
+describe('企業タスクの追加', () => {
+  it('フォームから追加でき、一覧に反映される', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('企業タスクは0件です。')
+
+    await user.click(screen.getByRole('button', { name: '企業タスクを追加' }))
+    await user.type(screen.getByLabelText('タスク名', { exact: false }), '一次面接対策')
+    await user.type(screen.getByLabelText('メモ'), '想定質問集を作る')
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('企業タスクを追加しました。')).toBeInTheDocument()
+    expect(await screen.findByText('一次面接対策')).toBeInTheDocument()
+
+    const created = server.requests.find(
+      (request) => request.method === 'POST' && request.url === '/companies/1/company-tasks',
+    )
+    expect(created?.body).toEqual({
+      name: '一次面接対策',
+      status: '未着手',
+      memo: '想定質問集を作る',
+    })
+  })
+
+  it('タスク名が未入力ならメッセージを表示し、送信しない', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('企業タスクは0件です。')
+
+    await user.click(screen.getByRole('button', { name: '企業タスクを追加' }))
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+
+    expect(await screen.findByText('企業タスク名を入力してください。')).toBeInTheDocument()
+    expect(
+      server.requests.some(
+        (request) => request.method === 'POST' && request.url === '/companies/1/company-tasks',
+      ),
+    ).toBe(false)
+  })
+})
+
+describe('企業タスクの編集', () => {
+  it('各項目を編集でき、変更内容が反映される', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [COMPANY_TASK_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('職務経歴書更新')
+
+    await user.click(screen.getByRole('button', { name: '企業タスク「職務経歴書更新」を編集' }))
+    const nameField = screen.getByLabelText('タスク名', { exact: false })
+    await user.clear(nameField)
+    await user.type(nameField, '職務経歴書更新（提出済み）')
+    await selectOption(user, 'ステータス', '処理中')
+    await user.click(screen.getByRole('button', { name: '更新する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('企業タスクを更新しました。')).toBeInTheDocument()
+    expect(await screen.findByText('職務経歴書更新（提出済み）')).toBeInTheDocument()
+    const patch = server.requests.find((request) => request.method === 'PATCH')
+    expect(patch?.url).toBe('/company-tasks/201')
+    expect(patch?.body).toMatchObject({ name: '職務経歴書更新（提出済み）', status: '処理中' })
+  })
+
+  it('ステータスの逆行時はAPIの警告を表示しつつ、更新自体は成立する', async () => {
+    setupFakeServer([COMPANY_A], [], [COMPANY_TASK_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('お礼メール送付')
+
+    await user.click(screen.getByRole('button', { name: '企業タスク「お礼メール送付」を編集' }))
+    await selectOption(user, 'ステータス', '未着手')
+    await user.click(screen.getByRole('button', { name: '更新する' }))
+    await waitForDialogClosed()
+
+    const alert = await screen.findByText(/意図的な変更か確認してください/)
+    expect(alert).toHaveTextContent('完了 から 未着手 への変更です')
+    expect(alert).toHaveTextContent('変更は保存されています')
+    expect(within(companyTasksTable()).getByText('未着手')).toBeInTheDocument()
+  })
+})
+
+describe('企業タスクの削除', () => {
+  it('確認のうえ削除でき、削除後は一覧に表示されなくなる', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [COMPANY_TASK_A, COMPANY_TASK_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('職務経歴書更新')
+
+    await user.click(screen.getByRole('button', { name: '企業タスク「お礼メール送付」を削除' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/企業タスク「お礼メール送付」を削除します/)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '削除する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('企業タスク「お礼メール送付」を削除しました。')).toBeInTheDocument()
+    await waitFor(() => expect(within(companyTasksTable()).getAllByRole('row')).toHaveLength(2))
+    expect(screen.queryByText('お礼メール送付')).not.toBeInTheDocument()
+    expect(
+      server.requests.some((r) => r.method === 'DELETE' && r.url === '/company-tasks/202'),
+    ).toBe(true)
+  })
+
+  it('キャンセルすると削除されない', async () => {
+    setupFakeServer([COMPANY_A], [], [COMPANY_TASK_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('職務経歴書更新')
+
+    await user.click(screen.getByRole('button', { name: '企業タスク「職務経歴書更新」を削除' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    await waitForDialogClosed()
+
+    expect(screen.getByText('職務経歴書更新')).toBeInTheDocument()
+  })
+})
+
 describe('通信エラー', () => {
   it('企業一覧の取得に失敗すると原因が分かるメッセージを表示する', async () => {
     vi.stubGlobal(
@@ -598,8 +885,39 @@ describe('通信エラー', () => {
     await screen.findByText('株式会社サンプル')
     await selectCompanySteps(user, '株式会社サンプル')
 
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('500')
+    // 選考ステップ・企業タスクの両方が同じ500エラーを返すため、両方のアラートを確認する
+    await waitFor(() => {
+      const alerts = screen.getAllByRole('alert')
+      expect(alerts).toHaveLength(2)
+      alerts.forEach((alert) => expect(alert).toHaveTextContent('500'))
+    })
+  })
+
+  it('企業タスク一覧の取得に失敗すると原因が分かるメッセージを表示する', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input))
+        if (url.pathname === '/companies') {
+          return Promise.resolve(jsonResponse(200, [COMPANY_A]))
+        }
+        if (url.pathname === '/companies/1/interview-steps') {
+          return Promise.resolve(jsonResponse(200, []))
+        }
+        return Promise.resolve(jsonResponse(500, { detail: 'Internal Server Error' }))
+      }),
+    )
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+
+    // 選考ステップは0件（info）のアラートも同時に出るため、500エラーの内容で絞り込む
+    await waitFor(() => {
+      const alerts = screen.getAllByRole('alert')
+      expect(alerts.some((alert) => alert.textContent?.includes('500'))).toBe(true)
+    })
   })
 })
 
