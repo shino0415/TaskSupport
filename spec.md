@@ -247,6 +247,18 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 
 「1ページに5パネルが詰め込まれすぎている」というユーザーの所感を受け、画面構成を分割するにあたり、案件管理・タスク管理・稼働計測を「案件ページ」に、企業管理・選考ステップ管理を「選考ページ」にそれぞれ集約する2ページ構成とする（`## 決定事項`の「フロントエンドで実装する画面の範囲」で確立済みの「案件系・選考系」という分類に沿う）。横断一覧（予定選考・進行中稼働）はこれまでどおりアプリの入口（ランディング、`/`）として位置づけ、そこから「案件ページ」「選考ページ」へのナビゲーションを追加する。各ページ内部の表示形態（一覧・作成/編集フォーム・詳細のモーダルダイアログ表示）は既存の実装を変更せず、そのまま踏襲する（＝詳細表示を専用ルート化する方針は採らない）。ページのまとめ方を変えるだけで、既存タスクで実装済みの機能・受け入れ条件自体は変更しない。
 
+### 企業タスク（CompanyTask）のデータモデル（確定: Task/WorkLogとは独立した新規テーブルとして新設）
+
+選考側（企業）の下にもタスクを入力できるようにする要望に対し、既存のTask（Project配下、WorkLogによる稼働計測の対象）を拡張する案と、CompanyTaskという別テーブルを新設する案があった。ユーザーは後者を選択した。「## 全体設計方針」で確立済みの「案件系（Project/Task/WorkLog）と選考系（Company/InterviewStep）は完全に独立したドメイン」という方針に、企業タスクという選考系の新概念も合わせる形で、Project配下のTask・WorkLogのテーブル設計・API・フロントエンドには一切変更を加えない。CompanyTaskはCompanyの子（1対多）として新設し、Companyの削除・取得等の既存の挙動にも影響を与えない。
+
+### 企業タスク（CompanyTask）の稼働ログ対象範囲（確定: 稼働ログ・時給換算の対象外）
+
+CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換算のいずれの対象にもしない。管理する項目は名前・ステータス・メモの3つのみとする。
+
+### 企業タスク（CompanyTask）のステータス設計（確定: Taskと同一のステータス集合＋既存の逆行警告ロジックを流用）
+
+企業タスクのステータスは、Task（案件配下）と全く同じ「未着手/処理中/完了」の3値を採用する。ステータス変更時は既存の「## ステータス遷移の警告ロジック」（`check_backward_transition`）をそのまま適用し、逆行遷移（例: 完了→処理中）を検知した場合に警告する。新たな状態遷移グラフは設計せず、既存のTaskステータス遷移グラフと同一の順序・分岐なし構造を再利用する。
+
 
 ## 実装タスク
 
@@ -1535,4 +1547,79 @@ pytestでの単体テストの対象として、この関数の境界値（同�
   - 【受け入れ条件の判定】「CI/CDパイプラインの実行時にマイグレーションが適用され、適用に失敗するとパイプラインが失敗する」→ 上記のYAML静的検証（`needs`依存）とローカルでの成功系・失敗系の実コマンド再現により満たされていることを確認した。
   - 【テスト不足の指摘の要否】本タスクはYAMLワークフロー定義の変更のみでアプリケーションコードの追加が無く、既存の`backend/tests/test_migrations.py`（alembicの内部APIを直接呼ぶ7件）で`upgrade head`によるスキーマ作成・ロールバック等は既に別の観点でpytestカバー済みであることを確認した。CIワークフロー自体（YAMLの`needs`構成やジョブがシェルから`alembic` CLIを呼ぶこと）をpytestで検証する仕組みは無いが、先行の「CI/CDパイプライン構築」タスクの性能評価でも同様の理由（YAML変更はpytestでなく実コマンド再現・静的レビューで検証する方針）が採用されており、本タスクでも同方針を踏襲することが妥当と判断し、新規pytest不足は指摘事項としない。
   - 【スコープ確認】`git status --short`で本タスクの差分が`.github/workflows/ci.yml`（および本評価によるspec.md更新）のみであり、`backend/`配下・`app.db`に差分が無いことを確認した。
+- 差し戻し回数: 0
+
+### タスク: 企業タスク（CompanyTask）のデータモデル定義とマイグレーション追加
+
+- status: 完了
+- 概要: 選考系（Company）の下にタスクを記録できるよう、Companyに1対多で紐づく新しい永続化領域（企業タスク）を追加する。「## 決定事項」の「企業タスク（CompanyTask）のデータモデル」「企業タスク（CompanyTask）の稼働ログ対象範囲」に沿い、既存のTask（案件配下）・WorkLogとは完全に独立させ、稼働時間計測に関する項目は一切持たせない。
+- 受け入れ条件:
+  - [x] 企業ごとに、その企業に紐づく企業タスクを複数件永続化できる
+  - [x] 企業タスクは名前・ステータス・メモを保持できる（稼働時間の計測に関する項目は持たない）
+  - [x] 「## 全体設計方針」の論理削除方針に従い、企業タスクも is_deleted による論理削除に対応している
+  - [x] マイグレーションを適用することで、既存DB（開発用DBを含む）に企業タスク用の領域が追加され、既存のProject/Task/WorkLog/Company/InterviewStepのデータには一切影響を与えない
+  - [x] 追加したマイグレーションは巻き戻し（ダウングレード）にも対応している
+  - [x] 既存の自動テスト（案件系・選考系とも）が本タスクの変更後も全て通過する
+- 実装メモ:
+  - **モデル定義（`backend/app/models.py`）**: `CompanyTask`を新規追加。`company_id`（`ForeignKey("company.id")`）・`name`・`status`・`memo`・`is_deleted`の5カラム構成で、他の親子テーブル（Task/InterviewStep等）と同じ命名・型・`server_default=false()`のパターンを踏襲した。稼働時間計測に関する`started_at`/`ended_at`相当のカラムは一切持たせていない。ステータスは「決定事項: 企業タスクのステータス設計」の通りTask（案件配下）と同一の「未着手/処理中/完了」のため、新規Enumは設けず既存の`app.status_transitions.TaskStatus`をそのまま型注釈に再利用した（次タスクのCRUD API実装でも`TASK_STATUS_GRAPH`をそのまま流用できる想定）。案件系（Task/WorkLog）のモデル・APIには一切変更を加えていない。
+  - **マイグレーション（`backend/migrations/versions/974953724e96_add_company_task_table.py`）**: 一時DBを初期リビジョン（`522c9ff7a611`）まで適用した状態から`alembic revision --autogenerate`で生成し、`ruff check --fix` / `ruff format`のみを適用（内容は手で書き換えていない）。`down_revision = "522c9ff7a611"`で既存の初期リビジョンにチェインし、`upgrade()`は`company_task`テーブルの`create_table`のみ、`downgrade()`は`drop_table`のみで、他テーブルへの`op`呼び出しは一切含まない。
+  - **既存開発用DB（`backend/app.db`）への非影響**: `git status --short backend/app.db`および実装前後のチェックサム（`sha1sum`）比較で無変更であることを確認した。今回のマイグレーション追加によって`backend/app.db`に対して`alembic upgrade head`をまだ実行していない（実運用でのDB更新はCI/CDのmigrateジョブや開発者の手動実行で行われる想定であり、本タスクのスコープは「マイグレーションを追加すること」であって「開発用DBへの実適用」は含まれない。適用すれば`company_task`テーブルのみが追加されることは`test_company_task_migration_adds_table_without_affecting_existing_data`で検証済み）。
+  - **ロールバック確認**: `DATABASE_URL`を一時ファイルDBに向けて`uv run alembic upgrade head` → `downgrade -1` → `upgrade head`のCLI往復を手動実行し、`company_task`テーブルのみが巻き戻し・再適用の対象になることを確認した（他5テーブルは終始変化なし）。
+- テスト:
+  - `backend/tests/test_db_init.py`（既存ファイルへの追加）: `EXPECTED_TABLES`に`company_task`を追加。新規`test_company_task_columns_match_spec`でカラム名・型（`isinstance`）・nullableを検証し、`started_at`/`ended_at`相当のカラムが存在しないことも確認。`test_foreign_keys_represent_parent_child_relations`に`company_task.company_id -> company.id`のFK検証を追加。`test_is_deleted_defaults_to_false_at_db_level`に`CompanyTask`のINSERT・`is_deleted`デフォルトfalse検証を追加。
+  - `backend/tests/test_migrations.py`（既存ファイルへの追加）: `EXPECTED_TABLES`/`EXPECTED_COLUMNS`に`company_task`を追加（既存の全テーブル一致検証テスト群がそのまま6テーブル構成で再利用される）。`test_downgrade_and_reupgrade_roundtrip`は、リビジョンが2本になったことで`downgrade -1`が最新の1単位（company_task追加）のみを戻す挙動になったため、「company_task テーブルのみが消え、他5テーブルは残る」ことを検証する内容に更新した（他4テストの意図・アサーション方針は変更していない）。新規`test_company_task_migration_adds_table_without_affecting_existing_data`で、初期リビジョンまで適用済み・既存データ（Company/Project）が入った状態から本リビジョンを適用しても既存データが一切変化しないこと、`company_task`テーブルが実際に使えること、`downgrade -1`後も既存データが保たれることを検証した（受け入れ条件4点目・5点目の直接的な裏付け）。
+  - `uv run pytest -v`は215件全てpass（既存206件+マイグレーション基盤導入時の7件+本タスクの新規2件、回帰なし）。`uv run pytest -W error::DeprecationWarning`でも215件pass（warning 0件）。`uv run ruff check`は`All checks passed!`。
+- セキュリティエバリュエーターのフィードバック:
+  - 【判定】合格（Critical/High相当の問題なし）。
+  - 【レビュー範囲】`git diff`で本タスクの差分（`backend/app/models.py`のCompanyTaskモデル追加、新規マイグレーション`974953724e96_add_company_task_table.py`、`backend/tests/test_db_init.py`・`backend/tests/test_migrations.py`のテスト追加）を確認した。`backend/app/routers/`・`main.py`・`schemas.py`・`auth.py`・`cors.py`には変更が無く、新規APIエンドポイントは未追加（CRUD APIは次タスクで実装予定）であることを確認した。そのため認証・mass assignment・CORSの各観点は本タスクでは対象外であり、次タスク「企業タスク（CompanyTask）CRUD API一式」のセキュリティ評価で改めて確認する。
+  - 【論理削除】`is_deleted`カラムは既存の`Task`/`WorkLog`/`InterviewStep`と同一パターン（`nullable=False, default=False, server_default=false()`）で定義されており、DBレベルのデフォルトfalseが`test_is_deleted_defaults_to_false_at_db_level`で検証済み。マイグレーションの`upgrade()`/`downgrade()`は`op.create_table`/`op.drop_table`のみで、既存5テーブルへの物理削除・データ変更操作は含まれない（`test_company_task_migration_adds_table_without_affecting_existing_data`で既存データ無変更を確認済み）。
+  - 【インジェクション】マイグレーションはSQLAlchemy Core（`op.create_table`）のみで生SQL文字列結合は無し。モデル定義もORMのカラム宣言のみで問題なし。
+  - 【スコープ逸脱防止】`started_at`/`ended_at`相当のカラムが存在しないことを`test_company_task_columns_match_spec`で明示的に検証しており、決定事項（稼働ログ・時給換算の対象外）どおり。
+  - 【シークレット管理】新規コード・マイグレーションにAPIキーやDB接続情報のハードコードは無し。`.gitignore`で`*.db`・`.env`は除外済み（既存設定、変更なし）。
+- 性能エバリュエーターのフィードバック:
+  - 【判定】合格。`uv run pytest -v`は215件全てpass（回帰なし）、warningは0件（`uv run pytest -W error::DeprecationWarning`でも215件pass）、`uv run ruff check`も`All checks passed!`。
+  - `git diff`で本タスクの差分（`backend/app/models.py`のCompanyTask追加、新規マイグレーション`974953724e96_add_company_task_table.py`、`backend/tests/test_db_init.py`・`backend/tests/test_migrations.py`のテスト追加）を確認し、既存のTask/WorkLog/Project/Company/InterviewStepのモデル・マイグレーション・APIには一切変更が無いことを確認した。
+  - 受け入れ条件ごとの確認結果:
+    - 「企業ごとに、その企業に紐づく企業タスクを複数件永続化できる」: `company_task.company_id`にUNIQUE制約が無いFK（`test_foreign_keys_represent_parent_child_relations`で検証済み）であり、スキーマ上は複数件の永続化を妨げない。ただし実際に同一company_idで2件以上INSERTして両方取得できることを直接検証するテストは無い（既存のTask/WorkLog/InterviewStepについても同様のDBモデル層テストは無く、実際の「複数件」検証は次タスクのCRUD API一覧取得テストで担保される想定と判断し、本タスク単体では合格の妨げとはしない）。
+    - 「企業タスクは名前・ステータス・メモを保持できる（稼働時間の計測に関する項目は持たない）」: `test_company_task_columns_match_spec`でname/status/memoの型・nullableを検証し、`started_at`/`ended_at`が存在しないことも明示的にアサートしており合格。
+    - 「is_deletedによる論理削除に対応している」: `test_is_deleted_defaults_to_false_at_db_level`にCompanyTaskのINSERT・デフォルトfalse検証が追加されており合格。
+    - 「マイグレーション適用で企業タスク用領域が追加され、既存データに影響を与えない」: `test_company_task_migration_adds_table_without_affecting_existing_data`で、初期リビジョン適用済み・既存データ（Company/Project）投入済みの状態からcompany_task追加リビジョンを適用しても既存データが不変であること、company_taskテーブルが実際に使えることを検証済み。手元でも`DATABASE_URL`を一時ファイルDBに向けて`alembic upgrade head`を実行し、全6テーブル（company_task含む）が作成されることを再現確認した。
+    - 「マイグレーションはダウングレードにも対応している」: `test_downgrade_and_reupgrade_roundtrip`が「company_taskのみ消え他5テーブルは残る」検証に更新されており、`test_company_task_migration_adds_table_without_affecting_existing_data`でも`downgrade -1`後に既存データが保たれることを確認済みで合格。
+    - 「既存の自動テスト（案件系・選考系とも）が全て通過する」: 215件全てpassで回帰なし。
+  - 開発用DB（`backend/app.db`）への非影響: `git diff --stat backend/app.db`で差分なしを確認し、本タスクでは未適用のままであることを裏付けた。
+  - 総評: 受け入れ条件6点のうち5点は直接的なテストで裏付けられており、残り1点（複数件永続化）もスキーマ設計上は問題なくCRUD API側での担保が見込めるため、本タスクを合格とする。
+- 差し戻し回数: 0
+
+### タスク: 企業タスク（CompanyTask）CRUD API一式
+
+- status: 未着手
+- 概要: 「## 決定事項」の「企業タスク（CompanyTask）のステータス設計」に沿い、企業配下の企業タスクの作成・一覧取得・更新（ステータス変更を含む）・論理削除ができるAPIを実装する。ステータスは「未着手/処理中/完了」の3値とし、既存の`check_backward_transition`による逆行警告ロジックをそのまま適用する。「企業タスク（CompanyTask）のデータモデル定義とマイグレーション追加」タスクの完了後に着手する。
+- 受け入れ条件:
+  - [ ] 企業配下に企業タスクを作成できる
+  - [ ] 企業配下の企業タスク一覧取得では is_deleted=false の企業タスクのみが返る
+  - [ ] 企業タスクの各項目（名前・ステータス・メモ）を更新できる
+  - [ ] ステータスを逆行させて更新すると200とともに警告フィールドが返り、更新自体はブロックされない。順当な遷移（同一・隣接・飛び越え）では警告フィールドは含まれない
+  - [ ] 企業タスクを削除すると is_deleted が true になり、以降の一覧取得結果に含まれなくなる
+  - [ ] 存在しない企業id・企業タスクidを指定した場合はエラー（404等）が返る
+  - [ ] 稼働ログ（WorkLog）・時給換算に関するエンドポイントや項目は企業タスクに一切追加されない
+  - [ ] 既存のTask（案件配下）向けのエンドポイント・挙動には変更が生じていない
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
+- 差し戻し回数: 0
+
+### タスク: フロントエンド 選考ページへの企業タスク管理UI追加
+
+- status: 未着手
+- 概要: 選考ページ（企業・選考ステップ管理画面）に、企業配下の企業タスクの一覧表示・追加・編集・削除を行うUIを追加する。「企業タスク（CompanyTask）CRUD API一式」タスクの完了後に着手する。
+- 受け入れ条件:
+  - [ ] 選考ページで企業を選ぶと、その企業配下の企業タスク一覧を表示できる
+  - [ ] 企業タスクを新規追加でき、追加内容が一覧に反映される
+  - [ ] 企業タスクの各項目（ステータス含む）を編集でき、変更内容が画面に反映される
+  - [ ] ステータス逆行時にAPIが返す警告が画面上で提示され、更新自体は妨げられない
+  - [ ] 企業タスクを削除でき、削除後は一覧に表示されなくなる
+  - [ ] 企業詳細のレスポンスに企業タスクが含まれることを前提とせず、企業タスク一覧を別途取得して表示している
+  - [ ] 企業タスクが0件の企業でも表示が破綻しない
+  - [ ] 既存の案件ページ（タスク管理・稼働計測・時給換算）の表示・操作には変更が生じていない
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
 - 差し戻し回数: 0

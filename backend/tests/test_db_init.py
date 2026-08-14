@@ -15,7 +15,14 @@ from sqlalchemy.orm import sessionmaker
 from app import models
 from app.database import Base, build_engine
 
-EXPECTED_TABLES = {"project", "task", "work_log", "company", "interview_step"}
+EXPECTED_TABLES = {
+    "project",
+    "task",
+    "work_log",
+    "company",
+    "interview_step",
+    "company_task",
+}
 
 
 def make_initialized_engine():
@@ -126,6 +133,27 @@ def test_interview_step_columns_match_spec():
     assert isinstance(columns["is_deleted"]["type"], BOOLEAN)
 
 
+def test_company_task_columns_match_spec():
+    engine = make_initialized_engine()
+    columns = {c["name"]: c for c in inspect(engine).get_columns("company_task")}
+
+    assert columns["id"]["primary_key"] == 1
+    assert isinstance(columns["id"]["type"], INTEGER)
+    assert columns["company_id"]["nullable"] is False
+    assert isinstance(columns["company_id"]["type"], INTEGER)
+    assert columns["name"]["nullable"] is False
+    assert isinstance(columns["name"]["type"], VARCHAR)
+    assert columns["status"]["nullable"] is False
+    assert isinstance(columns["status"]["type"], VARCHAR)
+    assert columns["memo"]["nullable"] is True
+    assert isinstance(columns["memo"]["type"], TEXT)
+    assert columns["is_deleted"]["nullable"] is False
+    assert isinstance(columns["is_deleted"]["type"], BOOLEAN)
+    # 稼働時間計測に関する項目（started_at/ended_at相当）を一切持たない
+    assert "started_at" not in columns
+    assert "ended_at" not in columns
+
+
 def test_foreign_keys_represent_parent_child_relations():
     engine = make_initialized_engine()
     inspector = inspect(engine)
@@ -147,6 +175,12 @@ def test_foreign_keys_represent_parent_child_relations():
     assert interview_step_fks[0]["referred_table"] == "company"
     assert interview_step_fks[0]["constrained_columns"] == ["company_id"]
     assert interview_step_fks[0]["referred_columns"] == ["id"]
+
+    company_task_fks = inspector.get_foreign_keys("company_task")
+    assert len(company_task_fks) == 1
+    assert company_task_fks[0]["referred_table"] == "company"
+    assert company_task_fks[0]["constrained_columns"] == ["company_id"]
+    assert company_task_fks[0]["referred_columns"] == ["id"]
 
 
 def test_is_deleted_defaults_to_false_at_db_level():
@@ -201,6 +235,17 @@ def test_is_deleted_defaults_to_false_at_db_level():
         )
     interview_step = session.query(models.InterviewStep).one()
     assert interview_step.is_deleted is False
+
+    with engine.begin() as conn:
+        conn.execute(
+            insert(models.CompanyTask.__table__).values(
+                company_id=company.id,
+                name="テスト企業タスク",
+                status="未着手",
+            )
+        )
+    company_task = session.query(models.CompanyTask).one()
+    assert company_task.is_deleted is False
 
     session.close()
 

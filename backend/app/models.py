@@ -90,3 +90,26 @@ class InterviewStep(Base):
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
+
+
+class CompanyTask(Base):
+    """企業タスク。Companyの子（1対多）だが、案件系のTask/WorkLogとは独立した
+    別テーブル（決定事項「企業タスク（CompanyTask）のデータモデル」参照）。
+    稼働時間計測（WorkLog相当）・時給換算に関する項目は一切持たない。
+    """
+
+    __tablename__ = "company_task"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("company.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # ステータス集合はTask（案件配下）と同一の未着手/処理中/完了（決定事項
+    # 「企業タスク（CompanyTask）のステータス設計」参照）のため、専用Enumは設けず
+    # 既存のTaskStatusをそのまま再利用する。
+    status: Mapped[TaskStatus] = mapped_column(String, nullable=False)
+    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )

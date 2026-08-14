@@ -3,17 +3,20 @@
 実行中の開発用DBファイル（app.db）には一切触れず、tmp_path配下に作った
 一時ファイルDBに対してのみAlembicコマンドを実行する。
 
-- 空のDBに`alembic upgrade head`を適用すると「## テーブル設計」通りの全5テーブルが
-  作成されること
+- 空のDBに`alembic upgrade head`を適用すると「## テーブル設計」＋企業タスク
+  （company_task）を加えた全6テーブルが作成されること
 - 最新の状態までの適用／直前の状態への巻き戻しの両方がコマンド操作（Config + alembic.command）
   で行えること
 - 現在どの変更単位まで適用済みかを確認できること
 - 試しに加えた1つのスキーマ変更（列追加）が、適用・巻き戻しの両方で意図通りに
   反映・復元されること
+- 企業タスク（company_task）追加リビジョンが、初期リビジョン適用済み（データ入り）の
+  DBに対しても既存データへ影響を与えず適用・巻き戻しできること
 - この仕組み（alembic upgrade head）で準備したDBに対しても、既存のFastAPIアプリ
   （案件系・選考系の全5リソース）が問題なく動作すること
 """
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -38,7 +41,14 @@ ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 TEST_API_KEY = "test-secret-key"
 AUTH_HEADERS = {"X-API-Key": TEST_API_KEY}
 
-EXPECTED_TABLES = {"project", "task", "work_log", "company", "interview_step"}
+EXPECTED_TABLES = {
+    "project",
+    "task",
+    "work_log",
+    "company",
+    "interview_step",
+    "company_task",
+}
 EXPECTED_COLUMNS = {
     "project": {
         "id",
@@ -65,6 +75,7 @@ EXPECTED_COLUMNS = {
         "memo",
         "is_deleted",
     },
+    "company_task": {"id", "company_id", "name", "status", "memo", "is_deleted"},
 }
 
 
@@ -141,8 +152,14 @@ def test_downgrade_and_reupgrade_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     assert EXPECTED_TABLES.issubset(set(inspect(engine).get_table_names()))
 
+    # 直前の変更単位（company_task追加）のみを巻き戻す。それより前の変更単位
+    # （project/task/work_log/company/interview_step）のテーブルには影響しない。
     command.downgrade(cfg, "-1")
-    assert set(inspect(engine).get_table_names()) & EXPECTED_TABLES == set()
+    table_names_after_downgrade = set(inspect(engine).get_table_names())
+    assert "company_task" not in table_names_after_downgrade
+    assert {"project", "task", "work_log", "company", "interview_step"}.issubset(
+        table_names_after_downgrade
+    )
 
     command.upgrade(cfg, "head")
     assert EXPECTED_TABLES.issubset(set(inspect(engine).get_table_names()))
@@ -183,6 +200,80 @@ def test_trial_column_addition_can_be_applied_and_rolled_back(tmp_path):
         with op.batch_alter_table("company") as batch_op:
             batch_op.drop_column("note")
     assert "note" not in company_columns()
+
+
+# --- 企業タスク（company_task）追加リビジョンが既存データに影響しないこと ---
+
+INITIAL_REVISION = "522c9ff7a611"
+
+
+def test_company_task_migration_adds_table_without_affecting_existing_data(tmp_path):
+    """既存DB（開発用DBを想定）を模し、初期リビジョンまで適用済み・かつ
+    既存5テーブルにデータが入った状態から company_task 追加リビジョンを適用しても、
+    既存データが一切変化せず、company_taskテーブルのみが追加で使えるようになることを
+    確認する。巻き戻し（downgrade -1）でも既存データが保たれることも合わせて確認する。
+    """
+    db_path = tmp_path / "migration_company_task_existing_data.db"
+    cfg = make_alembic_config(f"sqlite:///{db_path}")
+    engine = build_engine(f"sqlite:///{db_path}")
+
+    # 既存DBを模して、企業タスク追加より前の初期リビジョンまでだけ適用する
+    command.upgrade(cfg, INITIAL_REVISION)
+    assert "company_task" not in set(inspect(engine).get_table_names())
+
+    TestSessionLocal = sessionmaker(bind=engine)
+    session = TestSessionLocal()
+    with engine.begin() as conn:
+        conn.execute(sa.insert(models.Company.__table__).values(name="既存企業"))
+        conn.execute(
+            sa.insert(models.Project.__table__).values(
+                name="既存案件",
+                client_name="既存クライアント",
+                status="提案中",
+                reward=10000,
+                applied_date=date(2026, 1, 1),
+                platform="CrowdWorks",
+            )
+        )
+    existing_company_id = session.query(models.Company).one().id
+    existing_project_id = session.query(models.Project).one().id
+    session.close()
+
+    # 企業タスク追加リビジョンまで適用
+    command.upgrade(cfg, "head")
+    inspector = inspect(engine)
+    assert "company_task" in set(inspector.get_table_names())
+
+    # 既存データがそのまま残っていること
+    session = TestSessionLocal()
+    company = session.query(models.Company).one()
+    project = session.query(models.Project).one()
+    assert company.id == existing_company_id
+    assert company.name == "既存企業"
+    assert project.id == existing_project_id
+    assert project.name == "既存案件"
+    session.close()
+
+    # 追加された company_task テーブルが実際に使えること
+    with engine.begin() as conn:
+        conn.execute(
+            sa.insert(models.CompanyTask.__table__).values(
+                company_id=existing_company_id, name="企業タスク", status="未着手"
+            )
+        )
+    session = TestSessionLocal()
+    company_task = session.query(models.CompanyTask).one()
+    assert company_task.company_id == existing_company_id
+    assert company_task.is_deleted is False
+    session.close()
+
+    # 巻き戻し後もcompany_task以外の既存データは影響を受けない
+    command.downgrade(cfg, "-1")
+    assert "company_task" not in set(inspect(engine).get_table_names())
+    session = TestSessionLocal()
+    assert session.query(models.Company).one().name == "既存企業"
+    assert session.query(models.Project).one().name == "既存案件"
+    session.close()
 
 
 # --- この仕組みで準備したDBに対して既存のアプリ機能が全て通過する ---
