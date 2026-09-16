@@ -1,0 +1,49 @@
+# Compute Engine単一VM（e2-micro常時無料枠）上で、個人利用データ管理用として
+# このアプリを常時稼働させるためのdocker compose構成。
+#
+# 公開デモ環境（Cloud Run、deploy/cloud-run/README.md参照）とは別物であり、
+# - DEMO_AUTO_RESET_ENABLED は意図的に設定しない（個人用データを自動リセットしないため）
+# - DBファイルはホストボリュームに永続化し、VM再起動後も残す
+# という前提で作られている。
+#
+# 使い方の詳細はこのディレクトリの README.md を参照。
+
+services:
+  app:
+    # Artifact Registryにpush済みのビルド済みバックエンドイメージを参照する。
+    # PROJECT_ID・リポジトリ名・タグは環境に合わせて書き換えること。
+    # 例: asia-northeast1-docker.pkg.dev/PROJECT_ID/tasksupport/backend:latest
+    image: asia-northeast1-docker.pkg.dev/PROJECT_ID/tasksupport/backend:latest
+    env_file:
+      - .env
+    volumes:
+      # SQLiteのDBファイルをホスト側に永続化する（VM再起動・コンテナ再作成後も残る）。
+      # entrypoint.shが起動時に/app/dataの所有者をappuserへ揃えるため、
+      # ホスト側ディレクトリの初期所有者は問わない。
+      - ./data:/app/data
+    # ポート8000はホストへ公開せず、Caddyコンテナとの内部ネットワークのみで到達可能にする
+    # （直接インターネットからアクセスできるのはCaddyの80/443のみ）。
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    env_file:
+      - .env
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  # Let's Encryptの証明書・Caddyの内部設定を永続化する
+  # （volumeが無いとコンテナ再作成のたびに証明書を再取得してしまう）。
+  caddy_data:
+  caddy_config:

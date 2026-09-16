@@ -71,12 +71,19 @@ async def run_periodic_reset(
     interval_seconds: float,
     reset_fn: Callable[[], Any] = run_reset_once,
 ) -> None:
-    """interval_secondsごとにreset_fnを呼び出し続ける（呼び出し側にキャンセルされるまで無限ループ）。
+    """タスク開始直後に即座に1回目のreset_fnを実行し、以降はinterval_secondsごとに
+    reset_fnを呼び出し続ける（呼び出し側にキャンセルされるまで無限ループ）。
+
+    Cloud Run等、コンテナがスケールダウン/コールドスタートするたびにローカルディスクが
+    初期化される環境では、初回実行までinterval_seconds（デフォルト24時間）待ってしまうと
+    起動直後のDBが空のまま長時間放置され、公開デモとして機能しない。そのため起動直後に
+    1回reset_fnを実行してから、以降は従来通りsleep→reset_fnを繰り返す。
 
     reset_fnは同期関数（DBアクセスを含む）のため、`asyncio.to_thread`で別スレッドに
     退避して実行する。イベントループ自体は塞がないため、通常のAPIリクエストの処理は
-    自動リセットの実行中もブロックされない。
+    自動リセットの実行中もブロックされない（起動直後の即時実行についても同様）。
     """
+    await asyncio.to_thread(reset_fn)
     while True:
         await asyncio.sleep(interval_seconds)
         await asyncio.to_thread(reset_fn)

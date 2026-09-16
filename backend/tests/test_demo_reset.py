@@ -113,6 +113,29 @@ def test_run_periodic_reset_calls_reset_fn_repeatedly_until_cancelled():
     assert len(calls) >= 3
 
 
+def test_run_periodic_reset_executes_first_reset_immediately_without_waiting_for_interval():
+    """intervalを待たずに、タスク開始直後（ほぼ即座）に1回目のreset_fnが呼ばれること。
+
+    Cloud Run等、コンテナがスケールダウン/コールドスタートするたびにディスクが初期化
+    される環境では、初回実行までinterval_seconds（デフォルト24時間）待ってしまうと
+    起動直後のDBが空のまま長時間放置されてしまう。intervalを意図的に長く設定しても
+    即座に1回目が実行されることを検証する。
+    """
+    calls = []
+
+    async def scenario():
+        task = asyncio.create_task(
+            demo_reset.run_periodic_reset(3600, reset_fn=lambda: calls.append(1))
+        )
+        await asyncio.sleep(0.05)  # 長いinterval中でも即時実行は完了しているはず
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert len(calls) == 1
+
+
 def test_run_periodic_reset_does_not_block_the_event_loop():
     """reset_fnの実行中も、他のタスク（＝通常のAPIリクエスト相当）が並行して進む。"""
     order = []
@@ -173,6 +196,27 @@ def test_start_background_task_creates_a_task_when_opted_in(monkeypatch):
 
     asyncio.run(scenario())
     assert len(calls) >= 1
+
+
+def test_start_background_task_executes_first_reset_immediately_even_with_default_interval(
+    monkeypatch,
+):
+    """デフォルトの24時間intervalのままでも、起動直後に1回目のリセットが実行されること。"""
+    monkeypatch.setenv(demo_reset.ENABLED_ENV_VAR, "true")
+    monkeypatch.delenv(demo_reset.INTERVAL_HOURS_ENV_VAR, raising=False)  # デフォルト24時間
+    calls = []
+    monkeypatch.setattr(demo_reset, "run_reset_once", lambda *a, **kw: calls.append(1))
+
+    async def scenario():
+        task = demo_reset.start_background_task()
+        assert task is not None
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert len(calls) == 1
 
 
 # --- HTTPエンドポイントとしては公開されない ---

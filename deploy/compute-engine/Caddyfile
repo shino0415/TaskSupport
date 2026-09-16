@@ -1,0 +1,9 @@
+# SSLIP_DOMAIN は起動時に .env で設定する環境変数。
+# 静的external IPアドレスから機械的に決まる sslip.io のホスト名
+# （例: 34.123.45.67.sslip.io）を指定すること。
+# Caddyfileはデフォルトで環境変数展開に対応しているため、{$SSLIP_DOMAIN} と
+# 書くだけで .env の値がそのままドメインとして使われ、Let's Encryptの証明書も
+# このホスト名に対して自動取得・更新される。
+{$SSLIP_DOMAIN} {
+	reverse_proxy app:8000
+}

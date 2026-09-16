@@ -1,5 +1,8 @@
 # Railway configuration
 
+> **注記**: 本番運用はGoogle Cloud（`deploy/`配下参照）に移行済みです。このディレクトリの内容は
+> 参考用として残していますが、現在デプロイには使われていません。
+
 This project defines its Railway infrastructure in code.
 
 ```txt
