@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
     # dependenciesの対象外になるため、本人専用ツールという性質上、公開の必要性が薄い
     # これらのドキュメントUIごと無効化することで認証バイパス経路を塞ぐ。
     app = FastAPI(
-        title="案件・選考トラッカー API",
+        title="授業タスク・選考トラッカー API",
         lifespan=lifespan,
         dependencies=[Depends(verify_api_key)],
         docs_url=None,

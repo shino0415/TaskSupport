@@ -2146,13 +2146,29 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: ドキュメント・表示名の「案件」表記の更新
-- status: 未着手
+- status: 完了
 - 概要: README.md、frontend/README.md、画面（ブラウザタブ）のタイトル、APIのタイトル（APIドキュメント画面に表示される名称）など、利用者・閲覧者の目に触れる「案件」表記を、授業タスク・選考トラッカーとしての内容に更新する。上記の授業系タスクがすべて完了した後に着手する。spec.md の完了済みタスクの記述（経緯の記録）は変更しない。
 - 受け入れ条件:
-  - [ ] README.md と frontend/README.md の機能説明・画面説明・API説明が、授業（授業・課題・締切が近い課題）と選考の2ドメイン構成を説明する内容になっており、廃止した案件系の機能（案件・タスク・稼働計測・時給換算）の説明やエンドポイントが残っていない
-  - [ ] ブラウザタブの画面タイトルとAPIのタイトルに「案件」の表記が残っておらず、授業タスク・選考トラッカーとしての名称になっている
-  - [ ] ドキュメント中のセットアップ・起動・デモ環境に関する手順が、本変更後のアプリで手順どおり実行できる内容になっている
-  - [ ] アプリのソースコード・画面表示に、旧案件系を指す「案件」表記が残っていない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] README.md と frontend/README.md の機能説明・画面説明・API説明が、授業（授業・課題・締切が近い課題）と選考の2ドメイン構成を説明する内容になっており、廃止した案件系の機能（案件・タスク・稼働計測・時給換算）の説明やエンドポイントが残っていない
+  - [x] ブラウザタブの画面タイトルとAPIのタイトルに「案件」の表記が残っておらず、授業タスク・選考トラッカーとしての名称になっている
+  - [x] ドキュメント中のセットアップ・起動・デモ環境に関する手順が、本変更後のアプリで手順どおり実行できる内容になっている
+  - [x] アプリのソースコード・画面表示に、旧案件系を指す「案件」表記が残っていない
+- 実装メモ:
+  - 表示名は spec.md のタイトルに合わせ「授業タスク・選考トラッカー」とした。`frontend/index.html` の `<title>`、`frontend/src/App.tsx` の画面見出し、`backend/app/main.py` の FastAPI `title`（「授業タスク・選考トラッカー API」）を変更し、`frontend/src/App.test.tsx` の見出しアサーションを追従。`App.tsx` のルーティングのコメントも「旧案件系」表記を避けて「廃止済みの旧URL」に変更。
+  - `README.md`: タイトル・概要・できること（授業・課題管理、横断ビューは「締切が近い課題」「直近の選考ステップ」、逆行例を「提出済み → 取組中」に）・アーキテクチャ図のルーター名（courses / assignments）・ドメイン独立の説明・APIエンドポイント概要（授業/課題の行に差し替え、企業タスクを実際のパスに修正）・ディレクトリ構成の画面名・pytestケース数（396）を更新。バックエンドのセットアップ手順の直後に、旧版DBへの移行時の注意（`b7c3e1a9d4f2` が案件系3テーブルをデータごと削除するため事前バックアップ、リビジョン記録が実テーブルとずれている場合は `alembic stamp 974953724e96` してから `upgrade head` が必要になり得ること、起動時の自動テーブル作成で course/assignment が先に作られると upgrade が失敗するためアプリ起動前に適用すること）を追記。
+  - `frontend/README.md`: タイトル変更、「画面構成」節（横断一覧・授業ページ・選考ページ）を追加、接続確認の説明を `GET /projects` からトップページの「締切が近い課題」「直近の選考ステップ」表示に変更。
+  - `deploy/compute-engine/README.md`: 動作確認の curl を `/projects` から `/courses` に変更。「既存DBへの授業系置き換えマイグレーションの適用」節を追加（アプリ停止・バックアップ → `alembic current` で確認 → 必要なら `stamp 974953724e96` → `upgrade head` → 新イメージで起動。コンテナイメージにはマイグレーション定義が含まれないため、リポジトリのチェックアウトから `DATABASE_URL` をDBファイルに向けて実行する）。
+  - 残した「案件」表記: 廃止済みエンドポイントが404になることを確認するテスト（`test_removed_project_endpoints.py`・`test_migrations.py`・フロントエンドの旧URLテスト）と、マイグレーションファイル・上記移行注意の記述。いずれも廃止の確認・経緯の説明であり、画面・アプリの名称としての表記ではない。`deploy/` の「稼働」はサーバーの稼働を指すため変更していない。デモURL・API Key・GCP/Vercelのリソース名は変更していない。
+  - 確認: `uv run pytest` 396件pass（warning無し）、`uv run ruff check .` 通過、`npm test` 16ファイル177件pass（warning無し）、`npm run lint`・`npm run typecheck` エラー無し、`npm run build` 成功。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High無し）。
+  - [Low] `deploy/compute-engine/README.md` の移行手順1で作成するバックアップ `./data/app.db.bak-<日時>` は、ルート `.gitignore` の `*.db` にマッチしない（`git check-ignore` で無視されないことを確認済み。`app.db` 本体は無視される）。手順2が「リポジトリルートで」実行する前提＝VM上がリポジトリのチェックアウトであるため、個人の選考データ等を含むバックアップがuntrackedファイルとして作業ツリーに残り、`git add .` 等で誤ってコミット・push される余地がある。`.gitignore` に `*.db.bak*`（または `deploy/compute-engine/data/`）を追加するか、バックアップ先をリポジトリ外にする手順への変更を推奨（次回以降の改善で可）。
+  - 確認済みで問題無し: 差分中に実API Key・パスワード・トークン・メールアドレス等のシークレット/個人情報は無い（curl例は `<.envに設定したAPI_KEY>`・`<SSLIP_DOMAIN>` のプレースホルダのまま）。移行手順はデータ削除を伴う `b7c3e1a9d4f2`（`project`/`task`/`work_log` を drop）の前に、アプリ停止とDBファイルのバックアップを明示しており、README.md側にも同旨のWARNINGがある。`stamp 974953724e96` は記録とテーブル実態がずれている場合に限定した条件付きの案内で、`b7c3e1a9d4f2` の down_revision と一致する。`DATABASE_URL` は `backend/migrations/env.py` が `app.database.DATABASE_URL` 経由で参照しており、手順どおり対象DBに適用される。`backend/app/main.py` は `title` 文字列の変更のみで、`dependencies=[Depends(verify_api_key)]`・`docs_url=None` 等の認証・ドキュメント無効化設定は不変。フロントエンドは表示文字列・テスト・コメントの変更のみで、ロジック・API Key取り扱いに変更無し。
+- 性能エバリュエーターのフィードバック: 合格。
+  - 実行結果（バックエンド）: `uv run pytest -v`（DATABASE_URLはscratchpadの一時SQLite）396件pass・warning 0件。`uv run ruff check` 通過。空の一時SQLiteへの `alembic upgrade head` は `522c9ff7a611` → `974953724e96` → `b7c3e1a9d4f2` を順に適用して成功、続く `alembic check` は「No new upgrade operations detected.」でモデルとの差分無し。実データDB（`app.db`・`backend/app.db`）の更新日時は変化無しを確認。
+  - 実行結果（フロントエンド）: `npm test` 16ファイル177件pass（act警告・console.error等の出力無し）、`npm run lint`（oxlint --deny-warnings）終了コード0、`npm run typecheck` エラー無し、`npm run build` 成功（`index-*.js` 495.98 kB、チャンクサイズ警告無し）。
+  - 受け入れ条件1（README類の2ドメイン構成化）: 合格。README.md・frontend/README.md に案件・タスク・稼働計測・時給換算の機能説明や `/projects`・`/work-logs`・`/hourly-rate` 等のエンドポイントは残っていない。API概要表は courses/assignments と選考系で構成され、READMEのpytestケース数（396）も実測と一致。
+  - 受け入れ条件2（タブ・APIタイトル）: 合格。`frontend/index.html` の `<title>`、`App.tsx` の見出し、`backend/app/main.py` の FastAPI `title` が「授業タスク・選考トラッカー（API）」になっており、見出しは `App.test.tsx` の初期画面テストで担保されている。
+  - 受け入れ条件3（手順の実行可能性）: 合格。バックエンドのセットアップ手順（`alembic -c backend/alembic.ini upgrade head`）は空DBで実際に成功、テスト・lint・フロントエンドの各コマンドもREADME記載どおりに実行して成功した。デモ環境系（deploy/）の記述に旧エンドポイントは残っていない。
+  - 受け入れ条件4（ソース・画面の「案件」表記）: 合格。grepで残存する「案件」は、マイグレーションファイル、廃止確認テスト（`test_removed_project_endpoints.py`・`test_migrations.py`・フロントエンドの旧URL/ナビゲーション不在テスト）、移行注意の記述のみで、いずれも廃止・経緯の説明であり画面・名称としての表記ではない。
+  - 備考（差し戻し対象外）: セキュリティエバリュエーター指摘の Low（バックアップ `app.db.bak-*` が `.gitignore` 対象外）は未対応のまま。次回以降の改善候補。
 - 差し戻し回数: 0

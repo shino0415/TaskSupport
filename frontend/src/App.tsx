@@ -60,7 +60,7 @@ export default function App() {
         <Stack spacing={3}>
           <div>
             <Typography variant="h4" component="h1" gutterBottom>
-              案件・選考トラッカー
+              授業タスク・選考トラッカー
             </Typography>
             <Typography variant="body2" color="text.secondary">
               接続先: {baseUrl ?? '(未設定)'}
@@ -81,7 +81,7 @@ export default function App() {
             <Route path="/courses/:courseId" element={<CourseAssignmentsRoute apiKey={apiKey} />} />
             <Route path="/companies" element={<CompaniesPage apiKey={apiKey} />} />
             <Route path="/companies/:companyId" element={<CompanyDetailRoute apiKey={apiKey} />} />
-            {/* 廃止した旧案件系のURL（/projects・/tasks 等）もここで横断一覧へ案内する */}
+            {/* 廃止済みの旧URL（/projects・/tasks 等）もここで横断一覧へ案内する */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Stack>

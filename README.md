@@ -1,6 +1,6 @@
-# TaskSupport（案件・選考トラッカー）
+# TaskSupport（授業タスク・選考トラッカー）
 
-フリーランス案件（受注・稼働管理）と就職活動（企業・選考ステップ管理）を1つのツールで扱う、個人利用のWebアプリケーション。タスク管理ツールは世の中に多くあるが、自分の使い方に合わせてカスタマイズした、自分にとって使いやすいものを作りたいと考えて開発した。
+大学の授業ごとの課題（提出期限・提出状況）の管理と就職活動（企業・選考ステップ管理）を1つのツールで扱う、個人利用のWebアプリケーション。タスク管理ツールは世の中に多くあるが、自分の使い方に合わせてカスタマイズした、自分にとって使いやすいものを作りたいと考えて開発した。
 
 バックエンド（FastAPI）・フロントエンド（React）・DBマイグレーション・CIパイプライン（lint → test → migration check → Dockerビルド）まで、仕様と設計判断は自分で行い、実装はAI（Claude Code）に任せている。設計判断とその理由は原則すべて [`spec.md`](./spec.md) の「決定事項」セクションに残しており、本READMEはそこから要点を抜粋・整理したもの。
 
@@ -16,10 +16,10 @@
 
 ## できること
 
-- **案件管理**: 案件（Project）→ タスク（Task）→ 稼働ログ（WorkLog）の3階層で、応募〜契約〜納品までの状態と実稼働時間を管理し、`reward ÷ 合計稼働時間` で実質時給を算出する
+- **授業・課題管理**: 授業（Course）→ 課題（Assignment）の2階層で、授業の曜日・時限・年度・学期と、課題ごとの提出期限・提出方法・提出状況（未着手 → 取組中 → 未提出 → 提出済み）を管理する
 - **選考管理**: 企業（Company）→ 選考ステップ（InterviewStep）で、書類選考〜最終面接までの日程・準備状況・結果を管理する。企業側にも簡易タスク（CompanyTask）を持てる
-- **横断ビュー**: 「直近の選考予定」「現在進行中の稼働ログ」をアプリ入口（ランディング）で一覧表示し、そこから各詳細へ遷移できる
-- **状態遷移の見守り**: ステータス変更は一切ブロックしない。ただし「完了 → 処理中」のような明確な逆行を検知した場合のみ、レスポンスに `warning` を含めて200を返す（入力ミスの訂正を妨げないため）
+- **横断ビュー**: 「締切が近い課題」（提出済み・期限なしを除き、期限切れも含めて期限の早い順）と「直近の選考ステップ」をアプリ入口（ランディング）で一覧表示し、そこから各詳細へ遷移できる
+- **状態遷移の見守り**: ステータス変更は一切ブロックしない。ただし「提出済み → 取組中」のような明確な逆行を検知した場合のみ、レスポンスに `warning` を含めて200を返す（入力ミスの訂正を妨げないため）
 
 ## アーキテクチャ
 
@@ -31,7 +31,7 @@ flowchart LR
 
     subgraph Server["APIサーバー（Dockerコンテナ）"]
         MW["X-API-Key 認証 + CORS\n(全エンドポイント共通)"]
-        API["FastAPI ルーター\nprojects / tasks / work-logs\ncompanies / interview-steps / company-tasks"]
+        API["FastAPI ルーター\ncourses / assignments\ncompanies / interview-steps / company-tasks"]
         DOMAIN["状態遷移グラフ判定\n(check_backward_transition)"]
         ORM["SQLAlchemy ORM"]
     end
@@ -45,9 +45,9 @@ flowchart LR
     MIGRATE -.->|"スキーマ管理"| DB
 ```
 
-- **案件系（Project/Task/WorkLog）と選考系（Company/InterviewStep）は完全に独立したドメイン**として設計している。テーブル間のrelationもAPIもフロントエンドの画面も交差させない。両者を1つのAPIにまとめているのは「1人の利用者が両方を同時に管理したい」という運用上の都合であり、ドメインとしての結合ではない
+- **授業系（Course/Assignment）と選考系（Company/InterviewStep/CompanyTask）は完全に独立したドメイン**として設計している。テーブル間のrelationもAPIもフロントエンドの画面も交差させない。両者を1つのAPIにまとめているのは「1人の利用者が両方を同時に管理したい」という運用上の都合であり、ドメインとしての結合ではない
 - 削除は全テーブル共通で `is_deleted` による論理削除。ヒューマンエラーによる誤削除からの復旧を優先し、物理削除は行わない
-- 親の詳細取得（`GET /projects/{id}` 等）は子テーブルの情報を含めない。子一覧が必要な場合は専用エンドポイントを叩く、というシンプルな責務分割にしている
+- 親の詳細取得（`GET /courses/{id}` 等）は子テーブルの情報を含めない。子一覧が必要な場合は専用エンドポイントを叩く、というシンプルな責務分割にしている
 
 ## 設計判断と理由（抜粋）
 
@@ -60,7 +60,7 @@ flowchart LR
 | CORS許可オリジン | 環境変数へのカンマ区切り列挙。未設定時は**全オリジン拒否**（fail-closed） | 設定漏れが「全オリジン許可」という危険側に倒れないようにするため。ワイルドカードはデフォルトにしない |
 | API Keyのブラウザ保持 | 画面から入力し `sessionStorage` に保持（ビルド埋め込み・`localStorage` は不採用） | ビルド埋め込みは配布JSから誰でも読める。`localStorage`はブラウザを閉じても残る分、端末共有時やXSS発生時の漏洩範囲が広がる。メモリ保持のみが最安全だが毎回再入力が必要で日常利用に不向き、という3案のトレードオフを比較して選定 |
 | 本番Dockerイメージの実行ユーザー | 非root専用ユーザー。DBファイルの書き込み先（`/app/data`）だけをそのユーザー所有にし、アプリコード・`.venv`はroot所有で書き込み不可のまま | 任意ファイル書き込み系の脆弱性が仮にあっても、アプリコード自体の改ざん（偽ライブラリ設置等）による被害拡大を防ぐため |
-| 既存開発用DBのマイグレーション移行 | DBを作り直さず、現状スキーマを「初期マイグレーション適用済み」として履歴だけ追記 | 開発中に登録した実データ（案件・選考データ）を破棄したくなかったため |
+| 既存開発用DBのマイグレーション移行 | DBを作り直さず、現状スキーマを「初期マイグレーション適用済み」として履歴だけ追記 | 開発中に登録した実データ（選考データ等）を破棄したくなかったため |
 | ステータス変更のブロック方針 | 変更自体は常に許可し、逆行時のみ`warning`を返す（拒否しない） | 入力ミスの訂正フローを妨げないことを、厳密なバリデーションより優先 |
 
 ## 技術スタック
@@ -69,7 +69,7 @@ flowchart LR
 - FastAPI + Pydantic
 - SQLAlchemy 2.0 + Alembic（マイグレーション管理）
 - SQLite
-- pytest（240ケース、状態遷移ロジックの単体テスト〜TestClientによるエンドポイントテスト）
+- pytest（396ケース、状態遷移ロジックの単体テスト〜TestClientによるエンドポイントテスト）
 - ruff（lint）
 
 **フロントエンド**（`frontend/`、モノレポ構成）
@@ -89,11 +89,10 @@ flowchart LR
 
 | ドメイン | 主なエンドポイント |
 |---|---|
-| 案件（Project） | `POST/GET/PATCH/DELETE /projects`, `GET /projects/{id}/hourly-rate` |
-| タスク（Task） | `POST /projects/{id}/tasks`, `GET/PATCH/DELETE /tasks/{id}` |
-| 稼働ログ（WorkLog） | `POST /tasks/{id}/work-logs/start`, `PATCH /work-logs/{id}/stop`, `GET /work-logs/running` |
+| 授業（Course） | `POST/GET/PATCH/DELETE /courses` |
+| 課題（Assignment） | `POST/GET /courses/{id}/assignments`, `GET/PATCH/DELETE /assignments/{id}`, `GET /assignments/upcoming` |
 | 企業・選考ステップ | `POST/GET/DELETE /companies`, `POST/GET/PATCH/DELETE /interview-steps`, `GET /interview-steps/upcoming` |
-| 企業タスク（CompanyTask） | `POST/GET/PATCH/DELETE /company-tasks` |
+| 企業タスク（CompanyTask） | `POST/GET /companies/{id}/company-tasks`, `PATCH/DELETE /company-tasks/{id}` |
 
 ## ディレクトリ構成
 
@@ -113,7 +112,7 @@ flowchart LR
 ├── frontend/
 │   └── src/
 │       ├── api/                # APIクライアント・型定義
-│       └── components/         # 画面（案件ページ / 選考ページ / 横断一覧）
+│       └── components/         # 画面（授業ページ / 選考ページ / 横断一覧）
 ├── spec.md                    # 仕様書・設計判断ログ・実装タスク一覧
 └── Dockerfile
 ```
@@ -129,6 +128,12 @@ export CORS_ALLOW_ORIGINS=http://localhost:5173
 uv run alembic -c backend/alembic.ini upgrade head
 uv run uvicorn app.main:app --reload --app-dir backend
 ```
+
+> [!WARNING]
+> **旧版（案件系テーブルを含むDB）からの移行時の注意**: 最新のマイグレーション（`b7c3e1a9d4f2`）は旧案件系の `project` / `task` / `work_log` の3テーブルを**そのデータごと削除**し、授業系の `course` / `assignment` を作成する（選考系のテーブル・データには触れない）。既存DBに適用する前に、必ずDBファイルをバックアップすること。
+> - 適用前に `uv run alembic -c backend/alembic.ini current` で記録上のリビジョンを確認する。alembicのリビジョン記録が実テーブルとずれている場合（例: `company_task` テーブルが既に存在するのに `974953724e96` より前のリビジョンが記録されている、または何も記録されていない場合）は、`uv run alembic -c backend/alembic.ini stamp 974953724e96` で記録を実態に合わせてから `upgrade head` する必要があり得る
+> - アプリは起動時に不足テーブルを自動作成するため、マイグレーション適用前に新しい版のアプリを起動すると `course` / `assignment` が先に作られ、`upgrade head` が失敗する。マイグレーションはアプリ起動前に適用すること
+> - 個人利用環境（Compute Engine）での手順は [`deploy/compute-engine/README.md`](./deploy/compute-engine/README.md#既存dbへの授業系置き換えマイグレーションの適用) を参照
 
 ### フロントエンド
 

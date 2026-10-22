@@ -88,7 +88,7 @@ describe('初期画面', () => {
 
     render(<App />)
 
-    expect(screen.getByRole('heading', { name: '案件・選考トラッカー' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '授業タスク・選考トラッカー' })).toBeInTheDocument()
     expect(screen.getByText(/API Keyを入力すると/)).toBeInTheDocument()
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })

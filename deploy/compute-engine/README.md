@@ -62,8 +62,51 @@
 4. 動作確認
 
    ```bash
-   curl -H "X-API-Key: <.envに設定したAPI_KEY>" https://<SSLIP_DOMAIN>/projects
+   curl -H "X-API-Key: <.envに設定したAPI_KEY>" https://<SSLIP_DOMAIN>/courses
    ```
+
+## 既存DBへの授業系置き換えマイグレーションの適用
+
+旧版（案件系の `project` / `task` / `work_log` テーブルを含むDB）で運用していた `./data/app.db` を
+最新版に移行する場合の手順です。コンテナイメージにはAlembicのマイグレーション定義が含まれないため、
+リポジトリをチェックアウトした環境（`uv` が使える環境）からDBファイルに対して適用します。
+
+**注意**: 最新のマイグレーション（`b7c3e1a9d4f2`）は案件系3テーブル（`project` / `task` / `work_log`）を
+**そのデータごと削除**し、授業系の `course` / `assignment` を作成します（選考系のテーブル・データには
+触れません）。適用前に必ずDBファイルをバックアップしてください。
+
+1. アプリを停止し、DBファイルをバックアップする
+
+   ```bash
+   cd deploy/compute-engine
+   docker compose stop app
+   cp ./data/app.db ./data/app.db.bak-$(date +%Y%m%d%H%M%S)
+   ```
+
+2. リポジトリルートで、記録上のリビジョンを確認する（`<DBファイルの絶対パス>` は `./data/app.db` の絶対パス）
+
+   ```bash
+   DATABASE_URL=sqlite:///<DBファイルの絶対パス> uv run alembic -c backend/alembic.ini current
+   ```
+
+   alembicのリビジョン記録が実テーブルとずれている場合（`company_task` テーブルが既に存在するのに
+   `974953724e96` より前のリビジョンが記録されている、または何も記録されていない場合）は、
+   先に記録を実態に合わせる必要があり得ます。
+
+   ```bash
+   DATABASE_URL=sqlite:///<DBファイルの絶対パス> uv run alembic -c backend/alembic.ini stamp 974953724e96
+   ```
+
+3. 最新まで適用する
+
+   ```bash
+   DATABASE_URL=sqlite:///<DBファイルの絶対パス> uv run alembic -c backend/alembic.ini upgrade head
+   ```
+
+4. 新しいイメージでアプリを起動する（`docker compose pull app && docker compose up -d`）
+
+アプリは起動時に不足テーブルを自動作成するため、手順3より前に新しいイメージのアプリを起動すると
+`course` / `assignment` が先に作られ、`upgrade head` が失敗します。必ずアプリ起動前に適用してください。
 
 ## データの永続化
 
