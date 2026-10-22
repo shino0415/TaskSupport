@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 import { API_KEY_HEADER } from './api/client'
 import { API_KEY_STORAGE_KEY } from './api/apiKeyStorage'
-import type { Company, Course, InterviewStep } from './api/types'
+import type { Company, Course, InterviewStep, UpcomingAssignment } from './api/types'
 
 const BASE_URL = 'http://api.test.local:8000'
 
@@ -32,6 +32,18 @@ const SAMPLE_STEP: InterviewStep = {
   result: '未定',
   memo: null,
   is_deleted: false,
+}
+
+const SAMPLE_UPCOMING_ASSIGNMENT: UpcomingAssignment = {
+  id: 201,
+  course_id: 1,
+  name: '正規化レポート',
+  status: '未提出',
+  deadline: '2099-11-01T23:59:00',
+  submission_method: 'WebClass',
+  memo: null,
+  is_deleted: false,
+  course_name: 'データベース論',
 }
 
 function stubFetch(impl: typeof fetch) {
@@ -233,6 +245,13 @@ function stubRoutingFetch() {
     if (pathname === '/interview-steps/upcoming') {
       return Promise.resolve(jsonResponse(200, [SAMPLE_STEP]))
     }
+    if (pathname === '/assignments/upcoming') {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_UPCOMING_ASSIGNMENT]))
+    }
+    if (pathname === `/courses/${String(SAMPLE_COURSE.id)}/assignments`) {
+      const { course_name: _courseName, ...assignment } = SAMPLE_UPCOMING_ASSIGNMENT
+      return Promise.resolve(jsonResponse(200, [assignment]))
+    }
     return Promise.resolve(jsonResponse(404, { detail: 'Not Found' }))
   })
 }
@@ -257,6 +276,44 @@ describe('横断一覧からの画面遷移', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('企業詳細（ID: 1）')).toBeInTheDocument()
     expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
+  })
+})
+
+describe('締切が近い課題からの画面遷移', () => {
+  it('課題の項目から、授業ページで該当授業の課題一覧が開いた状態へ辿れる', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    const user = userEvent.setup()
+
+    render(<App />)
+    const assignmentsSection = within(overviewRegion()).getByRole('region', {
+      name: '締切が近い課題',
+    })
+    await within(assignmentsSection).findByText('正規化レポート')
+    await user.click(
+      within(assignmentsSection).getByRole('link', {
+        name: '課題「正規化レポート」の授業「データベース論」の課題一覧へ',
+      }),
+    )
+
+    expect(window.location.pathname).toBe('/courses/1')
+    expect(await within(coursesRegion()).findByText('課題（データベース論）')).toBeInTheDocument()
+    expect(await within(coursesRegion()).findByText('正規化レポート')).toBeInTheDocument()
+    expect(within(navBar()).getByRole('link', { name: '授業ページ' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+  })
+
+  it('授業を指定したURLを直接開いても、該当授業の課題一覧が開いた状態で表示される', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    window.history.pushState(null, '', '/courses/1')
+
+    render(<App />)
+
+    expect(await within(coursesRegion()).findByText('課題（データベース論）')).toBeInTheDocument()
+    expect(await within(coursesRegion()).findByText('正規化レポート')).toBeInTheDocument()
   })
 })
 

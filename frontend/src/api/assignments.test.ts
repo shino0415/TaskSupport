@@ -4,6 +4,7 @@ import {
   createAssignment,
   deleteAssignment,
   fetchAssignments,
+  fetchUpcomingAssignments,
   updateAssignment,
 } from './assignments'
 import { API_KEY_HEADER } from './client'
@@ -100,5 +101,18 @@ describe('課題のAPI呼び出し', () => {
     const { url, init } = lastCall()
     expect(url).toBe(`${BASE_URL}/assignments/101`)
     expect(init?.method).toBe('DELETE')
+  })
+
+  it('締切が近い課題は GET /assignments/upcoming を叩き、授業名付きの一覧を返す', async () => {
+    const upcoming = [{ ...SAMPLE_ASSIGNMENT, course_name: 'データベース論' }]
+    stubFetch(() => Promise.resolve(jsonResponse(200, upcoming)))
+
+    await expect(fetchUpcomingAssignments('my-key')).resolves.toEqual(upcoming)
+
+    const { url, init } = lastCall()
+    expect(url).toBe(`${BASE_URL}/assignments/upcoming`)
+    expect(init?.method ?? 'GET').toBe('GET')
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    expect(headers[API_KEY_HEADER]).toBe('my-key')
   })
 })

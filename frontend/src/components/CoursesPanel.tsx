@@ -32,6 +32,8 @@ import { CourseFormDialog } from './CourseFormDialog'
 
 type Props = {
   apiKey: string
+  /** 横断一覧等からの遷移で、指定した授業を選択した状態（課題一覧を表示した状態）で開く。 */
+  initialSelectedCourseId?: number | null
 }
 
 type Notice = {
@@ -46,7 +48,7 @@ const NO_SELECTION = '' as const
  * まとめた画面。授業のレスポンスは課題の情報を含めないため、課題は別途
  * GET /courses/{id}/assignments で取得して表示する。
  */
-export function CoursesPanel({ apiKey }: Props) {
+export function CoursesPanel({ apiKey, initialSelectedCourseId = null }: Props) {
   const [courses, setCourses] = useState<Course[] | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -97,6 +99,13 @@ export function CoursesPanel({ apiKey }: Props) {
   useEffect(() => {
     void reload()
   }, [reload])
+
+  // 横断一覧等からの遷移（initialSelectedCourseIdの指定）で、授業を自動的に選択する
+  useEffect(() => {
+    if (initialSelectedCourseId !== null) {
+      setSelectedCourseId(initialSelectedCourseId)
+    }
+  }, [initialSelectedCourseId])
 
   const reloadAssignments = useCallback(async () => {
     if (apiKey === '' || selectedCourseId === NO_SELECTION) {

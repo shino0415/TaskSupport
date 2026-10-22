@@ -70,6 +70,11 @@ export type AssignmentPatchResponse = Assignment & {
   warning: string | null
 }
 
+/** GET /assignments/upcoming の各要素。課題の全項目に所属授業の授業名が付く。 */
+export type UpcomingAssignment = Assignment & {
+  course_name: string
+}
+
 /** CompanyTask.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
 export const TASK_STATUSES = ['未着手', '処理中', '完了'] as const
 

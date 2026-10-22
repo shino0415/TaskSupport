@@ -1,5 +1,10 @@
 import { apiRequest } from './client'
-import type { Assignment, AssignmentInput, AssignmentPatchResponse } from './types'
+import type {
+  Assignment,
+  AssignmentInput,
+  AssignmentPatchResponse,
+  UpcomingAssignment,
+} from './types'
 
 export function fetchAssignments(
   apiKey: string,
@@ -33,4 +38,12 @@ export function updateAssignment(
 
 export function deleteAssignment(apiKey: string, assignmentId: number): Promise<void> {
   return apiRequest<void>(`/assignments/${assignmentId}`, apiKey, { method: 'DELETE' })
+}
+
+/** 締切が近い課題（提出済み・期限なしを除き、期限切れを含めて期限の早い順）を授業横断で取得する。 */
+export function fetchUpcomingAssignments(
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<UpcomingAssignment[]> {
+  return apiRequest<UpcomingAssignment[]>('/assignments/upcoming', apiKey, { signal })
 }

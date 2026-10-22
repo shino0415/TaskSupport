@@ -2109,17 +2109,40 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド トップページへの「締切が近い課題」表示追加
-- status: 未着手
+- status: 完了
 - 概要: トップページ（ランディング）に `/assignments/upcoming` の結果を「締切が近い課題」として表示し、各項目から授業ページの該当授業に辿れるようにする。「締切が近い課題の横断一覧エンドポイント（upcoming）」タスクおよび「フロントエンド 授業ページへの課題管理UI追加」タスクの完了後に着手する。
 - 受け入れ条件:
-  - [ ] トップページに「締切が近い課題」が表示され、各項目で課題名・授業名・提出期限・ステータスが分かる
-  - [ ] 表示順はAPIが返す順（提出期限の早い順）で、期限切れの課題も含めて表示される
-  - [ ] 項目を操作すると授業ページに遷移し、その課題が属する授業が選ばれた状態（課題一覧が見える状態）で表示される
-  - [ ] 該当する課題が0件の場合や取得に失敗した場合も、トップページ全体が壊れず、その旨が分かる表示になる
-  - [ ] 「直近の選考ステップ」は従来どおり表示される
-  - [ ] フロントエンドの自動テスト・型チェック・lintが通過する
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] トップページに「締切が近い課題」が表示され、各項目で課題名・授業名・提出期限・ステータスが分かる
+  - [x] 表示順はAPIが返す順（提出期限の早い順）で、期限切れの課題も含めて表示される
+  - [x] 項目を操作すると授業ページに遷移し、その課題が属する授業が選ばれた状態（課題一覧が見える状態）で表示される
+  - [x] 該当する課題が0件の場合や取得に失敗した場合も、トップページ全体が壊れず、その旨が分かる表示になる
+  - [x] 「直近の選考ステップ」は従来どおり表示される
+  - [x] フロントエンドの自動テスト・型チェック・lintが通過する
+- 実装メモ:
+  - `frontend/src/api/types.ts`: `UpcomingAssignment`（`Assignment`＋`course_name`）を追加。`frontend/src/api/assignments.ts`: `fetchUpcomingAssignments`（`GET /assignments/upcoming`）を追加。
+  - `frontend/src/components/OverviewPanel.tsx`: 「締切が近い課題」セクションを「予定の近い選考ステップ」の上に追加（各セクションを`aria-label`付きの`section`で区切った）。列は課題名・授業・提出期限・ステータス・操作で、APIの返す順のまま表示（画面側で並べ替え・絞り込みはしない）。提出期限はAPIの値をそのまま表示。取得失敗時はセクション内に「締切が近い課題を取得できませんでした。{原因}」のerror Alert、0件時は「締切が近い課題は0件です。」を表示し、選考ステップ側の表示には影響しない。専用の「課題一覧を再読み込み」ボタンを持つ。授業名はレスポンスに含まれるため授業一覧の別途取得はしない。
+  - 期限切れの表示（裁量判断）: 提出期限が現在時刻より前の課題は、提出期限セルを赤字にし「期限切れ」ラベル（赤地の白文字）を添える。判定は純粋関数`frontend/src/assignmentDeadline.ts`の`isDeadlinePassed`で、タイムゾーン無しの期限をブラウザのローカル時刻として解釈する（期限ちょうどは期限切れではない、期限なし・解釈不能値はfalse）。MUIの`Chip`を使うとビルドが500kBのチャンクサイズ警告を超えたため、既存の`Typography`で表現した。
+  - 授業ページへの遷移: 各行の「授業の課題一覧」リンクで`/courses/{course_id}`へ遷移する。`App.tsx`に`/courses/:courseId`ルートを追加し、`CoursesPanel`に`initialSelectedCourseId`を追加（選考ページの`/companies/:companyId`→`initialDetailCompanyId`と同じ構成）。指定の授業が選択状態になり、その課題一覧が開いた状態で表示される。URLを直接開いた場合も同じ。ナビゲーションは既存の`startsWith('/courses')`判定で「授業ページ」が選択表示になる。
+  - テスト: `src/assignmentDeadline.test.ts`（期限前後・ちょうど・分まで/小数秒・null/不正値）、`src/api/assignments.test.ts`（upcomingのURL・メソッド・APIキー）、`src/components/OverviewPanel.test.tsx`（4項目の表示とAPI順・期限切れ含む、期限切れラベルの有無、授業ページへの遷移、0件、取得失敗時も選考ステップは表示、再読み込み。既存の選考ステップのテストはセクション内に絞って検証するよう調整）、`src/components/CoursesPanel.test.tsx`（`initialSelectedCourseId`で選択状態・課題一覧取得、存在しない授業でも壊れない）、`src/App.test.tsx`（トップから`/courses/1`への遷移で課題一覧が開くこと・URL直接オープン。`stubRoutingFetch`に`/assignments/upcoming`等を追加）。
+  - 確認: `npm test` 16ファイル177件pass（warning・act警告・console.error無し）、`npm run lint`・`npm run typecheck`エラー無し、`npm run build`成功（警告無し。メインチャンク約496kBで500kBの警告閾値に近い）。バックエンドの変更は無し。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium なし）
+  - [Low] URLパラメータ `/courses/:courseId` の検証が緩い（`App.tsx` の `CourseAssignmentsRoute`）: `Number(courseId)` はNaNのみ除外するため、`1.5`・`-1`・`1e2`・`0x10`・`Infinity` 等も選択IDとして `GET /courses/{id}/assignments` に渡る。ただし値は数値を文字列化したものに限られ、`/`・`?`・`#`等を含み得ないためパス改変・別エンドポイント到達は不可能で、バックエンドが422/404を返してエラー表示になるだけ（API Key認証・論理削除フィルタはバックエンド側で維持）。既存の `/companies/:companyId` と同じ構成であり、実害なし。整合性を高めるなら正の整数（`/^\d+$/`）のみ受け付ける形にしてもよい（任意）。
+  - [確認済み・問題なし] XSS: 課題名・授業名・提出期限・ステータス・`aria-label` はすべてJSXのテキスト/属性として埋め込まれReactによりエスケープされる。`dangerouslySetInnerHTML`・`innerHTML`・`eval`・動的`href`の使用は無し。遷移先は `RouterLink` の `to={`/courses/${assignment.course_id}`}` で、`course_id` はAPIの整数値のため `javascript:` 等の注入経路は無い。
+  - [確認済み・問題なし] API Key: `fetchUpcomingAssignments` は既存の `apiRequest` 経由で `X-API-Key` ヘッダーにのみ付与され、URL・ログ・画面表示には出ない。`credentials` も送らない。バックエンドの `GET /assignments/upcoming` はアプリ全体のグローバル依存 `verify_api_key` 配下にあり、課題・授業の両方で `is_deleted=false` を絞り込んでいることを確認。
+  - [確認済み・問題なし] エラー表示: 取得失敗時は既存の `toDisplayMessage`（ApiErrorの固定文言＋バックエンドの`detail`）を表示するのみで、スタックトレース等は出さない。新規の情報漏洩経路は無い。
+  - [確認済み・問題なし] シークレット: 新たなハードコードや `console` 出力は無し。
+- 性能エバリュエーターのフィードバック: 合格。確認内容:
+  - `npm test`（vitest）: 16ファイル177件全pass。出力全体（13行）を確認し、warning・React act警告・console.error・stderr出力はいずれも0件。
+  - `npm run lint`（oxlint --deny-warnings）: 終了コード0、エラー・警告0。`npm run typecheck`（tsc -b）: エラーなし。`npm run build`: 成功、チャンクサイズ警告なし（`dist/assets/index-*.js` 495.97kB。500kBの警告閾値まで残り約4kBのため、今後の機能追加で警告が出る可能性が高い。コード分割等の対応を見込んでおくとよい（今回の判定には影響しない））。
+  - バックエンド回帰（一時SQLiteで実行）: `uv run pytest` 396件pass（warningなし）、`uv run ruff check` 指摘なし。バックエンドのファイルに変更なし。
+  - 受け入れ条件ごとの対応テスト（全てpass）:
+    - 課題名・授業名・提出期限・ステータスの表示: OverviewPanel.test.tsx「課題名・授業名・提出期限・ステータスが、APIが返す順（期限切れを含む）で表示される」（行ごとに4項目を検証、`GET /assignments/upcoming`の発行も検証）。
+    - API順（期限の早い順）・期限切れを含む: 同テストで期限切れ（2000年）→未来（2099年）の行順を検証。「期限切れの課題には「期限切れ」の表示が付き…」でラベルの有無を検証。判定ロジックはassignmentDeadline.test.ts（前後・ちょうど・分まで/小数秒・null/不正値の境界）。
+    - 授業ページへの遷移と該当授業の選択状態: OverviewPanel.test.tsx「項目から、その課題が属する授業の授業ページへ辿れる」（`/courses/{course_id}`へ遷移）、App.test.tsx「課題の項目から、授業ページで該当授業の課題一覧が開いた状態へ辿れる」（URL・課題一覧の表示・ナビの`aria-current`を検証）、「授業を指定したURLを直接開いても…」、CoursesPanel.test.tsx「指定した授業が選ばれ…」（`Mui-selected`と課題一覧の取得を検証）、「指定した授業が存在しない場合も画面は壊れず…」。
+    - 0件・取得失敗でも壊れない: 「0件の場合も表示が破綻せず0件と分かり…」「取得に失敗しても画面全体は壊れず…」（課題セクション内のerror Alertと500の表示、選考ステップ側にAlertが出ないことを検証）、「再読み込みで取得し直せる」。
+    - 「直近の選考ステップ」は従来どおり表示: 既存の選考ステップテスト5件（表示・0件・企業名取得失敗・取得失敗・企業詳細への遷移）がセクション内に絞った形で引き続きpass。上記の0件・失敗テストでも選考ステップの表示を検証。
+    - APIクライアント: api/assignments.test.ts（upcomingのURL・メソッド・APIキー）。
+  - 指摘事項なし。statusを「完了」に更新する。
 - 差し戻し回数: 0
 
 ### タスク: ドキュメント・表示名の「案件」表記の更新

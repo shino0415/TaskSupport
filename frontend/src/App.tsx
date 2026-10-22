@@ -31,6 +31,13 @@ function CompanyDetailRoute({ apiKey }: { apiKey: string }) {
   return <CompaniesPage apiKey={apiKey} initialDetailCompanyId={Number.isNaN(id) ? null : id} />
 }
 
+/** `/courses/:courseId` — 授業ページで指定の授業を選択し、課題一覧を開いた状態で表示する。 */
+function CourseAssignmentsRoute({ apiKey }: { apiKey: string }) {
+  const { courseId } = useParams()
+  const id = Number(courseId)
+  return <CoursesPanel apiKey={apiKey} initialSelectedCourseId={Number.isNaN(id) ? null : id} />
+}
+
 export default function App() {
   const [apiKey, setApiKey] = useState<string>(() => loadApiKey())
 
@@ -71,6 +78,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<OverviewPanel apiKey={apiKey} />} />
             <Route path="/courses" element={<CoursesPanel apiKey={apiKey} />} />
+            <Route path="/courses/:courseId" element={<CourseAssignmentsRoute apiKey={apiKey} />} />
             <Route path="/companies" element={<CompaniesPage apiKey={apiKey} />} />
             <Route path="/companies/:companyId" element={<CompanyDetailRoute apiKey={apiKey} />} />
             {/* 廃止した旧案件系のURL（/projects・/tasks 等）もここで横断一覧へ案内する */}

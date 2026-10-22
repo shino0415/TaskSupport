@@ -568,6 +568,36 @@ describe('課題一覧', () => {
   })
 })
 
+describe('横断一覧からの遷移（授業を指定して開く）', () => {
+  it('指定した授業が選ばれ、その授業の課題一覧が表示された状態で開く', async () => {
+    const server = setupFakeServer([COURSE_A, COURSE_B], [ASSIGNMENT_A, ASSIGNMENT_B])
+
+    render(<CoursesPanel apiKey={API_KEY} initialSelectedCourseId={COURSE_A.id} />)
+
+    expect(await screen.findByText('課題（データベース論）')).toBeInTheDocument()
+    expect(await screen.findByText('正規化レポート')).toBeInTheDocument()
+    expect(screen.getByText('小テスト準備')).toBeInTheDocument()
+    expect(server.requests).toContainEqual({
+      method: 'GET',
+      url: '/courses/1/assignments',
+      body: undefined,
+    })
+    const selectedRow = screen.getByRole('button', { name: '授業「データベース論」を編集' })
+      .closest('tr')!
+    expect(selectedRow).toHaveClass('Mui-selected')
+  })
+
+  it('指定した授業が存在しない場合も画面は壊れず、課題一覧の取得失敗が分かる', async () => {
+    setupFakeServer([COURSE_A])
+
+    render(<CoursesPanel apiKey={API_KEY} initialSelectedCourseId={999} />)
+
+    expect(await screen.findByText('データベース論')).toBeInTheDocument()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('404')
+  })
+})
+
 describe('課題の新規追加', () => {
   it('提出期限（日付と時刻）・提出方法を入力して追加でき、一覧に反映される', async () => {
     const server = setupFakeServer([COURSE_A])
