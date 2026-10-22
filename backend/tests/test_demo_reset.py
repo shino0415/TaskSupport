@@ -63,6 +63,8 @@ def test_run_reset_once_reseeds_the_database_and_returns_counts(tmp_path):
     counts = demo_reset.run_reset_once(session_factory=session_factory)
 
     assert counts == {
+        "course": 4,
+        "assignment": 7,
         "company": 3,
         "interview_step": 5,
         "company_task": 4,

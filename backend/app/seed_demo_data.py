@@ -14,13 +14,14 @@ DB全体を消去する操作であるため、HTTPエンドポイントとし�
 `python -m app.seed_demo_data` だけで実行できる。スケジューラへの登録は対象外。）
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
 from app import models
 from app.database import SessionLocal, init_db
 from app.status_transitions import (
+    AssignmentStatus,
     CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
@@ -30,7 +31,7 @@ from app.status_transitions import (
 def seed(db: Session, today: date | None = None) -> dict[str, int]:
     """全テーブルを固定のダミーデータで置き換える。
 
-    `today`を基準にした相対的な日付・日時のみを使う（`datetime.now()`等の
+    `today`を基準にした相対的な日付・日時（課題の提出期限を含む）のみを使う（`datetime.now()`等の
     実行タイミング依存の値は使わない）ため、同じ日に何度実行しても
     投入される内容は常に同一になる。
     """
@@ -49,6 +50,110 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
     db.query(models.CompanyTask).delete(synchronize_session=False)
     db.query(models.Company).delete(synchronize_session=False)
     db.expunge_all()
+
+    # 4月始まりの年度。固定の年を書くと時間が経つにつれ古いデモデータに見えるため。
+    academic_year = today.year if today.month >= 4 else today.year - 1
+
+    courses = [
+        models.Course(
+            name="線形代数入門",
+            day_of_week="月",
+            period=2,
+            academic_year=academic_year,
+            term="前期",
+            memo="毎回小テストあり",
+        ),
+        models.Course(
+            name="プログラミング演習",
+            day_of_week="水",
+            period=3,
+            academic_year=academic_year,
+            term="通年",
+            memo=None,
+        ),
+        models.Course(
+            name="英語コミュニケーション",
+            day_of_week="金",
+            period=1,
+            academic_year=academic_year,
+            term="後期",
+            memo="出席重視",
+        ),
+        # オンデマンド授業を想定し、曜日・時限・学期は未設定にする
+        models.Course(
+            name="キャリアデザイン（オンデマンド）",
+            day_of_week=None,
+            period=None,
+            academic_year=academic_year,
+            term=None,
+            memo=None,
+        ),
+    ]
+    db.add_all(courses)
+    db.flush()
+
+    def deadline_at(days: int, hour: int, minute: int = 0) -> datetime:
+        return datetime.combine(today + timedelta(days=days), time(hour, minute))
+
+    assignments = [
+        models.Assignment(
+            course_id=courses[0].id,
+            name="第3回 演習問題",
+            status=AssignmentStatus.提出済み,
+            deadline=deadline_at(-7, 23, 59),
+            submission_method="WebClass",
+            memo=None,
+        ),
+        models.Assignment(
+            course_id=courses[0].id,
+            name="第4回 演習問題",
+            status=AssignmentStatus.未提出,
+            deadline=deadline_at(-1, 23, 59),
+            submission_method="WebClass",
+            memo="解答は完成済み、提出を忘れている",
+        ),
+        models.Assignment(
+            course_id=courses[1].id,
+            name="課題2: ソートアルゴリズムの実装",
+            status=AssignmentStatus.取組中,
+            deadline=deadline_at(2, 23, 59),
+            submission_method="WebClass",
+            memo=None,
+        ),
+        models.Assignment(
+            course_id=courses[1].id,
+            name="最終課題 企画書",
+            status=AssignmentStatus.未着手,
+            deadline=deadline_at(21, 17, 0),
+            submission_method="その他",
+            memo="提出先は授業内で指示予定",
+        ),
+        models.Assignment(
+            course_id=courses[2].id,
+            name="エッセイ（500語）",
+            status=AssignmentStatus.未提出,
+            deadline=deadline_at(1, 9, 0),
+            submission_method="紙",
+            memo="授業開始時に回収",
+        ),
+        models.Assignment(
+            course_id=courses[2].id,
+            name="単語リストの復習",
+            status=AssignmentStatus.未着手,
+            deadline=None,
+            submission_method=None,
+            memo="期限なし、空き時間に進める",
+        ),
+        models.Assignment(
+            course_id=courses[3].id,
+            name="振り返りシート",
+            status=AssignmentStatus.未着手,
+            deadline=deadline_at(5, 23, 59),
+            submission_method="その他",
+            memo=None,
+        ),
+    ]
+    db.add_all(assignments)
 
     companies = [
         models.Company(name="架空フーズ株式会社"),
@@ -132,6 +237,8 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
     db.flush()
 
     return {
+        "course": len(courses),
+        "assignment": len(assignments),
         "company": len(companies),
         "interview_step": len(interview_steps),
         "company_task": len(company_tasks),
