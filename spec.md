@@ -299,9 +299,22 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **読み込み中の表示**: ページのコードを読み込んでいる間は、MUIのスピナー（CircularProgress）を中央寄せで表示する。
 - **既存挙動の維持**: ルーティング（不正URLのリダイレクトを含む）・画面の挙動は変更しない。
 
+### masterへのpush時の自動デプロイ（確定: 2026-10-22）
+
+これまで手動で行っていたデプロイを、GitHubと連携してmasterへのpushで自動化するため、ユーザーと協議して次のとおり確定した。
+
+- **対象範囲**: フロントエンド（Vercelのデモ用プロジェクト `frontend` と個人用プロジェクト `tasksupport-personal-frontend` の2つ）と、バックエンドのCloud Run（公開デモ環境 `tasksupport-demo`）を自動デプロイの対象にする。Compute EngineのVM（個人用バックエンド）は対象外とし、マイグレーションが手作業のため従来どおり手動で更新する。
+- **タイミング**: masterブランチへのpush時に、CIのチェックが通った場合だけ自動デプロイする。チェックに失敗したコードは本番に出さない。
+- **Vercelへのデプロイ方式**: VercelのGit連携は使わず、GitHub ActionsからVercel CLIでデプロイする。Vercelのトークン等はGitHub Secretsに置く。
+- **GCPの認証**: Workload Identity連携（GitHubのOIDC）を使い、サービスアカウントの鍵ファイルは作らない。
+- **イメージのタグ**: 自動デプロイでは `backend:<コミットSHA>` をpushしてCloud Runにデプロイする。`backend:latest` は自動デプロイでは更新しない（VMが意図せず新イメージへ切り替わらないようにするため）。VMを更新するときは従来どおり `latest` を手動で更新する。
+- **個人用フロントエンドの扱い**: 個人用フロント（`tasksupport-personal-frontend`）も、デモ用と同じくmasterへのpush時に自動デプロイする。VMのバックエンドが古いと新しい画面が動かない場合があることはユーザー承知の上。
+- **バックエンドとフロントエンドのデプロイ順序**: バックエンド（Cloud Run）のデプロイが成功してから、フロントエンド2つ（Vercel）をデプロイする。Cloud Runのデプロイが失敗した場合はフロントエンドのデプロイも行わない。デモ環境で新しい画面が古いAPIにつながるのを避けるためで、全体のデプロイ時間が長くなることはユーザー承知の上（2026-10-22、未決定事項「自動デプロイでのバックエンドとフロントエンドの順序」で選択肢Aを選択）。
+- **外部サービス側の設定**: GCP（Workload Identityプール・サービスアカウント・IAM付与）、Vercel（トークン発行）、GitHub（Secrets/Variables登録）の実際の設定は、generator・評価者は実行しない。リポジトリには手順を文書化し、実行はオーケストレーターがユーザーの確認を取って別途行う。
+
 ## 未決定事項（要ユーザー判断）
 
-（現在、未解決の項目は無い。「論理削除済み授業に属する課題への個別操作の扱い」は2026-10-22にB案で確定し、「## 決定事項」に移した）
+（現在、未解決の項目は無い。「自動デプロイでのバックエンドとフロントエンドの順序」は2026-10-22に選択肢Aで解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み）
 
 ## 実装タスク
 
@@ -2294,4 +2307,66 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - スピナー: 新規テスト「ページの遅延読み込み」（`/`・`/courses`・`/companies`の3パターン）で、読み込み中は`progressbar`（「ページを読み込み中」）が表示されてページが未表示、読み込み後はスピナーが消えてページが表示されることを確認。
   - 既存ルートの挙動: `/`・`/courses`・`/courses/:courseId`・`/companies`・`/companies/:companyId`・不正URL/旧URLのリダイレクト・不正idのリダイレクト・戻る/進むの既存テストが、遅延読み込みを待つ形に直したうえですべてpass。ヘッドレスChromiumでも各URLで対応する画面（横断一覧/授業管理/選考管理）が表示されることを確認。
   - 参考（差し戻し対象外）: 「画面中央寄せ」はコード上（`Box`の`display: flex`・`justifyContent/alignItems: center`）で確認したが、テストでは配置までは検証していない。見た目の性質なので今回は差し戻さない。また、セキュリティエバリュエーターの指摘と同じく、チャンク読み込み失敗時（デプロイ後に古いハッシュを参照した場合など）のErrorBoundaryは無い。
+- 差し戻し回数: 0
+
+### タスク: フロントエンドのチェックをCIに追加
+- status: 完了
+- 概要: 「## 決定事項」の「masterへのpush時の自動デプロイ」の前提として、これまでCIに含まれていなかったフロントエンドの自動テスト・lint・型チェック・本番ビルドをCIで実行し、失敗したらCIが失敗するようにする。自動デプロイ（後続タスク）は「バックエンドとフロントエンド両方のチェックが通ったとき」だけ動く前提となる。
+- 受け入れ条件:
+  - [ ] pushとプルリクエストのたびに、既存のバックエンドのチェック（lint → test → マイグレーション検証 → Dockerイメージのビルド）に加えて、フロントエンドの自動テスト・lint・型チェック・本番ビルドがCIで実行される
+  - [ ] フロントエンドのテスト・lint・型チェック・ビルドのいずれかが失敗すると、CI全体が失敗として表示される（失敗するように一時的に変更したコードで確認し、確認後は元に戻す）
+  - [ ] 既存のバックエンドのチェックの内容・順序・結果が変わらない
+  - [ ] CIで使うNode.js・依存パッケージは、ローカル開発と同じロックファイルに基づいてインストールされる
+  - [ ] CIの権限はリポジトリの読み取りに必要な最小限のままで、秘密情報（API Key・トークン等）を使わない。CIのログやビルド成果物に秘密情報が出ない
+  - [ ] 現時点のmasterの内容でCIが全件通過する（フロントエンドのテストはwarning・act警告・console.error無し、ビルドはチャンクサイズ警告無し）
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium無し）。`.github/workflows/ci.yml` の差分は末尾への `frontend` ジョブ追加だけで、既存のlint/test/migrate/buildジョブは変わっていない。
+  - 権限: ワークフロー全体の `permissions: contents: read` のままで、ジョブ単位で権限を広げていない。`secrets.*` を参照しておらず、`env` にも秘密情報が無い。`actions/checkout` は `persist-credentials: false` を指定済みで、後続のnpmスクリプトからGITHUB_TOKENを読めない。
+  - トリガー: `push` / `pull_request` だけで、`pull_request_target` や `workflow_run` は使っていない。フォークからのPRは読み取り専用のトークンで動き、Secretsにも触れられない。
+  - アクション: `actions/checkout@v7`（v7→v7.0.1）・`actions/setup-node@v7`（v7→v7.1.0）は、どちらもGitHub公式のactions organizationに実在するタグであることを `git ls-remote` で確かめた。
+  - 依存関係: lockfileを使う `npm ci` でインストールしている。`frontend/package-lock.json` はコミット済みで、249件ある `resolved` がすべて `https://registry.npmjs.org` を指し、すべてに `integrity` ハッシュが付いている。`.npmrc` で別のレジストリへ向ける設定も無い。インストール時にスクリプトが動くのは `fsevents`（darwin専用のoptional依存）だけで、ubuntuのランナーではインストールされない。npmキャッシュは `setup-node` 標準のキャッシュ（キーはlockfileのハッシュ）で、GitHubのキャッシュはブランチごとに分かれているため、PRから既定ブランチのキャッシュを汚すことはできない。
+  - 成果物: ビルド成果物のアップロードやデプロイは無い。ビルドが読む環境変数は `VITE_API_BASE_URL`（コミット済みの `.env.development` はlocalhost向けで、秘密情報ではない）だけで、API Keyはビルドに埋め込まれない。
+  - [Low/参考・差し戻し対象外] アクションをタグで指定していてコミットSHAで固定していない（既存ジョブも同じ方針）。また既存ジョブの `actions/checkout@v4` には `persist-credentials: false` が無い（今回の変更範囲外で、既存の挙動）。後続の自動デプロイタスクでSecretsや `id-token: write` を使うようになったら、SHAでの固定と、デプロイジョブを `push` かつ `refs/heads/master` のときだけ動かす条件を検討すること。
+- 性能エバリュエーターのフィードバック:
+  - 評価日: 2026-10-22。結果: 合格。GitHub上ではworkflowを実行できないため、定義の静的検証とCIと同じ手順のローカル実行で確認した。
+  - workflowの検証: actionlint 1.7.12（リリース版バイナリを作業用ディレクトリで使用）で `.github/workflows/ci.yml` にエラーなし。PyYAMLでも構造を確認し、トリガーは `push`/`pull_request`、全体の `permissions: contents: read`、ジョブは lint → test → migrate → build（needsの連鎖）と、独立した `frontend`（checkout@v7・setup-node@v7（Node "24"、npmキャッシュは `frontend/package-lock.json` をキー）→ `npm ci` → typecheck → lint → test → build、`working-directory: frontend`）。
+  - 受け入れ条件1（push/PRでフロントエンドのチェックも実行）: 合格。`frontend` ジョブは `needs`・`if` 無しで、push/PRのたびにバックエンドのジョブと並行して動く。
+  - 受け入れ条件2（どれかが失敗するとCI全体が失敗）: 合格。`continue-on-error` も `if` も無いため、どのステップが非ゼロ終了してもジョブが失敗し、workflow全体が失敗になる。リポジトリのコードは変えず、作業用ディレクトリに `frontend` をコピーして壊したコードで各コマンドの終了コードを確認した: 型エラー → `npm run typecheck` 終了コード2、`debugger;` 追加 → `npm run lint`（`--deny-warnings`）終了コード1、失敗するテスト追加 → `npm test` 終了コード1（1 failed）、存在しないモジュールのimport（`@ts-ignore`付きでtscを通過させ、vite側で失敗させる）→ `npm run build` 終了コード1。
+  - 受け入れ条件3（既存のバックエンドのチェックは変わらない）: 合格。`git diff` は末尾への `frontend` ジョブ追加だけで、lint/test/migrate/buildジョブの内容・needsの順序は変わっていない。`uv run pytest` 501件pass（warningなし）、`uv run ruff check .` 違反なし。
+  - 受け入れ条件4（ロックファイルに基づくインストール）: 合格。`npm ci` を使っており、ローカルでも `frontend/package-lock.json` から207パッケージがエラーなしで入った（Node 24.19.0 / npm 11.17.0。CIの `node-version: "24"` と同じメジャー）。
+  - 受け入れ条件5（権限最小・秘密情報なし）: 合格。ジョブ単位で権限を広げておらず、`secrets.*` の参照も無い。checkoutは `persist-credentials: false`。ビルドが読む環境変数は `VITE_API_BASE_URL` だけで、ビルド成果物にAPI Key等は含まれない。成果物のアップロードも無い。
+  - 受け入れ条件6（現時点の内容でCIが全件通過、warning無し）: 合格。`npm run typecheck` エラーなし、`npm run lint` 終了コード0、`npm test` 18ファイル244件すべてpass（warning・act警告・console.error・stderr出力なし）、`npm run build` 成功（deprecation警告・チャンクサイズ警告なし。最大は `react-vendor` 227.99kB）。
+  - 参考（差し戻し対象外）: `npm ci` の最後に「6 vulnerabilities (3 moderate, 3 high)」と表示される（npm auditの集計で、終了コードは0なのでCIは失敗しない）。指示により `npm audit` は実行しておらず、中身は未確認。依存の更新は別タスクとして検討するとよい。
+- 差し戻し回数: 0
+
+### タスク: 自動デプロイ用の外部サービス設定手順の文書化
+- status: 未着手
+- 概要: 「## 決定事項」の「masterへのpush時の自動デプロイ」に必要な、GCP（Workload Identity連携・デプロイ用サービスアカウント・権限付与）、Vercel（トークン発行・2プロジェクトの識別情報の取得）、GitHub（Secrets/Variablesの登録）の初期設定手順をリポジトリ内にまとめる。必要なら手順を実行するスクリプトも用意してよい。**手順やスクリプトの実行はこのタスクに含めない**（generator・評価者は外部サービスの設定を変更しない。実行はオーケストレーターがユーザーの確認を取って別途行う）。
+- 受け入れ条件:
+  - [ ] GCP側の設定手順（Workload Identityプールとプロバイダの作成、デプロイ用サービスアカウントの作成、権限付与）が、上から順に実行すれば再現できる形で文書化されている
+  - [ ] GitHubからGCPへの認証は、このリポジトリ（`shino0415/TaskSupport`）のmasterブランチからのワークフロー実行に限って許可される設定になっている。他のリポジトリ・フォーク・他ブランチ（プルリクエストを含む）からは認証できないことが手順上で明示されている
+  - [ ] デプロイ用サービスアカウントに付与する権限が、Cloud Runの `tasksupport-demo` へのデプロイとArtifact Registryの `tasksupport` リポジトリへのイメージ書き込みに必要なものだけに限られ、各権限が必要な理由が書かれている。プロジェクト全体の編集者・オーナー権限などの広い権限は付与しない
+  - [ ] サービスアカウントの鍵ファイルを作成しない手順になっている
+  - [ ] Vercelのトークン発行手順と、デモ用 `frontend`・個人用 `tasksupport-personal-frontend` の2プロジェクトのデプロイに必要な識別情報の取得手順が文書化されている
+  - [ ] GitHubに登録するSecrets/Variablesの一覧（名前・用途・どちらに置くか）が文書化され、トークン等の秘密情報はSecretsに置くことが明記されている
+  - [ ] ドキュメント・スクリプトに、Vercelトークンや個人利用環境のAPI Keyなどの秘密情報の実際の値が含まれない（公開してよいデモ用API Keyなど既にREADMEに記載のある値は除く）。スクリプトを用意する場合、実行時に秘密情報を画面やログへ出力しない
+  - [ ] 文書の冒頭に、これらの設定はgenerator・評価者が実行するものではなく、ユーザーの確認を取って別途実行するものである旨が明記されている
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
+- 差し戻し回数: 0
+
+### タスク: masterへのpush時のCloud Run・Vercel自動デプロイ
+- status: 未着手
+- 概要: デプロイ順序は決定済み（Cloud Runの成功後にフロントエンド2つをデプロイする。「## 決定事項」参照）。「## 決定事項」の「masterへのpush時の自動デプロイ」に基づき、masterへのpushでCIのチェック（バックエンド・フロントエンドとも）が通ったときだけ、バックエンドをCloud Run（`tasksupport-demo`）へ、フロントエンドをVercelの2プロジェクトへ自動デプロイする。あわせて `deploy/` 配下のドキュメントを自動デプロイ前提の内容に更新する。「フロントエンドのチェックをCIに追加」「自動デプロイ用の外部サービス設定手順の文書化」タスクの完了後に着手する。外部サービス側の設定（GCP・Vercel・GitHub）が済むまでは実際のデプロイは動かせないため、実デプロイでの動作確認はオーケストレーターがユーザーの確認を取って外部設定を行った後に別途行う。
+- 受け入れ条件:
+  - [ ] masterブランチへのpushでCIのチェックがすべて通った場合にだけ、自動デプロイが実行される。チェックがひとつでも失敗した場合、master以外のブランチへのpush、プルリクエストでは、デプロイは実行されない
+  - [ ] バックエンドは、pushされたコミットのSHAをタグにしたイメージ（`backend:<コミットSHA>`）としてArtifact Registryの `tasksupport` リポジトリにpushされ、そのイメージがCloud Runの `tasksupport-demo` にデプロイされる。`backend:latest` は自動デプロイで更新されない
+  - [ ] 自動デプロイの後も、Cloud Runの既存設定（`--max-instances=1`・`--min-instances=0`、環境変数 `API_KEY`・`CORS_ALLOW_ORIGINS`・`DEMO_AUTO_RESET_ENABLED`、未認証アクセスの許可、ポート・メモリ・CPU）が変わらない
+  - [ ] GCPへの認証はWorkload Identity連携で行い、サービスアカウントの鍵ファイルや長期の認証情報をリポジトリ・Secretsに置かない
+  - [ ] フロントエンドは、デモ用 `frontend` と個人用 `tasksupport-personal-frontend` の2プロジェクトにVercel CLIで本番デプロイされる。それぞれのプロジェクトに設定済みの接続先バックエンド（デモ用はCloud Run、個人用はVM）が変わらない
+  - [ ] バックエンドとフロントエンドのデプロイの順序・依存関係が、「自動デプロイでのバックエンドとフロントエンドの順序」で決定した方式どおりになっている
+  - [ ] デプロイに使うワークフローの権限は必要最小限（GCP認証に必要なトークン発行とリポジトリの読み取りのみ等）に限られ、Vercelトークン等の秘密情報はGitHub Secretsから参照される。ワークフローのログに秘密情報（Vercelトークン、個人利用環境のAPI Key等）が出力されない
+  - [ ] Compute EngineのVM（個人用バックエンド）は自動デプロイの対象にならず、自動デプロイによってVMが使うイメージが切り替わらない
+  - [ ] `deploy/README.md`・`deploy/cloud-run/README.md` が、自動デプロイの流れ（何が・いつ・どこへデプロイされるか）、`backend:<コミットSHA>` と `backend:latest` の使い分け、VMを手動で更新する手順（`latest` の手動更新を含む）、自動デプロイが使えないときの手動デプロイ手順を反映した内容に更新されている
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
 - 差し戻し回数: 0
