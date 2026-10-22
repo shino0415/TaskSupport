@@ -10,8 +10,13 @@ from app.schemas import (
     AssignmentPatchResponse,
     AssignmentRead,
     AssignmentUpdate,
+    UpcomingAssignmentRead,
 )
-from app.status_transitions import ASSIGNMENT_STATUS_GRAPH, check_backward_transition
+from app.status_transitions import (
+    ASSIGNMENT_STATUS_GRAPH,
+    AssignmentStatus,
+    check_backward_transition,
+)
 
 router = APIRouter(tags=["assignments"])
 
@@ -82,6 +87,29 @@ def list_assignments(course_id: int, db: Session = Depends(get_db)) -> list[mode
         )
         .all()
     )
+
+
+@router.get("/assignments/upcoming", response_model=list[UpcomingAssignmentRead])
+def list_upcoming_assignments(db: Session = Depends(get_db)) -> list[UpcomingAssignmentRead]:
+    rows = (
+        db.query(models.Assignment, models.Course.name)
+        .join(models.Course, models.Assignment.course_id == models.Course.id)
+        .filter(
+            models.Assignment.is_deleted.is_(False),
+            models.Course.is_deleted.is_(False),
+            models.Assignment.status != AssignmentStatus.提出済み,
+            models.Assignment.deadline.is_not(None),
+        )
+        # 同一期限の並びを安定させるためidを第二キーにする。
+        .order_by(models.Assignment.deadline.asc(), models.Assignment.id.asc())
+        .all()
+    )
+    return [
+        UpcomingAssignmentRead(
+            **AssignmentRead.model_validate(assignment).model_dump(), course_name=course_name
+        )
+        for assignment, course_name in rows
+    ]
 
 
 # /assignments/upcoming 等の固定パスを追加する場合は、/assignments/{assignment_id}

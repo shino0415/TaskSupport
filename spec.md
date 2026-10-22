@@ -1935,18 +1935,42 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 締切が近い課題の横断一覧エンドポイント（upcoming）
-- status: 未着手
+- status: 完了
 - 概要: 「## エンドポイント一覧」の `GET /assignments/upcoming` を実装し、未提出の課題を授業横断で期限の早い順に確認できるようにする。「課題（Assignment）CRUD一式とステータス遷移警告」タスクの完了後に着手する。
 - 受け入れ条件:
-  - [ ] ステータスが「提出済み」の課題、提出期限が設定されていない課題、論理削除済みの課題、論理削除済みの授業に属する課題は、いずれも結果に含まれない
-  - [ ] 上記以外の課題は、提出期限を過ぎたものも含めて全件が返り、件数の上限や期間による絞り込みは行われない
-  - [ ] 結果は提出期限の早い順（昇順）に並ぶ
-  - [ ] 各課題に、所属する授業の授業名と、その授業を特定できる情報（授業id）が含まれる
-  - [ ] `/assignments/upcoming` へのリクエストが課題詳細（`/assignments/{id}`）として誤って解釈されない
-  - [ ] 該当する課題が無い場合は空の一覧が200で返る
-  - [ ] 上記の除外条件・並び順・授業名の付与を検証する自動テストがある
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] ステータスが「提出済み」の課題、提出期限が設定されていない課題、論理削除済みの課題、論理削除済みの授業に属する課題は、いずれも結果に含まれない
+  - [x] 上記以外の課題は、提出期限を過ぎたものも含めて全件が返り、件数の上限や期間による絞り込みは行われない
+  - [x] 結果は提出期限の早い順（昇順）に並ぶ
+  - [x] 各課題に、所属する授業の授業名と、その授業を特定できる情報（授業id）が含まれる
+  - [x] `/assignments/upcoming` へのリクエストが課題詳細（`/assignments/{id}`）として誤って解釈されない
+  - [x] 該当する課題が無い場合は空の一覧が200で返る
+  - [x] 上記の除外条件・並び順・授業名の付与を検証する自動テストがある
+- 実装メモ:
+  - `app/routers/assignments.py`に`list_upcoming_assignments`を追加し、`/assignments/{assignment_id}`より前（固定パス用コメントの上）で登録した。`GET /assignments/upcoming`は単体取得と同じGETメソッドのため、登録順で衝突を回避している。
+  - クエリは`Assignment`と`Course`をJOINし、`Assignment.is_deleted=false`・`Course.is_deleted=false`・`status != 提出済み`・`deadline IS NOT NULL`で絞り込む。件数上限・期間の絞り込みは行わない。並び順は`deadline ASC`、同一期限の並びを安定させるため`id ASC`を第二キーにした。
+  - レスポンススキーマは`AssignmentRead`を継承した`UpcomingAssignmentRead`（`app/schemas.py`）で、既存の全項目（`course_id`を含む）に`course_name`を平坦に追加した（スキーマ詳細は「## 決定事項」冒頭によりgenerator裁量）。
+  - テスト: `tests/test_assignments.py`に15件追加（空一覧、提出済み/提出済みへ変更/期限なし/削除済み課題/削除済み授業配下の除外、未提出系3ステータスの包含、期限切れ・遠い将来を含む27件の全件返却、授業横断の昇順、`course_id`/`course_name`の付与、授業名変更の反映、詳細と誤解釈されないこと）と、既存の認証テストのパラメータに`/assignments/upcoming`を追加（401を2件）。`uv run pytest -W error`で393件pass・warningなし、`uv run ruff check`違反なし。
+- セキュリティエバリュエーターのフィードバック: Critical/High/Medium/Low相当の問題なし。承認する。`git diff HEAD`で変更範囲が`app/routers/assignments.py`（`list_upcoming_assignments`追加とimport整理）・`app/schemas.py`（`UpcomingAssignmentRead`追加）・`tests/test_assignments.py`（テスト追加）のみであることを確認したうえで、以下を検証した。
+  - **認証**: `list_upcoming_assignments`は個別の`dependencies`指定を持たず、`app/main.py`の`FastAPI(dependencies=[Depends(verify_api_key)])`を継承する。`app/auth.py`は変更なく、fail-closed・`secrets.compare_digest`による定数時間比較を維持。`/docs`・`/redoc`・`/openapi.json`も無効化されたまま。認証テストのパラメータに`/assignments/upcoming`が追加されており、ヘッダーなし・誤ったキーの両方で401になることを確認した。
+  - **ルート定義順序**: `GET /assignments/upcoming`は同じGETメソッドの`/assignments/{assignment_id}`より前に登録されている。`test_upcoming_assignments_is_not_interpreted_as_assignment_detail`で200とlistが返ることを確認しており、`upcoming`が整数変換エラーの422や詳細取得として扱われる経路はない。
+  - **インジェクション**: クエリは`join`・`filter`・`order_by`のすべてがSQLAlchemyのORM式で構成され、生SQLの文字列結合はない。リクエストからの入力（クエリ・パスパラメータ・ボディ）も受け取らないため、入力経由のインジェクション経路は存在しない。ログ出力も追加されていない。
+  - **論理削除の徹底**: `Assignment.is_deleted.is_(False)`と、JOINした`Course.is_deleted.is_(False)`の両方でフィルタしている。前回の`/interview-steps/upcoming`で後から見つかった「親の論理削除チェック漏れ」と同じ問題は最初から起きていない。`test_upcoming_assignments_excludes_deleted_assignment`／`test_upcoming_assignments_excludes_assignments_of_deleted_course`で実際に検証済み。読み取り専用のエンドポイントで、物理削除はない。
+  - **mass assignment／スキーマ分離**: 書き込みを伴わない。レスポンスは出力専用スキーマ`UpcomingAssignmentRead`（`AssignmentRead`＋`course_name`）で、入力スキーマ`AssignmentCreate`/`AssignmentUpdate`は変更されていない。返す項目は既存の課題詳細・一覧と同じ範囲に`course_name`を加えたもののみで、内部情報の過剰露出はない。
+  - **エラーハンドリング**: 新たな例外送出や例外メッセージのレスポンスへの埋め込みはない。
+  - **CORS・シークレット管理**: 今回の差分に関連コードの変更はなく、APIキーやDB接続情報のハードコードもない。
+  - 実地検証: `DATABASE_URL`をscratchpadの一時SQLiteに向け、`uv run pytest -W error tests/test_assignments.py -k "upcoming or api_key"`を実行し、27件すべてpass・warningなしであることを確認した。
+- 性能エバリュエーターのフィードバック: 合格。バグ・テスト不足なし。
+  - 実行環境: `DATABASE_URL`をscratchpadの一時SQLiteに向けて実行。実行前後で`app.db`（リポジトリ直下・`backend/`）のハッシュに変化がないことを確認した。
+  - `uv run pytest -v`: 393件pass、warningなし（`-W error`での再実行でも393件pass）。既存テストに回帰なし。
+  - `uv run ruff check`: 違反なし。
+  - 除外条件: 提出済み（作成時・PATCHで提出済みへ変更の両方）、期限なし、論理削除済み課題、論理削除済み授業配下の課題の除外を、それぞれ専用テストで確認。未着手・取組中・未提出の3ステータスが含まれることもparametrizeで確認。
+  - 全件返却・期限切れ包含: 2000年の期限切れ課題と2099年の課題を含む27件が全件返ることをテストで確認（件数上限・期間絞り込みなし）。
+  - 並び順: 授業をまたいだ昇順（同日の時刻違いを含む）をテストで確認。実装側は`id ASC`を第二キーにしており、同一期限の並びも安定する。
+  - 授業情報の付与: `course_id`・`course_name`の付与、レスポンスキー集合が`ASSIGNMENT_FIELDS | {"course_name"}`と一致すること、授業名変更が反映されることをテストで確認。
+  - ルート競合: `/assignments/upcoming`が200でlistを返すこと（詳細取得や422として扱われないこと）をテストで確認。
+  - 空一覧: データなし・除外対象のみの2ケースで`[]`が200で返ることを確認。
+  - 認証: ヘッダーなし・誤ったキーの両方で401になることを既存の認証テストのパラメータ追加で確認。
+  - 共通の確認事項（ステータス警告の4パターン、課題の論理削除後の一覧・詳細からの除外、期限なし課題の作成・更新、選択式項目の定義外値で422）も既存テストが引き続きpassしていることを確認した。
 - 差し戻し回数: 0
 
 ### タスク: デモデータの授業・課題版への差し替え

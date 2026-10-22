@@ -144,6 +144,10 @@ class AssignmentPatchResponse(AssignmentRead):
     warning: str | None = None
 
 
+class UpcomingAssignmentRead(AssignmentRead):
+    course_name: str
+
+
 class CompanyBase(BaseModel):
     name: str
 

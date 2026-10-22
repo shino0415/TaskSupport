@@ -604,6 +604,7 @@ def test_out_of_range_id_returns_404_instead_of_500(client, method, path, body, 
         ("get", "/assignments/{assignment_id}", None),
         ("patch", "/assignments/{assignment_id}", {"status": "未着手"}),
         ("delete", "/assignments/{assignment_id}", None),
+        ("get", "/assignments/upcoming", None),
     ],
 )
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong-key"}])
@@ -623,3 +624,132 @@ def test_endpoints_reject_missing_or_wrong_api_key(client, method, path, body, h
     assert detail["is_deleted"] is False
     listed = client.get(f"/courses/{course_id}/assignments", headers=AUTH_HEADERS).json()
     assert [item["id"] for item in listed] == [assignment_id]
+
+
+# --- 締切が近い課題の横断一覧（upcoming） ---
+
+
+def list_upcoming(client):
+    response = client.get("/assignments/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_upcoming_assignments_returns_empty_list_when_none(client):
+    assert list_upcoming(client) == []
+
+
+def test_upcoming_assignments_empty_when_only_excluded_assignments_exist(client):
+    course_id = create_course(client)
+    create_assignment(client, course_id, status="提出済み")
+    create_assignment(client, course_id, deadline=None)
+    assert list_upcoming(client) == []
+
+
+def test_upcoming_assignments_is_not_interpreted_as_assignment_detail(client):
+    course_id = create_course(client)
+    create_assignment(client, course_id)
+    response = client.get("/assignments/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_upcoming_assignments_excludes_submitted(client):
+    course_id = create_course(client)
+    submitted_id = create_assignment(client, course_id, status="提出済み")
+    active_id = create_assignment(client, course_id, status="未提出")
+    ids = [item["id"] for item in list_upcoming(client)]
+    assert ids == [active_id]
+    assert submitted_id not in ids
+
+
+def test_upcoming_assignments_excludes_assignment_changed_to_submitted(client):
+    course_id = create_course(client)
+    assignment_id = create_assignment(client, course_id)
+    assert [item["id"] for item in list_upcoming(client)] == [assignment_id]
+    response = client.patch(
+        f"/assignments/{assignment_id}", json={"status": "提出済み"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    assert list_upcoming(client) == []
+
+
+@pytest.mark.parametrize("status_value", ["未着手", "取組中", "未提出"])
+def test_upcoming_assignments_includes_every_non_submitted_status(client, status_value):
+    course_id = create_course(client)
+    assignment_id = create_assignment(client, course_id, status=status_value)
+    assert [item["id"] for item in list_upcoming(client)] == [assignment_id]
+
+
+def test_upcoming_assignments_excludes_assignments_without_deadline(client):
+    course_id = create_course(client)
+    create_assignment(client, course_id, deadline=None)
+    with_deadline_id = create_assignment(client, course_id)
+    assert [item["id"] for item in list_upcoming(client)] == [with_deadline_id]
+
+
+def test_upcoming_assignments_excludes_deleted_assignment(client):
+    course_id = create_course(client)
+    deleted_id = create_assignment(client, course_id)
+    active_id = create_assignment(client, course_id)
+    assert client.delete(f"/assignments/{deleted_id}", headers=AUTH_HEADERS).status_code == 204
+    assert [item["id"] for item in list_upcoming(client)] == [active_id]
+
+
+def test_upcoming_assignments_excludes_assignments_of_deleted_course(client):
+    deleted_course_id = create_course(client, name="削除される授業")
+    active_course_id = create_course(client, name="残る授業")
+    orphaned_id = create_assignment(client, deleted_course_id)
+    active_id = create_assignment(client, active_course_id)
+    assert client.delete(f"/courses/{deleted_course_id}", headers=AUTH_HEADERS).status_code == 204
+    ids = [item["id"] for item in list_upcoming(client)]
+    assert ids == [active_id]
+    assert orphaned_id not in ids
+
+
+def test_upcoming_assignments_includes_overdue_and_far_future_without_limit(client):
+    course_id = create_course(client)
+    overdue_id = create_assignment(client, course_id, deadline="2000-01-01T00:00:00")
+    far_future_id = create_assignment(client, course_id, deadline="2099-12-31T23:59:00")
+    many_ids = [
+        create_assignment(
+            client, course_id, name=f"課題{i}", deadline=f"2026-11-{i + 1:02d}T12:00:00"
+        )
+        for i in range(25)
+    ]
+    ids = [item["id"] for item in list_upcoming(client)]
+    assert len(ids) == 27
+    assert ids[0] == overdue_id
+    assert ids[-1] == far_future_id
+    assert ids[1:-1] == many_ids
+
+
+def test_upcoming_assignments_sorted_by_deadline_ascending_across_courses(client):
+    course_a = create_course(client, name="線形代数")
+    course_b = create_course(client, name="英語")
+    third = create_assignment(client, course_a, deadline="2026-12-01T09:00:00")
+    first = create_assignment(client, course_b, deadline="2026-11-01T09:00:00")
+    second = create_assignment(client, course_a, deadline="2026-11-01T10:00:00")
+    ids = [item["id"] for item in list_upcoming(client)]
+    assert ids == [first, second, third]
+
+
+def test_upcoming_assignments_include_course_name_and_course_id(client):
+    course_a = create_course(client, name="線形代数")
+    course_b = create_course(client, name="英語")
+    assignment_a = create_assignment(client, course_a, deadline="2026-11-01T09:00:00")
+    assignment_b = create_assignment(client, course_b, deadline="2026-11-02T09:00:00")
+    items = list_upcoming(client)
+    assert set(items[0].keys()) == ASSIGNMENT_FIELDS | {"course_name"}
+    assert [(item["id"], item["course_id"], item["course_name"]) for item in items] == [
+        (assignment_a, course_a, "線形代数"),
+        (assignment_b, course_b, "英語"),
+    ]
+
+
+def test_upcoming_assignments_reflects_updated_course_name(client):
+    course_id = create_course(client, name="旧名")
+    create_assignment(client, course_id)
+    response = client.patch(f"/courses/{course_id}", json={"name": "新名"}, headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    assert list_upcoming(client)[0]["course_name"] == "新名"
