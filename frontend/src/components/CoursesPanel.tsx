@@ -28,6 +28,7 @@ import { createCourse, deleteCourse, fetchCourses, updateCourse } from '../api/c
 import { toDisplayMessage } from '../api/errors'
 import type { Assignment, AssignmentInput, Course, CourseInput } from '../api/types'
 import { formatDeadline } from '../assignmentDeadline'
+import { useDepsChanged } from '../useDepsChanged'
 import { AssignmentFormDialog } from './AssignmentFormDialog'
 import { CourseFormDialog } from './CourseFormDialog'
 
@@ -79,56 +80,96 @@ export function CoursesPanel({ apiKey, initialSelectedCourseId = null }: Props) 
 
   const [deleteAssignmentTarget, setDeleteAssignmentTarget] = useState<Assignment | null>(null)
 
-  const reload = useCallback(async () => {
+  const startLoadingCourses = (): boolean => {
     if (apiKey === '') {
       setCourses(null)
       setErrorMessage(null)
-      return
+      return false
     }
     setIsLoading(true)
     setErrorMessage(null)
-    try {
-      setCourses(await fetchCourses(apiKey))
-    } catch (error) {
-      setCourses(null)
-      setErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoading(false)
+    return true
+  }
+
+  const loadCourses = useCallback(async () => {
+    if (apiKey === '') {
+      return
     }
+    await fetchCourses(apiKey)
+      .then((fetched) => {
+        setCourses(fetched)
+      })
+      .catch((error: unknown) => {
+        setCourses(null)
+        setErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoading(false)
+      })
   }, [apiKey])
 
+  const reload = async () => {
+    if (startLoadingCourses()) {
+      await loadCourses()
+    }
+  }
+
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey])) {
+    startLoadingCourses()
+  }
+
   useEffect(() => {
-    void reload()
-  }, [reload])
+    void loadCourses()
+  }, [loadCourses])
 
   // 横断一覧等からの遷移（initialSelectedCourseIdの指定）で、授業を自動的に選択する
-  useEffect(() => {
-    if (initialSelectedCourseId !== null) {
-      setSelectedCourseId(initialSelectedCourseId)
-    }
-  }, [initialSelectedCourseId])
+  if (useDepsChanged([initialSelectedCourseId]) && initialSelectedCourseId !== null) {
+    setSelectedCourseId(initialSelectedCourseId)
+  }
 
-  const reloadAssignments = useCallback(async () => {
+  const startLoadingAssignments = (): boolean => {
     if (apiKey === '' || selectedCourseId === NO_SELECTION) {
       setAssignments(null)
       setAssignmentsErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingAssignments(true)
     setAssignmentsErrorMessage(null)
-    try {
-      setAssignments(await fetchAssignments(apiKey, selectedCourseId))
-    } catch (error) {
-      setAssignments(null)
-      setAssignmentsErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingAssignments(false)
+    return true
+  }
+
+  const loadAssignments = useCallback(async () => {
+    if (apiKey === '' || selectedCourseId === NO_SELECTION) {
+      return
     }
+    await fetchAssignments(apiKey, selectedCourseId)
+      .then((fetched) => {
+        setAssignments(fetched)
+      })
+      .catch((error: unknown) => {
+        setAssignments(null)
+        setAssignmentsErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingAssignments(false)
+      })
   }, [apiKey, selectedCourseId])
 
+  const reloadAssignments = async () => {
+    if (startLoadingAssignments()) {
+      await loadAssignments()
+    }
+  }
+
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey, selectedCourseId])) {
+    startLoadingAssignments()
+  }
+
   useEffect(() => {
-    void reloadAssignments()
-  }, [reloadAssignments])
+    void loadAssignments()
+  }, [loadAssignments])
 
   const openCreateForm = () => {
     setEditingCourse(null)

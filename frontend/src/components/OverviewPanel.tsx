@@ -21,6 +21,7 @@ import { toDisplayMessage } from '../api/errors'
 import { fetchUpcomingInterviewSteps } from '../api/interviewSteps'
 import type { Company, InterviewStep, UpcomingAssignment } from '../api/types'
 import { formatDeadline, isDeadlinePassed } from '../assignmentDeadline'
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   apiKey: string
@@ -38,6 +39,8 @@ export function OverviewPanel({ apiKey }: Props) {
   const [assignments, setAssignments] = useState<UpcomingAssignment[] | null>(null)
   const [assignmentsErrorMessage, setAssignmentsErrorMessage] = useState<string | null>(null)
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false)
+  // 期限切れの判定基準。描画のたびに現在時刻を取らず、課題一覧を取得した時刻を使う
+  const [assignmentsFetchedAt, setAssignmentsFetchedAt] = useState(() => new Date())
 
   const [steps, setSteps] = useState<InterviewStep[] | null>(null)
   const [stepsErrorMessage, setStepsErrorMessage] = useState<string | null>(null)
@@ -47,76 +50,138 @@ export function OverviewPanel({ apiKey }: Props) {
   const [companiesErrorMessage, setCompaniesErrorMessage] = useState<string | null>(null)
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false)
 
-  const reloadAssignments = useCallback(async () => {
+  const startLoadingAssignments = (): boolean => {
     if (apiKey === '') {
       setAssignments(null)
       setAssignmentsErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingAssignments(true)
     setAssignmentsErrorMessage(null)
-    try {
-      setAssignments(await fetchUpcomingAssignments(apiKey))
-    } catch (error) {
-      setAssignments(null)
-      setAssignmentsErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingAssignments(false)
+    return true
+  }
+
+  const loadAssignments = useCallback(async () => {
+    if (apiKey === '') {
+      return
     }
+    await fetchUpcomingAssignments(apiKey)
+      .then((fetched) => {
+        setAssignments(fetched)
+        setAssignmentsFetchedAt(new Date())
+      })
+      .catch((error: unknown) => {
+        setAssignments(null)
+        setAssignmentsErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingAssignments(false)
+      })
   }, [apiKey])
 
-  useEffect(() => {
-    void reloadAssignments()
-  }, [reloadAssignments])
+  const reloadAssignments = async () => {
+    if (startLoadingAssignments()) {
+      await loadAssignments()
+    }
+  }
 
-  const reloadSteps = useCallback(async () => {
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey])) {
+    startLoadingAssignments()
+  }
+
+  useEffect(() => {
+    void loadAssignments()
+  }, [loadAssignments])
+
+  const startLoadingSteps = (): boolean => {
     if (apiKey === '') {
       setSteps(null)
       setStepsErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingSteps(true)
     setStepsErrorMessage(null)
-    try {
-      setSteps(await fetchUpcomingInterviewSteps(apiKey))
-    } catch (error) {
-      setSteps(null)
-      setStepsErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingSteps(false)
+    return true
+  }
+
+  const loadSteps = useCallback(async () => {
+    if (apiKey === '') {
+      return
     }
+    await fetchUpcomingInterviewSteps(apiKey)
+      .then((fetched) => {
+        setSteps(fetched)
+      })
+      .catch((error: unknown) => {
+        setSteps(null)
+        setStepsErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingSteps(false)
+      })
   }, [apiKey])
 
-  useEffect(() => {
-    void reloadSteps()
-  }, [reloadSteps])
+  const reloadSteps = async () => {
+    if (startLoadingSteps()) {
+      await loadSteps()
+    }
+  }
 
-  const reloadCompanies = useCallback(async () => {
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey])) {
+    startLoadingSteps()
+  }
+
+  useEffect(() => {
+    void loadSteps()
+  }, [loadSteps])
+
+  const startLoadingCompanies = (): boolean => {
     if (apiKey === '') {
       setCompanies(null)
       setCompaniesErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingCompanies(true)
     setCompaniesErrorMessage(null)
-    try {
-      setCompanies(await fetchCompanies(apiKey))
-    } catch (error) {
-      setCompanies(null)
-      setCompaniesErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingCompanies(false)
+    return true
+  }
+
+  const loadCompanies = useCallback(async () => {
+    if (apiKey === '') {
+      return
     }
+    await fetchCompanies(apiKey)
+      .then((fetched) => {
+        setCompanies(fetched)
+      })
+      .catch((error: unknown) => {
+        setCompanies(null)
+        setCompaniesErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingCompanies(false)
+      })
   }, [apiKey])
 
+  const reloadCompanies = async () => {
+    if (startLoadingCompanies()) {
+      await loadCompanies()
+    }
+  }
+
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey])) {
+    startLoadingCompanies()
+  }
+
   useEffect(() => {
-    void reloadCompanies()
-  }, [reloadCompanies])
+    void loadCompanies()
+  }, [loadCompanies])
 
   const companyName = (companyId: number): string =>
     companies?.find((company) => company.id === companyId)?.name ?? `企業ID: ${companyId}`
-
-  const now = new Date()
 
   return (
     <Paper component="section" aria-label="横断一覧" sx={{ p: 2 }}>
@@ -176,7 +241,7 @@ export function OverviewPanel({ apiKey }: Props) {
                   </TableHead>
                   <TableBody>
                     {assignments.map((assignment) => {
-                      const isOverdue = isDeadlinePassed(assignment.deadline, now)
+                      const isOverdue = isDeadlinePassed(assignment.deadline, assignmentsFetchedAt)
                       return (
                         <TableRow key={assignment.id}>
                           <TableCell>{assignment.name}</TableCell>

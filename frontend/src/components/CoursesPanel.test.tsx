@@ -419,6 +419,42 @@ describe('授業の編集', () => {
   })
 })
 
+describe('フォームの開き直し', () => {
+  it('入力途中で閉じても、開き直すと新規登録は空欄・編集は対象の値に初期化され、前回のエラー表示も消える', async () => {
+    setupFakeServer([COURSE_A, COURSE_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('データベース論')
+    await user.click(screen.getByRole('button', { name: '新規登録' }))
+    let dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('時限'), '0')
+    await user.click(within(dialog).getByRole('button', { name: '登録する' }))
+    expect(within(dialog).getByText('授業名を入力してください。')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '新規登録' }))
+    dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText(/授業名/)).toHaveValue('')
+    expect(within(dialog).getByLabelText('時限')).toHaveValue(null)
+    expect(within(dialog).queryByText('授業名を入力してください。')).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '授業「データベース論」を編集' }))
+    dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText(/授業名/)).toHaveValue('データベース論')
+    await user.clear(within(dialog).getByLabelText(/授業名/))
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '授業「集中講義A」を編集' }))
+    dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText(/授業名/)).toHaveValue('集中講義A')
+  })
+})
+
 describe('授業の削除', () => {
   it('確認後に削除でき、削除後は一覧に表示されなくなる', async () => {
     const server = setupFakeServer([COURSE_A, COURSE_B])

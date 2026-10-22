@@ -4,7 +4,8 @@
 完全に独立したドメインであり、relationは互いに持たない。
 """
 
-from datetime import date, datetime
+from datetime import date as date_type
+from datetime import datetime
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, false
 from sqlalchemy.orm import Mapped, mapped_column
@@ -66,7 +67,9 @@ class InterviewStep(Base):
         Integer, ForeignKey("company.id"), nullable=False
     )
     type: Mapped[str] = mapped_column(String, nullable=False)
-    date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 型注釈を`date`のままにすると、クラス本体で同名の列属性に解決されて`| None`が
+    # SQL演算子として評価されてしまうため別名で参照する
+    date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
     prep_status: Mapped[InterviewStepPrepStatus] = mapped_column(String, nullable=False)
     result: Mapped[InterviewStepResult] = mapped_column(String, nullable=False)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)

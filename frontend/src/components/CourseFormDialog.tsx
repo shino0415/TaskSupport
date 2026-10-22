@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 
 import Alert from '@mui/material/Alert'
@@ -22,6 +22,7 @@ import {
   COURSE_PERIOD_MAX,
   COURSE_PERIOD_MIN,
 } from '../inputLimits'
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   open: boolean
@@ -47,12 +48,11 @@ export function CourseFormDialog({
   const [values, setValues] = useState<CourseFormValues>(() => toCourseFormValues(course))
   const [errors, setErrors] = useState<CourseFormErrors>({})
 
-  useEffect(() => {
-    if (open) {
-      setValues(toCourseFormValues(course))
-      setErrors({})
-    }
-  }, [open, course])
+  // 開くたび（編集対象が変わったときも）入力内容を初期化する
+  if (useDepsChanged([open, course]) && open) {
+    setValues(toCourseFormValues(course))
+    setErrors({})
+  }
 
   const isEdit = course !== null
 

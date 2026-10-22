@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 
 import Alert from '@mui/material/Alert'
@@ -14,6 +14,7 @@ import TextField from '@mui/material/TextField'
 import type { CompanyInput } from '../api/types'
 import type { CompanyFormErrors, CompanyFormValues } from '../companyForm'
 import { EMPTY_COMPANY_FORM_VALUES, toCompanyInput, validateCompanyForm } from '../companyForm'
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   open: boolean
@@ -29,12 +30,11 @@ export function CompanyFormDialog({ open, errorMessage, isSubmitting, onSubmit, 
   const [values, setValues] = useState<CompanyFormValues>(EMPTY_COMPANY_FORM_VALUES)
   const [errors, setErrors] = useState<CompanyFormErrors>({})
 
-  useEffect(() => {
-    if (open) {
-      setValues(EMPTY_COMPANY_FORM_VALUES)
-      setErrors({})
-    }
-  }, [open])
+  // 開くたび入力内容を初期化する
+  if (useDepsChanged([open]) && open) {
+    setValues(EMPTY_COMPANY_FORM_VALUES)
+    setErrors({})
+  }
 
   const handleSubmit = () => {
     const validationErrors = validateCompanyForm(values)

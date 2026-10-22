@@ -366,6 +366,24 @@ describe('企業詳細', () => {
     expect(server.requests.at(-1)).toMatchObject({ method: 'GET', url: '/companies/2' })
   })
 
+  it('別の企業の詳細を開き直すと、前回の企業ではなく開いた企業の内容を表示する', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_B], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    await user.click(screen.getByRole('button', { name: '企業「合同会社テスト」の詳細' }))
+    let dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('合同会社テスト')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '閉じる' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '企業「株式会社サンプル」の詳細' }))
+    dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
+    expect(within(dialog).queryByText('合同会社テスト')).not.toBeInTheDocument()
+  })
+
   it('削除済みの企業の詳細は参照できず、404と分かるメッセージを表示する', async () => {
     vi.stubGlobal(
       'fetch',

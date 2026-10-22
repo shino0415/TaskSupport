@@ -323,6 +323,8 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **対象範囲**: フロントエンドのnpm依存と、バックエンドのPython依存（`uv.lock`）を対象にする。GitHub Actionsのアクションのバージョンは対象外とする（未決定事項「依存パッケージ更新の対象範囲」で選択肢Bを選択。アプリの依存をすべて最新にしつつ、自動デプロイタスクとCIワークフローの変更範囲が重なるのを避ける）。
 - **@types/node のバージョン**: 実行環境はNode 24系だが、型定義は最新の26系にする（未決定事項「@types/node のバージョン」で選択肢Aを選択。「常に最新版」の方針どおりとし、Node 24に無いAPIを型チェックで見逃すおそれがあることはユーザー承知の上）。
 - **タスク分割**: 「脆弱性修正と範囲内の更新」と「メジャー更新（TypeScript 7・Vitest 5 等）」の2タスクに分け、前者を先に行う（未決定事項「依存パッケージ更新のタスク分割」で選択肢Bを選択。メジャー更新の破壊的変更対応で詰まっても、脆弱性を先に確実に解消できるようにする）。
+- **oxlint新ルール `react/set-state-in-effect` への対応**: 範囲内更新でoxlintを1.89.0に上げると、既定で有効になったこのルールが既存コード11ファイル・18箇所で警告を出す。ルールを無効化したりoxlintを据え置いたりせず、該当箇所をルールに沿う書き方（`key` による再マウントでの初期化、イベント側での状態更新等）に書き換える。既存の画面の挙動と既存テストの意図は変えない（2026-10-22、タスク「依存パッケージの脆弱性修正と範囲内の更新」の要人間判断で選択肢Aを選択）。
+- **トップページの期限切れ判定の基準時刻**: lintの `react/purity` 警告（描画のたびに現在時刻を取る書き方）への対応として、「締切が近い課題」の期限切れ判定は、描画時刻ではなく課題一覧を取得した時刻を基準にする。取得後に期限を過ぎた課題は再読み込みまで期限切れ表示にならないことはユーザー承知の上（2026-10-22、定期的な時刻更新案ではなく現状の実装をユーザーが選択）。
 
 ## 未決定事項（要ユーザー判断）
 
@@ -2471,7 +2473,13 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 依存パッケージの脆弱性修正と範囲内の更新
-- status: 未着手
+- status: 完了
+- 要人間判断は解消済み（2026-10-22）: 下記の選択肢から、ユーザーが **A（18箇所をルールに沿う書き方へ書き換える）** を選んだ。`react/set-state-in-effect` は無効化せず、oxlintも最新（1.89.0）のまま、既存の画面の挙動・既存テストの意図を変えずに該当箇所を書き換える。詳細は「## 決定事項」の「依存パッケージの最新版への更新」を参照。
+- 判断時の記録（2026-10-22 generator）: 範囲内の更新で oxlint が 1.78.0 → 1.89.0 になったところ、1.79.0 から既定で有効になった新ルール `react/set-state-in-effect`（useEffect内で同期的にsetStateする書き方への警告）が既存コードの11ファイル・18箇所（各フォームダイアログの `open` 時の初期化、ApiKeyPanel の props 同期、各Panel の `useEffect(() => { void reload() })` 等）で警告を出し、`oxlint --deny-warnings` のため `npm run lint`（＝CIのフロントエンドlint）が失敗する。それ以外（`npm audit` 0件、typecheck・test・build、バックエンド一式）は通過済み。対応方針の選択肢:
+  - A. 18箇所をルールに沿う書き方へ書き換える（`key` による再マウントでの初期化、イベント側での状態更新等）。長所: 新しい推奨に沿い警告の意図も活かせる。短所: 依存更新タスクの範囲を超えて11コンポーネントを改修することになり、挙動が変わるリスクがある
+  - B. `.oxlintrc.json` で `react/set-state-in-effect` を無効化する。長所: 変更が最小で挙動は一切変わらない。短所: 新ルールによる検出を受けられない
+  - C. B と同じく本タスクでは無効化し、書き換え（A）は別タスクとして spec に追加する。長所: 本タスクを依存更新に閉じたまま、将来の改善も追跡できる。短所: タスクが1つ増える
+  - D. oxlint を 1.78.x に据え置く。長所: コード・設定とも変更なし。短所: 「ライブラリは常に最新版」の方針に反し、次のメジャー更新タスクでも同じ問題が再発する
 - 概要: 「## 決定事項」の「依存パッケージの最新版への更新」に基づき、フロントエンドのnpm依存とバックエンドのPython依存を、いまの指定範囲内（メジャーバージョンを上げない範囲）で最新にする。あわせて2026-10-22の `npm audit` で見つかったフロントエンドの脆弱性6件（vite・undici・source-map-js・vitest系。いずれも開発・テスト用ツール）を解消し、バックエンドにも既知の脆弱性があれば解消する。メジャー更新は後続の「依存パッケージのメジャー更新」タスクで行う。既存の画面・挙動は変えない。
 - 受け入れ条件:
   - [ ] フロントエンドで `npm audit` を実行すると脆弱性が0件になる。範囲内の更新では修正できない等の理由で残るものがある場合は、その理由と影響（本番のJSに含まれるか等）がこのタスクのフィードバック欄に記録され、ユーザーの許可を得ている
@@ -2481,8 +2489,33 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] 既存の画面・ルーティング・挙動が変わらず、既存の自動テストがテストの意図を変えずに引き続き通過する。本番ビルドのページ単位・共通ライブラリ単位のコード分割も維持されている
   - [ ] バックエンドのlint・テスト（warningなし）・マイグレーション検証・Dockerイメージのビルドが引き続き通る
   - [ ] CIの構成のまま、CIのチェック（バックエンド・フロントエンドとも）が通る。依存はロックファイルに基づいてインストールされ、フロントエンド・バックエンドのロックファイルが更新後の内容でコミット対象になっている。GitHub Actionsのアクションのバージョンは変更しない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- generatorの実装メモ（2026-10-22）:
+  - 依存の更新: フロントエンドは指定範囲内で最新化（oxlint 1.75→1.89、vite 8.2→8.3.5、vitest・@vitest/coverage-v8 4.1.10→4.1.12、MUI 9.5.0、React 19.3.1 等）し、`npm audit` は0件。バックエンドは範囲内で最新化（fastapi 0.159.1、sqlalchemy 2.1.6、alembic 1.20.1、uvicorn 0.54.0、ruff 0.17.1 等）。sqlalchemy 2.1 では `InterviewStep.date` の型注釈 `Mapped[date | None]` がクラス本体内で同名の列属性に解決されて壊れるため、`backend/app/models.py` で `datetime.date` を `date_type` として参照するよう直した（列名・型・スキーマは不変）。
+  - `react/set-state-in-effect`（18箇所）の書き換え（決定事項の選択肢A）: ルールの無効化・抑制コメントは使っていない。props の変化に合わせた状態の初期化は、React公式の「propが変わったときに描画中に状態を調整する」書き方に寄せた。そのための小さなフック `frontend/src/useDepsChanged.ts`（依存値が前回の描画から変わったか、初回を含めて返す）を追加した。
+    - フォームダイアログ5つ（授業・課題・企業・選考ステップ・企業タスク）と ApiKeyPanel: `useEffect` 内のリセットを、`useDepsChanged([open, 編集対象])` が真で `open` のときに描画中にリセットする形に変えた。条件と依存はもとの Effect と同じなので、「開くたび／編集対象が変わるたびに初期化」という挙動は変わらない。`key` による再マウントは採らなかった。MUI の Dialog は閉じるアニメーションの間は中身を残すため、key を `open` に連動させると閉じる途中でフォームが空になるなど見た目が変わるおそれがある。
+    - CompanyDetailDialog: 前回の表示を消して読み込み中にする処理を描画中の調整へ移した。Effect にはAPI取得（`.then` 内での状態更新と AbortController による中断）だけを残した。
+    - 各Panelのデータ取得（OverviewPanel 3つ・CoursesPanel 2つ・CompaniesPanel 3つ）: これまでの `reloadX` は「同期で読み込み中にする・API Key未入力などで結果を消す」部分と「取得して結果を反映する」部分を1つの関数でやっていた。これを `startLoadingX`（同期部分）と `loadX`（取得部分。状態の更新は Promise の `.then/.catch/.finally` の中だけで行う）に分けた。取得条件（API Key・選択中のid）が変わったときは描画中に `startLoadingX` を呼び、Effect では `loadX` だけを呼ぶ。再読み込みボタンや登録・更新・削除の後は、これまでどおり `reloadX`（= `startLoadingX` → `await loadX`）を呼ぶ。そのため、`await` で再読み込みの完了を待ってから送信中フラグを戻す順序も変えていない。なお oxlint 1.89 の検査は async 関数内の `await` の後の setState を同期呼び出しとみなすため、`try { setX(await ...) }` から Promise チェーンへ書き換えている。
+    - 横断一覧からの遷移で渡す `initialSelectedCourseId`／`initialDetailCompanyId`: これも Effect をやめ、値が変わったとき（初回を含む）に描画中に反映する形にした。
+  - 同時に警告が出ていた `react/purity`（OverviewPanel で描画のたびに `new Date()` を呼んでいた箇所。1件）への対応: 期限切れ判定の基準時刻を、描画時刻ではなく締切が近い課題の一覧を取得した時刻（`assignmentsFetchedAt`）にした。画面上の違いが出るのは、課題一覧の取得から次の再描画までの間に期限を過ぎた課題がある場合だけである。その場合も、課題一覧を再読み込みすれば反映される。
+  - テスト: 既存テストは書き換えていない（意図・内容とも変更なし）。挙動を保てていることを確かめる回帰テストを追加した。`useDepsChanged.test.ts`（4件）、CoursesPanel の「フォームの開き直し」（入力途中・エラー表示ありで閉じても、開き直すと新規は空欄、編集は対象の値に初期化される）、CompaniesPanel の「別の企業の詳細を開き直す」、App の「クリアするとAPI Keyの入力欄も空になる」。フォーム初期化テストは、初期化を外すと失敗することを確認済み。
+  - セルフチェック: フロントエンドは `npm ci` → `npm run typecheck` → `npm run lint`（`--deny-warnings`、警告0）→ `npm test`（19ファイル・251件通過。act警告・console.error なし）→ `npm run build`（警告なし。OverviewPanel／CoursesPanel／CompaniesPanel のページ単位チャンクと mui-vendor／react-vendor の共通ライブラリチャンクを維持）の順にすべて通過し、`npm audit` も0件。バックエンドは `uv run ruff check` 通過、`uv run pytest` は501件通過（warning 0）。マイグレーション検証（一時ファイルの空DBへの `alembic upgrade head`）も通過。Dockerイメージのビルドは禁止事項のため実行していない。
+- セキュリティエバリュエーターのフィードバック（2026-10-22）: **合格（Critical/High なし）**
+  - 依存の脆弱性: `npm audit` は0件。`npm audit signatures` でも、205パッケージのレジストリ署名と74パッケージのattestationを検証できた。`uv export --frozen` で出したロック内容に `pip-audit` をかけたところ、既知の脆弱性は0件だった。
+  - 取得元: `package-lock.json` の `resolved` はすべて `https://registry.npmjs.org/`。`uv.lock` もすべて `registry = "https://pypi.org/simple"`（プロジェクト自身の `virtual = "."` を除く）で、git・URL・パス指定の依存は無い。npm で新しく増えたのは `@rolldown/binding-android-arm-eabi`（vite/rolldown のプラットフォーム別オプションバイナリ）だけで、install script を持つのは従来どおり `fsevents`（darwin専用・optional）だけである。
+  - 新しく入ったPython依存: `opentelemetry-api` 1.45.1 は fastapi 0.159.1 の推移的依存で、取得元はPyPI。依存は typing-extensions だけ。`httpx2-jsfetch` 1.0 は httpx2 2.16.0（dev依存）の推移的依存だが、`sys_platform == 'emscripten'` のマーカーが付いているため Linux の開発環境・CI・本番イメージには入らない（.venv にも入っていないことを確認した）。不審なパッケージは無い。
+  - `backend/app/models.py`: 型注釈を `date_type` という別名で参照するようにしただけで、列定義・`is_deleted` などのスキーマは変わっていない。認証・論理削除・入出力スキーマへの影響は無い。
+  - フロントエンドの書き換え: API Key を console に出す処理や、localStorage／sessionStorage への新たな保存、`dangerouslySetInnerHTML` の追加は無い。API Key をクリアしたとき（apiKey が `''` になったとき）は、各Panel の `startLoadingX` が描画中に一覧とエラー表示を消し、ApiKeyPanel の入力欄も空になる（回帰テストあり）。CompanyDetailDialog の AbortController による中断と、中断時に状態を更新しない制御は従来どおり残っている。`useDepsChanged` は要素ごとに `Object.is` で比べるだけで、副作用は無い。
+  - [Low・既存の挙動、今回の変更による劣化ではない] 各Panel の一覧取得（`loadX`）には中断や結果を捨てる仕組みが無い。そのため、取得中に API Key をクリアまたは変更すると、古いキーで取得した結果が後から届いて表示されることがあり得る。変更前の `reloadX` も同じ作りだったので今回の差し戻しの対象にはしないが、将来 AbortController か「後から届いた古い結果を捨てる」フラグを入れることを勧める（本人専用ツールで、表示されるのは本人のデータに限られるため、影響は小さい）。
+- 性能エバリュエーターのフィードバック（2026-10-22、合格）:
+  - 実行結果: バックエンドは `uv sync --locked` 成功、`uv run ruff check` 合格、`uv run pytest` 501件合格・warning 0件。一時ファイルの空DBに `alembic upgrade head`（3リビジョン、head=`b7c3e1a9d4f2`）を適用でき、続く `alembic check` も「No new upgrade operations detected」でモデルとマイグレーションに差分は無い。フロントエンド（Node 24.19.0）は `npm ci` → `npm audit`（0件）→ `npm run typecheck` → `npm run lint`（oxlint 1.89.0、`--deny-warnings`、警告0）→ `npm test`（19ファイル・251件合格。act警告・console.error・warningの出力なし）→ `npm run build`（deprecation警告・チャンクサイズ警告なし）がすべて通った。検証の前後で作業ツリーに変化はない。
+  - 受け入れ条件1（`npm audit` 0件）: 合格。
+  - 受け入れ条件2（フロントエンドが範囲内で最新）: 合格。`npm outdated` で残っているのは `@types/node`（24.19.2→26.6.5）・`typescript`（6.0.3→7.0.2）・`vitest`／`@vitest/coverage-v8`（4.1.12→5.0.5）だけで、いずれもメジャー更新であり Current=Wanted。`npm update --dry-run` でも、推移的依存を含めて範囲内で更新できるものは無かった（lockは変化なし）。
+  - 受け入れ条件3（バックエンドが範囲内で最新・脆弱性解消）: 合格。`uv lock --upgrade --dry-run` は「No lockfile changes detected」、`uv pip list --outdated` も空。脆弱性はセキュリティ評価の `pip-audit` で0件と確認済み。
+  - 受け入れ条件4（フロントエンドのチェックがwarningなし）: 合格。`react/set-state-in-effect` が有効になっていることは、HEAD時点のsrcに同じ `.oxlintrc.json` でoxlint 1.89.0をかけると警告が出ることで確かめた。変更後は警告0で、`.oxlintrc.json` の変更や `oxlint-disable`／`eslint-disable` の抑制コメントは無い（決定事項の選択肢Aどおり）。
+  - 受け入れ条件5（挙動・既存テストの意図・コード分割の維持）: 合格。既存テストファイルの差分は追加だけで、削除・変更された行は無い。追加の回帰テスト（`useDepsChanged.test.ts` 4件、CoursesPanel のフォームの開き直し、CompaniesPanel の別企業の詳細を開き直す操作、App の「クリアするとAPI Keyの入力欄も空になる」）もすべて通過した。書き換えでは、もとの `useEffect` と同じ条件・依存で描画中に初期化しており、データ取得はEffectで行う形が残っているので、挙動は同等である。期限切れ判定の基準時刻を一覧の取得時刻（`assignmentsFetchedAt`）に変えたのは、決定事項で承認済みの内容どおり。ビルドでは、ページ単位のチャンク（OverviewPanel／CoursesPanel／CompaniesPanel）と共通ライブラリのチャンク（mui-vendor／react-vendor）が維持されている。
+  - 受け入れ条件6（バックエンドのlint・テスト・マイグレーション検証・Dockerビルド）: lint・テスト・マイグレーション検証は合格。**Dockerイメージのビルドは禁止事項のため実行しておらず、未確認**。代わりに次の2点を確かめた。(1) 一時のvenvでPython 3.12に対して `uv sync --locked --no-dev`（Dockerfileのbuilderステージと同じ依存の入れ方）が成功した。(2) その環境で `python -W error -c "import app.main"` が通った。実際のイメージのビルドは、次にCIの `build` ジョブが動いたときに確認すること。`backend/app/models.py` の `date_type` という別名は型注釈だけの変更で、`alembic check` でもスキーマに差分は出ていない。
+  - 受け入れ条件7（CI構成のまま・ロックファイル・Actions不変）: 合格（ローカルでCIと同じ手順を再現して確認した）。`.github/` に差分は無い。`package-lock.json`・`uv.lock` はどちらも更新後の内容になっている。commitするときは、未追跡の `frontend/src/useDepsChanged.ts`・`frontend/src/useDepsChanged.test.ts` を必ず含めること。含めないとCIの typecheck・test が失敗する。
+  - [Info/差し戻し対象外] `uv run ruff format --check` では11ファイルが整形対象になる。ただし、変更前のruff 0.16.1でも同じ11ファイルが対象になるので、今回の更新で増えたものではない。CIでも `ruff format` は実行していない。
 - 差し戻し回数: 0
 
 ### タスク: 依存パッケージのメジャー更新

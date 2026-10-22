@@ -13,6 +13,7 @@ import Typography from '@mui/material/Typography'
 import { fetchCompany } from '../api/companies'
 import { toDisplayMessage } from '../api/errors'
 import type { Company } from '../api/types'
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   open: boolean
@@ -31,14 +32,18 @@ export function CompanyDetailDialog({ open, companyId, apiKey, onClose }: Props)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
+  // 開いたとき（対象の企業・API Keyが変わったときも）前回の表示を消して読み込み中にする
+  if (useDepsChanged([open, companyId, apiKey]) && open && companyId !== null) {
+    setCompany(null)
+    setErrorMessage(null)
+    setIsLoading(true)
+  }
+
   useEffect(() => {
     if (!open || companyId === null) {
       return
     }
     const controller = new AbortController()
-    setCompany(null)
-    setErrorMessage(null)
-    setIsLoading(true)
     fetchCompany(apiKey, companyId, controller.signal)
       .then((fetched) => setCompany(fetched))
       .catch((error: unknown) => {

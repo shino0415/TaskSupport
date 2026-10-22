@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -6,6 +6,8 @@ import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   savedApiKey: string
@@ -17,9 +19,9 @@ type Props = {
 export function ApiKeyPanel({ savedApiKey, onSave, onClear }: Props) {
   const [inputValue, setInputValue] = useState(savedApiKey)
 
-  useEffect(() => {
+  if (useDepsChanged([savedApiKey])) {
     setInputValue(savedApiKey)
-  }, [savedApiKey])
+  }
 
   return (
     <Paper sx={{ p: 2 }}>

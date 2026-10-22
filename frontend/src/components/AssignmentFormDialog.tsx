@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 
 import Alert from '@mui/material/Alert'
@@ -25,6 +25,7 @@ import {
   toAssignmentInput,
   validateAssignmentForm,
 } from '../assignmentForm'
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   open: boolean
@@ -52,12 +53,11 @@ export function AssignmentFormDialog({
   )
   const [errors, setErrors] = useState<AssignmentFormErrors>({})
 
-  useEffect(() => {
-    if (open) {
-      setValues(toAssignmentFormValues(assignment))
-      setErrors({})
-    }
-  }, [open, assignment])
+  // 開くたび（編集対象が変わったときも）入力内容を初期化する
+  if (useDepsChanged([open, assignment]) && open) {
+    setValues(toAssignmentFormValues(assignment))
+    setErrors({})
+  }
 
   const isEdit = assignment !== null
 

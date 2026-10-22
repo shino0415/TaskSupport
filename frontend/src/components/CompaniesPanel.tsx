@@ -40,6 +40,7 @@ import type {
   InterviewStep,
   InterviewStepInput,
 } from '../api/types'
+import { useDepsChanged } from '../useDepsChanged'
 import { CompanyDetailDialog } from './CompanyDetailDialog'
 import { CompanyFormDialog } from './CompanyFormDialog'
 import { CompanyTaskFormDialog } from './CompanyTaskFormDialog'
@@ -105,78 +106,139 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
 
   const [deleteCompanyTaskTarget, setDeleteCompanyTaskTarget] = useState<CompanyTask | null>(null)
 
-  const reloadCompanies = useCallback(async () => {
+  const startLoadingCompanies = (): boolean => {
     if (apiKey === '') {
       setCompanies(null)
       setCompaniesErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingCompanies(true)
     setCompaniesErrorMessage(null)
-    try {
-      setCompanies(await fetchCompanies(apiKey))
-    } catch (error) {
-      setCompanies(null)
-      setCompaniesErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingCompanies(false)
+    return true
+  }
+
+  const loadCompanies = useCallback(async () => {
+    if (apiKey === '') {
+      return
     }
+    await fetchCompanies(apiKey)
+      .then((fetched) => {
+        setCompanies(fetched)
+      })
+      .catch((error: unknown) => {
+        setCompanies(null)
+        setCompaniesErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingCompanies(false)
+      })
   }, [apiKey])
 
+  const reloadCompanies = async () => {
+    if (startLoadingCompanies()) {
+      await loadCompanies()
+    }
+  }
+
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey])) {
+    startLoadingCompanies()
+  }
+
   useEffect(() => {
-    void reloadCompanies()
-  }, [reloadCompanies])
+    void loadCompanies()
+  }, [loadCompanies])
 
   // 横断一覧等からの遷移（initialDetailCompanyIdの指定）で、詳細ダイアログを自動的に開く
-  useEffect(() => {
-    if (initialDetailCompanyId !== null) {
-      setDetailCompanyId(initialDetailCompanyId)
-    }
-  }, [initialDetailCompanyId])
+  if (useDepsChanged([initialDetailCompanyId]) && initialDetailCompanyId !== null) {
+    setDetailCompanyId(initialDetailCompanyId)
+  }
 
-  const reloadSteps = useCallback(async () => {
+  const startLoadingSteps = (): boolean => {
     if (apiKey === '' || selectedCompanyId === NO_SELECTION) {
       setSteps(null)
       setStepsErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingSteps(true)
     setStepsErrorMessage(null)
-    try {
-      setSteps(await fetchInterviewSteps(apiKey, selectedCompanyId))
-    } catch (error) {
-      setSteps(null)
-      setStepsErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingSteps(false)
+    return true
+  }
+
+  const loadSteps = useCallback(async () => {
+    if (apiKey === '' || selectedCompanyId === NO_SELECTION) {
+      return
     }
+    await fetchInterviewSteps(apiKey, selectedCompanyId)
+      .then((fetched) => {
+        setSteps(fetched)
+      })
+      .catch((error: unknown) => {
+        setSteps(null)
+        setStepsErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingSteps(false)
+      })
   }, [apiKey, selectedCompanyId])
 
-  useEffect(() => {
-    void reloadSteps()
-  }, [reloadSteps])
+  const reloadSteps = async () => {
+    if (startLoadingSteps()) {
+      await loadSteps()
+    }
+  }
 
-  const reloadCompanyTasks = useCallback(async () => {
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey, selectedCompanyId])) {
+    startLoadingSteps()
+  }
+
+  useEffect(() => {
+    void loadSteps()
+  }, [loadSteps])
+
+  const startLoadingCompanyTasks = (): boolean => {
     if (apiKey === '' || selectedCompanyId === NO_SELECTION) {
       setCompanyTasks(null)
       setCompanyTasksErrorMessage(null)
-      return
+      return false
     }
     setIsLoadingCompanyTasks(true)
     setCompanyTasksErrorMessage(null)
-    try {
-      setCompanyTasks(await fetchCompanyTasks(apiKey, selectedCompanyId))
-    } catch (error) {
-      setCompanyTasks(null)
-      setCompanyTasksErrorMessage(toDisplayMessage(error))
-    } finally {
-      setIsLoadingCompanyTasks(false)
+    return true
+  }
+
+  const loadCompanyTasks = useCallback(async () => {
+    if (apiKey === '' || selectedCompanyId === NO_SELECTION) {
+      return
     }
+    await fetchCompanyTasks(apiKey, selectedCompanyId)
+      .then((fetched) => {
+        setCompanyTasks(fetched)
+      })
+      .catch((error: unknown) => {
+        setCompanyTasks(null)
+        setCompanyTasksErrorMessage(toDisplayMessage(error))
+      })
+      .finally(() => {
+        setIsLoadingCompanyTasks(false)
+      })
   }, [apiKey, selectedCompanyId])
 
+  const reloadCompanyTasks = async () => {
+    if (startLoadingCompanyTasks()) {
+      await loadCompanyTasks()
+    }
+  }
+
+  // 取得条件が変わったら（初回の描画を含む）、前回の結果を消すか読み込み中の表示にしてから取得し直す
+  if (useDepsChanged([apiKey, selectedCompanyId])) {
+    startLoadingCompanyTasks()
+  }
+
   useEffect(() => {
-    void reloadCompanyTasks()
-  }, [reloadCompanyTasks])
+    void loadCompanyTasks()
+  }, [loadCompanyTasks])
 
   const openCreateCompanyForm = () => {
     setCompanyFormErrorMessage(null)

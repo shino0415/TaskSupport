@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 
 import Alert from '@mui/material/Alert'
@@ -25,6 +25,7 @@ import {
   toInterviewStepInput,
   validateInterviewStepForm,
 } from '../interviewStepForm'
+import { useDepsChanged } from '../useDepsChanged'
 
 type Props = {
   open: boolean
@@ -50,12 +51,11 @@ export function InterviewStepFormDialog({
   )
   const [errors, setErrors] = useState<InterviewStepFormErrors>({})
 
-  useEffect(() => {
-    if (open) {
-      setValues(toInterviewStepFormValues(step))
-      setErrors({})
-    }
-  }, [open, step])
+  // 開くたび（編集対象が変わったときも）入力内容を初期化する
+  if (useDepsChanged([open, step]) && open) {
+    setValues(toInterviewStepFormValues(step))
+    setErrors({})
+  }
 
   const isEdit = step !== null
 

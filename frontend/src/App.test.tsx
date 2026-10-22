@@ -170,6 +170,19 @@ describe('API Keyを入力しての疎通', () => {
     expect(await screen.findByText(/API Keyを入力すると/)).toBeInTheDocument()
   })
 
+  it('保持済みのキーが入力欄に入った状態で表示され、クリアすると入力欄も空になる', async () => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubFetch(() => Promise.resolve(jsonResponse(200, [])))
+    const user = userEvent.setup()
+
+    await renderCoursesPage()
+    await within(coursesRegion()).findByText('取得件数: 0 件')
+    expect(screen.getByLabelText('API Key')).toHaveValue('saved-key')
+    await user.click(screen.getByRole('button', { name: 'クリア' }))
+
+    expect(screen.getByLabelText('API Key')).toHaveValue('')
+  })
+
   it('0件でも表示が破綻せず0件と分かる', async () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
