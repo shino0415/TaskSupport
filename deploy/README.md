@@ -56,6 +56,17 @@ GCPへ移行し、現在は上記2環境ともGCP上で稼働しています。`
     --format="value(metadata.items.filter('key:env-file').firstof('value'))"
   ```
 
+## 自動デプロイ（GitHub Actions）の外部サービス設定
+
+masterへのpush時の自動デプロイ（Cloud Run `tasksupport-demo` とVercelの2プロジェクト）に必要な
+GCP（Workload Identity連携・デプロイ用サービスアカウント・Cloud Run専用ランタイム用サービスアカウントへの切り替え・自動デプロイ専用Artifact Registryリポジトリ・権限付与）・Vercel（トークン）・
+GitHub（Secrets/Variables）の初期設定手順は [`./github-actions/README.md`](./github-actions/README.md)
+にまとめています。**この手順はまだ実行されておらず、実行はユーザーの確認を取ってから行います。**
+自動デプロイのイメージは専用のArtifact Registryリポジトリ `tasksupport-demo`（`backend:<コミットSHA>`）に置き、
+VMが使う既存の `tasksupport` リポジトリ（`backend:latest`）には自動デプロイから一切書き込みません
+（VMは従来どおり `tasksupport/backend:latest` を手動で更新します）。
+専用リポジトリにはクリーンアップポリシーを設定し、新しいものから5個のイメージだけを残します（VM用の `tasksupport` には設定しません）。
+
 ## 秘密情報の扱い
 
 このリポジトリは **GitHubパブリックリポジトリ**（`shino0415/TaskSupport`）です。公開デモ環境のAPI Key

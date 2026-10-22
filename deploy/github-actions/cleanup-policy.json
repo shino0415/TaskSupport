@@ -1,0 +1,17 @@
+[
+  {
+    "name": "keep-5-most-recent",
+    "action": {"type": "Keep"},
+    "mostRecentVersions": {
+      "packageNamePrefixes": ["backend"],
+      "keepCount": 5
+    }
+  },
+  {
+    "name": "delete-older",
+    "action": {"type": "Delete"},
+    "condition": {
+      "tagState": "any"
+    }
+  }
+]
