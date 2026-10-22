@@ -2232,9 +2232,12 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [x] 授業ページの課題一覧とトップページの「締切が近い課題」で、提出期限が `M/D HH:mm` 形式（例: `11/1 23:59`）で表示される。提出期限なし・期限切れ表示の挙動は従来どおりで、入力欄やAPIとやり取りする形式は変わらない
   - [x] 上記の各条件を確認する自動テストが追加され、フロントエンドの自動テストがwarning・act警告・console.error無しで全件通過し、型チェック・lintが通過する
   - [x] 本番ビルドが成功し、チャンクサイズ警告が出ない
+- 実装メモ:
+  - ユーザー指示による追加修正（Number.isSafeInteger）: セキュリティエバリュエーターのLow指摘を受け、`frontend/src/routeParams.ts` の `parsePositiveIntegerParam` に `Number.isSafeInteger` のチェックを追加した。`Number.MAX_SAFE_INTEGER`（`9007199254740991`）を超える桁数のid（丸められた値・`1e+25`・`Infinity` になるもの）も他の不正値と同様にnullとし、`/courses`・`/companies` へ案内してAPIを呼ばない。`routeParams.test.ts` に境界値（`9007199254740991` は受理、`9007199254740992`・`9007199254740993`・25桁の9・400桁の9は拒否）、`App.test.tsx` のURLパラメータ検証テストに巨大id（`9007199254740992`・25桁の9・400桁の9）を授業・企業の両ルートで追加した。
 - セキュリティエバリュエーターのフィードバック:
   - 判定: 合格（Critical/High相当の問題なし）。レビュー対象は`git diff HEAD`の`frontend/src`配下（`App.tsx`、`routeParams.ts`、`inputLimits.ts`、各`*Form.ts`、`assignmentDeadline.ts`、`CoursesPanel.tsx`、`OverviewPanel.tsx`、各`*FormDialog.tsx`）。
   - [Low] `routeParams.ts`の`parsePositiveIntegerParam`は`/^\d+$/`の後に`Number(value)`へ変換するだけのため、`Number.MAX_SAFE_INTEGER`を超える桁数のidを受け付けてしまう。Node 24で確認したところ、25桁の`9`は`1e+25`、400桁の`9`は`Infinity`になる。`CoursesPanel`はこの値を`fetchAssignments`で`/courses/${courseId}/assignments`のテンプレート文字列に埋め込むため、APIには`/courses/1e+25/assignments`や`/courses/Infinity/assignments`が送られる。埋め込まれるのは数値の文字列表現だけで、パス・トラバーサルやインジェクションにはつながらない。バックエンドもパスのidを整数として検証してエラーを返すため、実害は無い。ただし「不正値をAPIに渡さない」という趣旨には沿っていないので、`Number.isSafeInteger(id)`のチェック（またはバックエンドが受け付ける上限値との比較）を加えて、APIを呼ぶ前に一覧へ案内することを推奨する（必須ではない）。
+  - 再レビュー（ユーザー指示による追加修正 Number.isSafeInteger）: 判定 合格。前回のLow指摘は解消済み。`routeParams.ts`の`parsePositiveIntegerParam`が`/^\d+$/`に加えて`Number.isSafeInteger(id) && id >= 1`を満たす場合のみidを返すようになり、`9007199254740992`以上の値・`1e+25`・`Infinity`になる桁数はnullとなる。`App.tsx`のURLパラメータ取得箇所（`companyId`・`courseId`）は2か所ともこの関数を経由しており、他に`useParams`の値を直接APIパスへ渡す箇所は無い。`routeParams.test.ts`と`App.test.tsx`（境界値・巨大idで一覧へ案内しAPIを呼ばないこと）を実行し、60件すべて通過したことを確認した。新たな問題は無い。
   - [確認済み・問題なし] URLパラメータ検証では、`0`・`-1`・`1.5`・`1e2`・`0x10`・`abc`・全角数字`１２`・末尾改行`1\n`のいずれも正規表現で弾かれ、`<Navigate replace>`で`/courses`・`/companies`へ案内される。旧実装（`Number()`と`isNaN`だけの判定）では`0x10`が16、`1e2`が100として受理されていたが、それも解消された。
   - [確認済み・問題なし] XSS: `formatDeadline`の戻り値、上限超過メッセージ、`assignment.name`・`memo`はいずれもJSXのテキストノードとして描画されるため、Reactによってエスケープされる。`frontend/src`の本体コードに`dangerouslySetInnerHTML`・`innerHTML`・`eval`・`new Function`・動的な`href`は無い。`formatDeadline`は想定外の形式の値をそのまま返すが、これもテキスト描画なので問題ない。
   - [確認済み・問題なし] API Key: 今回の変更でAPI Keyの扱いは変わっていない（従来どおり`sessionStorage`のみに保持）。`console.*`への出力も追加されていない。
@@ -2250,4 +2253,9 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - 受け入れ条件5（提出期限の `M/D HH:mm` 表示）: 合格。`formatDeadline` の単体テスト（先頭0なしの月日、2桁の時分、秒なし・小数秒付き、想定外の形式）に加え、授業ページの課題一覧（一覧・追加・編集後）とトップページの「締切が近い課題」の表示アサーションが新形式に更新されている。期限なしの `-` 表示、期限切れ表示、編集ダイアログの入力欄の値（`2026-11-01T23:59`）、PATCH bodyの形式が従来どおりであることも既存テストで確認できる。
   - 受け入れ条件6・7（テスト・型チェック・lint・ビルド）: 合格（上記実行結果のとおり）。
   - 備考（差し戻し対象外）: セキュリティエバリュエーターのLow指摘（`parsePositiveIntegerParam` が `Number.MAX_SAFE_INTEGER` を超える桁数のidを受け付け、`1e+25`・`Infinity` の形でAPIに渡る）は未対応のまま。受け入れ条件は「正の整数以外」の拒否で、桁数の大きい値も形式上は正の整数のため不合格とはしない。ただし、この種の値を扱うテストも無い。`Number.isSafeInteger` によるチェックとテストの追加を、次回以降の改善候補とする。
+  - 再評価（ユーザー指示による追加修正 Number.isSafeInteger）: 合格。
+    - 実行結果: `npm test` 18ファイル241件pass（前回230件から11件増。全出力13行で、act警告・console.error・warningの出力は無し）。`npm run lint`（oxlint --deny-warnings）は終了コード0、`npm run typecheck` はエラー無し、`npm run build` は成功（`index-*.js` 497.14 kB、チャンクサイズ警告無し）。バックエンドには変更が無い（`git diff` の変更範囲は `frontend/src/routeParams.ts`・`routeParams.test.ts`・`App.test.tsx` と spec.md のみ）ため、pytest・ruffの再実行は省略した。
+    - 前回の備考の解消: `routeParams.test.ts` で `9007199254740991`（MAX_SAFE_INTEGERちょうど）は受理され、`9007199254740992`・`9007199254740993`・25桁の9・400桁の9はnullになる。`App.test.tsx` のURLパラメータ検証では、巨大id3値×授業・企業の2ルートで一覧へ置き換え遷移し、APIが呼ばれないことを確認した。いずれも実際に実行して通過している。
+    - 回帰: 既存の不正値6種×2ルート、正の整数（`/courses/1`・`/companies/1`）の直接オープン、そのほかの受け入れ条件1〜5に対応するテストもすべて通過している。
+    - 指摘事項なし。statusを「完了」に更新する。
 - 差し戻し回数: 0

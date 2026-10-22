@@ -472,7 +472,17 @@ describe('廃止した旧案件系の画面', () => {
 })
 
 describe('URLパラメータのid検証', () => {
-  const INVALID_IDS = ['0', '-1', '1.5', '1e2', '0x10', 'abc']
+  const INVALID_IDS = [
+    '0',
+    '-1',
+    '1.5',
+    '1e2',
+    '0x10',
+    'abc',
+    '9007199254740992',
+    '9'.repeat(25),
+    '9'.repeat(400),
+  ]
 
   function requestedPaths(): string[] {
     return vi

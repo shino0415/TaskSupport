@@ -15,6 +15,19 @@ describe('parsePositiveIntegerParam', () => {
     },
   )
 
+  it('Number.MAX_SAFE_INTEGERちょうどは受理する', () => {
+    expect(parsePositiveIntegerParam('9007199254740991')).toBe(Number.MAX_SAFE_INTEGER)
+  })
+
+  it.each([
+    ['MAX_SAFE_INTEGER+1', '9007199254740992'],
+    ['MAX_SAFE_INTEGER+2', '9007199254740993'],
+    ['25桁の9', '9'.repeat(25)],
+    ['400桁の9', '9'.repeat(400)],
+  ])('Number.MAX_SAFE_INTEGERを超える値（%s）はnull', (_label, value) => {
+    expect(parsePositiveIntegerParam(value)).toBeNull()
+  })
+
   it('パラメータが無ければnull', () => {
     expect(parsePositiveIntegerParam(undefined)).toBeNull()
   })
