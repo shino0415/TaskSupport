@@ -88,8 +88,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # バックエンドのジョブとは独立して並行実行する。後続の自動デプロイジョブは
-  # needs: [build, frontend] のように、このジョブとbuildの両方に依存させる想定。
+  # バックエンドのジョブとは独立して並行実行する。自動デプロイ（deploy-backend）は
+  # buildとこのジョブの両方に依存する。
   frontend:
     name: Frontend (typecheck, lint, test, build)
     runs-on: ubuntu-latest
@@ -115,3 +115,130 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  # ---- masterへのpush時の自動デプロイ（deploy/github-actions/README.md 参照） ----
+  # 外部サービス側の設定（Workload Identity連携・Secrets/Variables等）が済むまでは失敗する。
+  # サードパーティのアクションがSecretsやOIDCトークンに触れるため、デプロイジョブではコミットSHAで固定する。
+
+  deploy-backend:
+    name: Deploy backend (Cloud Run tasksupport-demo)
+    # build（lint→test→migrate→build）とfrontendのチェックがすべて成功したときだけ動く
+    needs: [build, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # id-token: write はこのジョブにだけ付ける（GCPの信頼条件をworkflowファイル単位で絞っていないため）
+    permissions:
+      contents: read
+      id-token: write
+    # 連続pushでデプロイが追い越されないよう、実行中のものは止めずに順番待ちにする
+    concurrency:
+      group: deploy-backend
+      cancel-in-progress: false
+    env:
+      IMAGE: asia-northeast1-docker.pkg.dev/tasksupport-portfolio/tasksupport-demo/backend:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: asia-northeast1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and push image (commit SHA tag only)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          # latestは付けない（VMが使う tasksupport/backend:latest は自動デプロイの対象外）
+          tags: ${{ env.IMAGE }}
+          # 追加マニフェスト（タグ無しの子マニフェスト）がクリーンアップポリシーで消され、
+          # 使用中のイメージが壊れるのを防ぐ
+          provenance: false
+          sbom: false
+          build-args: |
+            UV_VERSION=${{ env.UV_VERSION }}
+          cache-from: type=gha
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Deploy to Cloud Run (image only)
+        # --image以外を指定しないことで、環境変数・インスタンス数・公開設定・ランタイム用SA等の既存設定を引き継ぐ
+        run: >-
+          gcloud run deploy tasksupport-demo
+          --image="${IMAGE}"
+          --region=asia-northeast1
+          --project=tasksupport-portfolio
+          --quiet
+
+  deploy-frontend:
+    name: Deploy frontend (Vercel ${{ matrix.target }})
+    # Cloud Runのデプロイが成功してからデプロイする（失敗したらフロントエンドも出さない）
+    needs: deploy-backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      # デモ用と個人用は別環境なので、片方の失敗でもう片方を止めない
+      fail-fast: false
+      matrix:
+        include:
+          - target: frontend
+            project_id: ${{ vars.VERCEL_PROJECT_ID_DEMO }}
+          - target: tasksupport-personal-frontend
+            project_id: ${{ vars.VERCEL_PROJECT_ID_PERSONAL }}
+    concurrency:
+      group: deploy-frontend-${{ matrix.target }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      VERCEL_CLI_VERSION: "65.1.0"
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ matrix.project_id }}
+      VERCEL_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      # VERCEL_TOKENは使うステップにだけ渡す（依存パッケージのインストールスクリプト等から読めないようにする）
+      - name: Check deploy settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          for name in VERCEL_ORG_ID VERCEL_PROJECT_ID VERCEL_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} is not set (see deploy/github-actions/README.md)"
+              exit 1
+            fi
+          done
+      - name: Install Vercel CLI
+        run: npm install --global "vercel@${VERCEL_CLI_VERSION}"
+      # 接続先（VITE_API_BASE_URL）は各Vercelプロジェクトに設定済みのProduction環境変数をそのまま使う
+      - name: Pull Vercel project settings (production)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token="${VERCEL_TOKEN}"
+      # ビルド（依存のインストールを含む）はpullした設定だけで行い、トークンは渡さない
+      - name: Build
+        run: vercel build --prod
+      - name: Deploy (production)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}"

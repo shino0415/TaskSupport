@@ -57,7 +57,7 @@ Compute EngineのVM（個人用バックエンド）は対象外です（従来�
 - CIの `build` ジョブはすでにランナー上で `docker/build-push-action` を使ってビルドしているため、
   後続のworkflowもその延長で書けます。
 
-後続タスク（workflow追加）は、この前提で次のように書く想定です。
+workflow（`.github/workflows/ci.yml` の `deploy-backend` / `deploy-frontend` ジョブ）は、この前提で次のように書いています。
 
 - `google-github-actions/auth` で Workload Identity連携 → サービスアカウント借用（`token_format: access_token`）
 - 取得したアクセストークンで `docker/login-action`（registry: `asia-northeast1-docker.pkg.dev`、username: `oauth2accesstoken`）
@@ -69,6 +69,12 @@ Compute EngineのVM（個人用バックエンド）は対象外です（従来�
   - `--set-env-vars` 等の他のフラグも付けない（既存の環境変数・`--max-instances=1` 等はそのまま引き継がれる）。
 - `permissions: id-token: write`（と `contents: read`）は**デプロイを行うジョブにだけ**付け、`if: github.event_name == 'push' && github.ref == 'refs/heads/master'` で絞る
   （GCP側の信頼条件でも絞るが、workflow側でも二重に絞る）。
+- `google-github-actions/auth` がワークスペースに書き出す認証情報ファイル（`gha-creds-*.json`）は、`.dockerignore` で
+  Dockerのビルドコンテキストから除外している。
+- フロントエンドの `deploy-frontend` ジョブ（`id-token: write` は付けない）は `deploy-backend` の成功後に、2プロジェクトそれぞれで
+  `vercel pull --environment=production` → `vercel build --prod` → `vercel deploy --prebuilt --prod` を `frontend/` で実行する。
+  `VERCEL_TOKEN` は `pull` と `deploy` のステップにだけ渡し、依存のインストールを含む `build` には渡さない。
+- デプロイジョブで使うアクションは、コミットSHAで固定している（タグの付け替えによる差し替えを防ぐため）。
 
 ## GitHubに登録するSecrets / Variables（後続タスクで使う名前）
 
@@ -628,7 +634,9 @@ Vercel CLIでのデプロイには、チーム（org）IDとプロジェクトID
 
 あわせて、後続タスクのworkflowを書く前に各プロジェクトについて次を確認しておきます（状態は変えない）。
 
-- 「Settings」→「Build and Deployment」の **Root Directory**（CLIをリポジトリルートと `frontend/` のどちらで実行するかが決まる）
+- 「Settings」→「Build and Deployment」の **Root Directory** が**空**（リポジトリルート扱い）であること。
+  workflowはVercel CLIを `frontend/` で実行するため、Root Directoryに `frontend` が設定されていると
+  `frontend/frontend` を探して失敗する（その場合はRoot Directoryを空にするか、workflowの `working-directory` を直す）
 - 「Settings」→「Environment Variables」で Production の `VITE_API_BASE_URL` が設定済みであること
   （デモ用はCloud RunのURL、個人用はVMのURL。workflowは `vercel pull --environment=production` でこれを取得してビルドする）
 

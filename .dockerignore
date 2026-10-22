@@ -20,3 +20,5 @@ frontend
 spec.md
 README.md
 .claude
+# google-github-actions/auth がワークスペースに書き出す認証情報ファイルをビルドコンテキストへ送らない
+gha-creds-*.json

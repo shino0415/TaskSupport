@@ -2421,7 +2421,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 1
 
 ### タスク: masterへのpush時のCloud Run・Vercel自動デプロイ
-- status: 未着手
+- status: 完了
 - 概要: デプロイ順序は決定済み（Cloud Runの成功後にフロントエンド2つをデプロイする。「## 決定事項」参照）。「## 決定事項」の「masterへのpush時の自動デプロイ」に基づき、masterへのpushでCIのチェック（バックエンド・フロントエンドとも）が通ったときだけ、バックエンドをCloud Run（`tasksupport-demo`）へ、フロントエンドをVercelの2プロジェクトへ自動デプロイする。あわせて `deploy/` 配下のドキュメントを自動デプロイ前提の内容に更新する。「フロントエンドのチェックをCIに追加」「自動デプロイ用の外部サービス設定手順の文書化」タスクの完了後に着手する。外部サービス側の設定（GCP・Vercel・GitHub）が済むまでは実際のデプロイは動かせないため、実デプロイでの動作確認はオーケストレーターがユーザーの確認を取って外部設定を行った後に別途行う。
 - 受け入れ条件:
   - [ ] masterブランチへのpushでCIのチェックがすべて通った場合にだけ、自動デプロイが実行される。チェックがひとつでも失敗した場合、master以外のブランチへのpush、プルリクエストでは、デプロイは実行されない
@@ -2435,8 +2435,39 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] デプロイに使うワークフローの権限は必要最小限（GCP認証に必要なトークン発行とリポジトリの読み取りのみ等）に限られ、Vercelトークン等の秘密情報はGitHub Secretsから参照される。ワークフローのログに秘密情報（Vercelトークン、個人利用環境のAPI Key等）が出力されない
   - [ ] Compute EngineのVM（個人用バックエンド）は自動デプロイの対象にならず、自動デプロイによってVMが使うイメージが切り替わらない
   - [ ] `deploy/README.md`・`deploy/cloud-run/README.md` が、自動デプロイの流れ（何が・いつ・どこへデプロイされるか）、`backend:<コミットSHA>` と `backend:latest` の使い分け、VMを手動で更新する手順（`latest` の手動更新を含む）、自動デプロイが使えないときの手動デプロイ手順を反映した内容に更新されている。あわせて `deploy/github-actions/README.md` のクリーンアップポリシーの節に、古いSHAへ切り戻した後は使用中のイメージが早く削除対象になるため、pushを控えるかドライランに戻すという注意が追記されている（セキュリティ再レビューのLow指摘）
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- generatorの実装メモ（2026-10-22）:
+  - `.github/workflows/ci.yml` に `deploy-backend`（`needs: [build, frontend]`、`if: push && refs/heads/master`、`permissions: contents: read, id-token: write`）と `deploy-frontend`（`needs: deploy-backend`、`contents: read` のみ、`frontend`/`tasksupport-personal-frontend` の2プロジェクトをmatrix・`fail-fast: false`）を追加。各デプロイジョブは `concurrency`（`cancel-in-progress: false`）で順番待ちにし、連続pushでの追い越しを防ぐ。デプロイジョブのアクションはコミットSHAで固定（CI追加タスクのLow指摘への対応。既存ジョブは変更していない）。
+  - バックエンド: `google-github-actions/auth`（`vars.GCP_WORKLOAD_IDENTITY_PROVIDER`/`vars.GCP_DEPLOY_SERVICE_ACCOUNT`、`token_format: access_token`）→ `docker/login-action` → `docker/build-push-action`（`tasksupport-demo/backend:${{ github.sha }}` のみ、`provenance: false`・`sbom: false`）→ `gcloud run deploy tasksupport-demo --image=... --region=asia-northeast1 --project=tasksupport-portfolio --quiet`（他のフラグは付けない）。authが書き出す `gha-creds-*.json` を `.dockerignore` に追加。
+  - フロントエンド: Vercel CLI `65.1.0` を `frontend/` で `pull --environment=production` → `build --prod` → `deploy --prebuilt --prod`。`VERCEL_TOKEN`（Secret）は設定確認・`pull`・`deploy` のステップにだけ渡し、依存インストールを含む `build` と CLIのインストールには渡さない。`VERCEL_ORG_ID`・`VERCEL_PROJECT_ID_DEMO`/`_PERSONAL` はVariablesから参照。
+  - 実デプロイ前に確認が要る前提: (1) 両Vercelプロジェクトの Root Directory が空であること（`deploy/github-actions/README.md` のV-2に追記）。(2) `vercel build` がトークン無しで動くこと（pull済みの設定だけで動く想定。動かなければ `build` ステップにもトークンを渡す）。
+  - `deploy/github-actions/README.md` のクリーンアップポリシーの節の「古いSHAへ切り戻した後の注意」は、前タスクで既に追記済みだったため内容は変えていない（`deploy/cloud-run/README.md` の切り戻し手順からも参照）。
+  - 確認: actionlint（`uvx --from actionlint-py actionlint`）でエラー無し、`uv run ruff check` 合格、`uv run pytest` 501件合格。workflowの実行・外部サービスへのアクセス（push・docker build/push・gcloud・vercel）は行っていない。
+- セキュリティエバリュエーターのフィードバック（2026-10-22、合格。Critical/High/Mediumなし）:
+  - [Low] デプロイされるイメージが、タグ指定のままのアクションで書かれたキャッシュの影響を受ける。`deploy-backend` の `docker/build-push-action` は `cache-from: type=gha` を使う。このキャッシュは、同じmasterの実行内の `build` ジョブが `cache-to: type=gha,mode=max` で書き込んだもので、`build` ジョブのアクション（`actions/checkout@v4`・`docker/setup-buildx-action@v3`・`docker/build-push-action@v6`）はタグ指定のまま。デプロイジョブだけをSHAで固定しても、上流のタグが乗っ取られた場合は、キャッシュ汚染を通じて本番のCloud Runに出るイメージ（`uv sync` の層など）が改ざんされうる。GitHubのキャッシュはブランチ単位で分かれており、PR・他ブランチ・forkから書かれたキャッシュはmasterから読まれない。このため、成立するのは上流のアクションが侵害された場合だけで、差し戻しはしない。対策の候補: (a) `deploy-backend` から `cache-from` を外す（ビルド時間が延びる） (b) `build` ジョブのアクションもSHAで固定する。なお、GitHub Actionsのバージョン変更は「依存パッケージ更新」タスクの対象外と決まっているため、(b)を選ぶ場合は別タスクにする。設計判断なので、どちらにするか（または現状のままにするか）はユーザーに選んでもらう。
+  - [Low/未検証] 固定したコミットSHAが、コメントに書かれたタグ（例: `actions/checkout@3d3c42e…  # v7.0.1`）の公式リポジトリのコミットと本当に一致するかは、外部へのアクセスを控えたため確認していない。存在しないSHAならジョブが失敗するだけで安全側に倒れる。ただし、fork側のコミットのSHAを参照すると、公式リポジトリ名のまま別のコードが実行されうる（imposter commit）。外部設定を行って自動デプロイを有効にする前に、オーケストレーターが `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>` 等で7つのSHA（checkout・auth・login-action・setup-buildx-action・build-push-action・setup-gcloud・setup-node）の対応を確認すること。
+  - [Info] 実装メモ(2)にある「`vercel build` がトークン無しで動かなければ `build` ステップにもトークンを渡す」は、依存パッケージのインストールスクリプトに `VERCEL_TOKEN` を見せることになり、今回の分離が崩れる。そうなった場合は、渡す前にセキュリティ評価に戻すこと。なお、同じジョブの中なので、`build` で動いた依存のコードがランナー上のファイル（グローバルに入れたVercel CLI等）を書き換えれば、後の `deploy` ステップでトークンが漏れる余地は理屈の上では残る。ロックファイルの依存がCIで検査済みであることを踏まえ、現状の分離で十分と判断した。
+  - 確認できた点:
+    - トリガーの絞り込み: workflowは全ブランチへの `push` と `pull_request` で動くが、両デプロイジョブには `if: github.event_name == 'push' && github.ref == 'refs/heads/master'` が付いている。明示的な `if` には暗黙の `success()` が加わるため、`needs`（`deploy-backend` は `[build, frontend]`、`build` は lint→test→migrate の連鎖）がひとつでも失敗するとデプロイしない。`deploy-frontend` は `deploy-backend` の成功が前提。PR（fork含む）は `event_name` が `pull_request` のため動かない。GCP側の信頼条件（`deploy/github-actions/README.md` の `--attribute-condition`）も、リポジトリ・リポジトリID・オーナーID・`refs/heads/master`・`push` で絞っており、二重になっている。
+    - 権限: workflow全体は `contents: read` のまま。`id-token: write` は `deploy-backend` だけに付いており、`deploy-frontend` は `contents: read` のみ。`VERCEL_TOKEN` を参照するのは、`deploy-frontend` の設定確認・`pull`・`deploy` の3ステップの `env` だけ。CLIのインストールと `vercel build`（依存のインストールを含む）には渡していない。両デプロイジョブのcheckoutは `persist-credentials: false`。
+    - スクリプトインジェクション: `run:` の中に `${{ }}` の式展開は無く、すべてシェル変数（`"${IMAGE}"`・`"${VERCEL_TOKEN}"` 等）経由。`IMAGE` に入るのは `github.sha` と固定文字列だけで、`matrix` の値も固定（Variablesから取るIDは `env` 経由）。
+    - ログ: 設定確認ステップは変数名だけを出力し、値は出さない。`--token="${VERCEL_TOKEN}"` はSecret由来なので、GitHubのログではマスクされる。GCPのアクセストークンはステップ出力から `docker/login-action` の `password` に渡すだけで、`auth` アクションがマスクする。個人利用環境のAPI Keyはworkflowに一切出てこない。
+    - 認証情報ファイルの混入: `google-github-actions/auth` はワークスペースのルートに `gha-creds-*.json` を書き出す。`.dockerignore` の `gha-creds-*.json` はコンテキストルート基準のパターンなので、この位置にマッチし、`context: .` のビルドに送られない。中身はWIFの外部アカウント設定で、鍵ファイルではない。
+    - 決定事項との整合: push先は `tasksupport-demo/backend:${{ github.sha }}` だけで、`latest` タグは付けない。`provenance: false`・`sbom: false` を指定している。`gcloud run deploy` は `--image`・`--region`・`--project`・`--quiet` だけなので、環境変数・インスタンス数・公開設定・ランタイム用SAを引き継ぐ。専用ランタイム用SAに切り替える前（デフォルトのCompute Engine SAのまま）だと、デプロイ用SAにactAsが無いため失敗し、安全側に倒れる。VMとVM用の `tasksupport` リポジトリには触れない。サービスアカウントの鍵は使わない。
+    - 文書: 新たに書かれた識別子（Vercelのteam/project ID、デモ用の `API_KEY=demo-fb6713027aa00b2a`、VMのIP）は、いずれもコミット済みの文書に既にあり、秘密ではない値（デモ用API Keyは公開前提）。トークン・個人用API Key・鍵の実値は含まれていない。手動デプロイ手順は自分の権限で実行する前提で書かれ、`--allow-unauthenticated` がデプロイ用SAでは実行できないことも明記されている。
+- 性能エバリュエーターのフィードバック（2026-10-22、合格）:
+  - 実行結果: `uv run pytest` 501件合格・warning 0件、`uv run ruff check` 合格、`uvx --from actionlint-py actionlint` エラー無し、`ci.yml` はYAMLとして正しく読み込める。フロントエンド（Node 24.19.0）は `npm run typecheck`・`npm run lint`（`oxlint --deny-warnings`）・`npm test`（18ファイル・244件合格）・`npm run build` がすべて通り、warningも無い。フロントエンドとバックエンドのアプリコードは変更されていない。workflowの実行や外部サービスへのアクセス（push・docker build/push・gcloud・vercel）は行っていない。ただし、npmレジストリの公開情報だけは参照し、`vercel@65.1.0` が実在する最新版で、`engines` が `node >= 20`（Node 24で動く）であることを確かめた。
+  - 受け入れ条件1（masterへのpushでチェックが通ったときだけ）: 合格。`deploy-backend` は `needs: [build, frontend]` で、`build` は lint→test→migrate→build の順につながっている。両デプロイジョブに `if: push && refs/heads/master` があり、暗黙の `success()` も効く。
+  - 受け入れ条件2（`tasksupport-demo/backend:<SHA>` だけ、`latest` は更新しない）: 合格。`tags` は `${{ env.IMAGE }}`（`tasksupport-demo/backend:${{ github.sha }}`）の1つだけで、`gcloud run deploy` もこのイメージを使う。
+  - 受け入れ条件3（Cloud Runの既存設定を変えない）: 合格。`gcloud run deploy` に渡すのは `--image`・`--region`・`--project`・`--quiet` だけ。
+  - 受け入れ条件4（Workload Identity連携・鍵を置かない）: 合格。`google-github-actions/auth` にWIFプロバイダとSAをVariablesから渡しており、鍵やcredentials_jsonは使わない。`gha-creds-*.json` は `.dockerignore` で除外している。
+  - 受け入れ条件5（Vercel CLIで2プロジェクトへ本番デプロイ、接続先は変えない）: 合格。matrixで2プロジェクトを扱い、`vercel pull --environment=production` で各プロジェクトのProduction環境変数（`VITE_API_BASE_URL`）を取得してビルドする。`.vercel` は `frontend/.gitignore` に含まれている。
+  - 受け入れ条件6（順序）: 合格。`deploy-frontend` は `needs: deploy-backend` なので、Cloud Runのデプロイに失敗するとフロントエンドもデプロイしない。決定事項の選択肢Aどおり。
+  - 受け入れ条件7（`id-token: write` はデプロイジョブだけ）: 合格。workflow全体は `contents: read`。`id-token: write` は `deploy-backend` にだけ付いている。
+  - 受け入れ条件8（provenance等を付けない）: 合格。`provenance: false`・`sbom: false`。
+  - 受け入れ条件9（最小権限・Secrets参照・ログに出さない）: 合格。`VERCEL_TOKEN` は `secrets` から参照し、設定確認・pull・deployの3ステップにだけ渡す。設定確認で出力するのは変数名だけ。
+  - 受け入れ条件10（VMは対象外）: 合格。workflowは `tasksupport` リポジトリにもVMにも触れない。
+  - 受け入れ条件11（文書）: 合格。`deploy/README.md` には、自動デプロイの表（いつ・何を・どこへ）、SHAと `latest` の使い分け、VMの手動更新手順（`latest` のbuild・push → `docker compose pull app && up -d`、マイグレーションは `compute-engine/README.md` を参照）、フロントエンドの手動デプロイが書かれている。`deploy/cloud-run/README.md` には、自動デプロイの流れ、切り戻し、手動デプロイ、作り直しのときに全フラグを指定する手順が書かれている。`github-actions/README.md` のG-8aにある切り戻し後の注意は、392〜393行目に既にある。文書から参照している G-6・G-7・G-8a・V-2・`compute-engine/README.md`、VM名とゾーン（`tasksupport-personal`・`us-central1-a`）、SA名（`github-actions-deployer`・`tasksupport-demo-runtime`）、Variables名は、いずれも参照先と一致している。相対リンク（`./cloud-run/README.md`・`../README.md`・`../github-actions/README.md` 等）の参照先も実在する。
+  - [Info/差し戻し対象外] 次の点はpytestやlintでは確かめられないので、外部設定の後に初めて実デプロイするときに確認すること。(1) 両VercelプロジェクトのRoot Directoryが空であること。(2) `vercel build --prod` がトークン無しで動くこと。動かない場合は、セキュリティの[Info]にあるとおり、トークンを渡す前にセキュリティ評価に戻す。(3) セキュリティの[Low/未検証]にある、固定したアクションのSHAが実際のタグと対応していること。
 - 差し戻し回数: 0
 
 ### タスク: 依存パッケージの脆弱性修正と範囲内の更新
