@@ -2519,7 +2519,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 依存パッケージのメジャー更新
-- status: 未着手
+- status: 完了
 - 概要: 「## 決定事項」の「依存パッケージの最新版への更新」に基づき、TypeScript 7・Vitest 5（`@vitest/coverage-v8` を含む）・`@types/node` 26系など、フロントエンド・バックエンドに残っているメジャー更新を行い、破壊的変更に対応したうえで依存を最新版に揃える。「依存パッケージの脆弱性修正と範囲内の更新」タスクの完了後に着手する。既存の画面・挙動は変えない。
 - 受け入れ条件:
   - [ ] フロントエンドの依存パッケージがメジャー更新を含めて最新版になり、`npm outdated` で更新対象が残らない。`@types/node` は最新の26系になっている
@@ -2530,6 +2530,26 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] 既存の画面・ルーティング・挙動が変わらず、既存の自動テストがテストの意図を変えずに引き続き通過する。本番ビルドのページ単位・共通ライブラリ単位のコード分割も維持されている
   - [ ] バックエンドのlint・テスト（warningなし）・マイグレーション検証・Dockerイメージのビルドが引き続き通る
   - [ ] CIの構成のまま、CIのチェック（バックエンド・フロントエンドとも）が通る。依存はロックファイルに基づいてインストールされ、フロントエンド・バックエンドのロックファイルが更新後の内容でコミット対象になっている。GitHub Actionsのアクションのバージョンは変更しない
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- generatorの実装メモ（2026-10-22）:
+  - フロントエンド: `@types/node` 24.19.2→26.6.5、`typescript` 6.0.3→7.0.2（`~7.0.2`）、`vitest`・`@vitest/coverage-v8` 4.1.12→5.0.5 に更新した（`package.json`・`package-lock.json`）。ソースコード・設定ファイル（tsconfig・`vite.config.ts`・`.oxlintrc.json`）の変更は不要だった。破壊的変更による型エラー・テスト失敗・警告は出ていない。lintルールの無効化・抑制コメント・テストの書き換えはしていない。`npm outdated` は空。
+  - lockの変化: TypeScript 7 のネイティブ実装のプラットフォーム別オプションバイナリ（`@typescript/typescript-<os>-<arch>`）が増え、Vitest 5 で内部パッケージが整理された（`@vitest/istanbul-lib-*` が増え、`@vitest/runner` 等や istanbul 系の推移的依存が減った）。`resolved` はすべて `https://registry.npmjs.org/`。`vitest` 5.0.5 の engines は `^22.12.0 || ^24.0.0 || >=26.0.0` で、CIのNode 24と合う。
+  - バックエンド: `uv lock --upgrade --dry-run` は「No lockfile changes detected」、`uv tree --outdated` でも更新対象は無く、メジャー更新の対象は無かった。`pyproject.toml`・`uv.lock` は変更していない。
+  - セルフチェック（Node 24.19.0）: `npm ci`（警告なし）→ `npm audit`（0件）→ `npm run typecheck`（tsc 7.0.2。わざと型エラーを入れたファイルで検出されることも確認済み、確認後削除）→ `npm run lint`（`--deny-warnings`、警告0）→ `npm test`（vitest 5.0.5、19ファイル・251件通過。act警告・console.error・deprecation出力なし）→ `npm run build`（警告なし。OverviewPanel／CoursesPanel／CompaniesPanel のページ単位チャンクと mui-vendor／react-vendor の共通ライブラリチャンクを維持）がすべて通過。バックエンドは `uv run ruff check` 通過、`uv run pytest` 501件通過（warning 0）、一時ファイルの空DBへの `alembic upgrade head` と `alembic check`（差分なし）も通過。Dockerイメージのビルドは禁止事項のため実行していない。`.github/` は変更していない。
+- セキュリティエバリュエーターのフィードバック（2026-10-22、合格）:
+  - Critical/High/Medium/Low: 指摘なし。
+  - 変更範囲: `frontend/package.json`・`frontend/package-lock.json` の devDependencies 更新のみ（ソース・設定・バックエンド・`.github/` の変更なし）。認証・論理削除・CORS・エラーハンドリング等のアプリケーションコードには影響しない。
+  - `npm audit`（全体・`--omit=dev` とも）0件。`npm audit signatures` で190パッケージすべてのレジストリ署名を検証済み（attestation付き71件）。
+  - lock内の `resolved` はすべて `https://registry.npmjs.org/`、全エントリに `integrity` あり。新規・更新パッケージ26件（`typescript`・`@typescript/typescript-<os>-<arch>` 20件・`vitest`・`@vitest/coverage-v8`・`@vitest/istanbul-lib-coverage`/`-report`・`@types/node`）の `integrity` がレジストリの `dist.integrity` と一致。
+  - 新規パッケージの出所: `@typescript/typescript-*` は `typescript@7.0.2` の `optionalDependencies` と完全一致し、メンテナ（microsoft1es・typescript-bot等）・リポジトリ（microsoft/TypeScript）とも本体と同一。`@vitest/istanbul-lib-*` は vitest-dev/istanbuljs 由来で、メンテナが vitest 本体と同一、SLSA provenance あり。いずれも各OS/CPU限定のoptionalで、typosquatting等の不審な名前は無い。
+  - install script: 新規・更新パッケージに `preinstall`/`install`/`postinstall` は無い（lock上 `hasInstallScript` は従来からの `fsevents` のみ）。
+  - 本番影響: 変更は全て `dev: true`。`npm ls --omit=dev` にtypescript/vitest/@types/node系は現れず、本番バンドルに入る依存は変わらない。CIは `npm ci` でロックに基づきインストールされる。
+- 性能エバリュエーターのフィードバック（2026-10-22、合格）:
+  - フロントエンド（Node 24.19.0）: `npm ci`（警告なし）→ `npm audit` 0件 → `npm outdated` 空（`@types/node` 26.6.5）→ `npm run typecheck`（tsc 7.0.2）通過 → `npm run lint`（`--deny-warnings`）警告0 → `npm test`（vitest 5.0.5、19ファイル・251件通過。act警告・console.error・deprecation出力なし）→ `npm run build` 警告なし（deprecation・チャンクサイズ警告なし）。
+  - コード分割: OverviewPanel／CoursesPanel／CompaniesPanel のページ単位チャンクと react-vendor／mui-vendor の共通ライブラリチャンクが維持されていることをビルド出力で確認。
+  - カバレッジ: `package.json` にカバレッジ用スクリプトは無いが、`vitest run --coverage`（出力先は一時ディレクトリ）で `@vitest/coverage-v8` 5.0.5 が警告なしで動作し、251件通過・レポート生成されることを確認。
+  - 既存テストの意図: `frontend/src`・設定ファイル・`.github/`・バックエンドに差分なし（変更は `frontend/package.json`・`package-lock.json`・`spec.md` のみ）で、テストの書き換えは無い。
+  - CIとの整合: CIのfrontendジョブはNode 24・`npm ci`→typecheck→lint→test→buildで、ローカル検証と同じ手順。vitest 5.0.5 の engines `^22.12.0 || ^24.0.0 || >=26.0.0`、TypeScript 7.0.2 の engines `>=16.20.0`、vite 8 の `^20.19.0 || >=22.12.0` のいずれもNode 24を満たす。GitHub Actionsのアクションのバージョンは変更なし。
+  - バックエンド: `uv lock --upgrade --dry-run` は「No lockfile changes detected」、`uv tree --outdated` でも更新対象なし。`uv run ruff check` 通過、`uv run pytest` 501件通過（warning 0）。
+  - 未確認: Dockerイメージのビルドは禁止事項のため実行していない（バックエンドのコード・依存・Dockerfileに変更が無いため影響は無い見込み）。マイグレーション検証はgeneratorのセルフチェック結果（`alembic upgrade head`・`alembic check` 差分なし）を参照し、本評価では再実行していない。CI上での実行結果は未push のため未確認。
+  - 最新版にできなかった依存は無い。
 - 差し戻し回数: 0
