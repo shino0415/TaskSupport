@@ -57,15 +57,21 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
+function findOverviewRegion() {
+  return screen.findByRole('region', { name: '横断一覧' })
+}
+
 function coursesRegion() {
   return screen.getByRole('region', { name: '授業管理' })
 }
 
 // 授業管理画面（CoursesPanel）は「授業ページ」（/courses）上にあるため、
 // その画面固有の疎通・エラー表示の確認はこのページを開いた状態でレンダリングする。
-function renderCoursesPage() {
+// ページは遅延読み込みのため、授業管理画面が表示されるまで待ってから返す。
+async function renderCoursesPage() {
   window.history.pushState(null, '', '/courses')
   render(<App />)
+  await screen.findByRole('region', { name: '授業管理' })
 }
 
 beforeEach(() => {
@@ -83,20 +89,22 @@ afterEach(() => {
 })
 
 describe('初期画面', () => {
-  it('API Key未入力なら入力を促し、APIを呼ばない', () => {
+  it('API Key未入力なら入力を促し、APIを呼ばない', async () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
     render(<App />)
+    await findOverviewRegion()
 
     expect(screen.getByRole('heading', { name: '授業タスク・選考トラッカー' })).toBeInTheDocument()
     expect(screen.getByText(/API Keyを入力すると/)).toBeInTheDocument()
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
 
-  it('接続先（環境変数の値）を画面に表示する', () => {
+  it('接続先（環境変数の値）を画面に表示する', async () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
     render(<App />)
+    await findOverviewRegion()
 
     expect(screen.getByText(`接続先: ${BASE_URL}`)).toBeInTheDocument()
   })
@@ -107,7 +115,7 @@ describe('API Keyを入力しての疎通', () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_COURSE])))
     const user = userEvent.setup()
 
-    renderCoursesPage()
+    await renderCoursesPage()
     await user.type(screen.getByLabelText('API Key'), 'valid-key')
     await user.click(screen.getByRole('button', { name: '保存して接続' }))
 
@@ -127,7 +135,7 @@ describe('API Keyを入力しての疎通', () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
     const user = userEvent.setup()
 
-    renderCoursesPage()
+    await renderCoursesPage()
     await user.type(screen.getByLabelText('API Key'), 'valid-key')
     await user.click(screen.getByRole('button', { name: '保存して接続' }))
 
@@ -141,7 +149,7 @@ describe('API Keyを入力しての疎通', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_COURSE])))
 
-    renderCoursesPage()
+    await renderCoursesPage()
 
     expect(await within(coursesRegion()).findByText('データベース論')).toBeInTheDocument()
     const [, init] = vi.mocked(fetch).mock.calls[0]!
@@ -154,7 +162,7 @@ describe('API Keyを入力しての疎通', () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
     const user = userEvent.setup()
 
-    renderCoursesPage()
+    await renderCoursesPage()
     await within(coursesRegion()).findByText('取得件数: 0 件')
     await user.click(screen.getByRole('button', { name: 'クリア' }))
 
@@ -166,7 +174,7 @@ describe('API Keyを入力しての疎通', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
-    renderCoursesPage()
+    await renderCoursesPage()
 
     expect(await within(coursesRegion()).findByText('取得件数: 0 件')).toBeInTheDocument()
     expect(within(coursesRegion()).getByText('授業は0件です。')).toBeInTheDocument()
@@ -178,7 +186,7 @@ describe('エラー表示', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'wrong-key')
     stubFetch(() => Promise.resolve(jsonResponse(401, { detail: 'Invalid or missing API Key' })))
 
-    renderCoursesPage()
+    await renderCoursesPage()
 
     const alert = await within(coursesRegion()).findByRole('alert')
     expect(alert).toHaveTextContent('401')
@@ -189,7 +197,7 @@ describe('エラー表示', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
 
-    renderCoursesPage()
+    await renderCoursesPage()
 
     const alert = await within(coursesRegion()).findByRole('alert')
     expect(alert).toHaveTextContent(BASE_URL)
@@ -201,7 +209,7 @@ describe('エラー表示', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
-    renderCoursesPage()
+    await renderCoursesPage()
 
     expect(await within(coursesRegion()).findByRole('alert')).toHaveTextContent(
       'VITE_API_BASE_URL',
@@ -218,7 +226,7 @@ describe('エラー表示', () => {
     )
     const user = userEvent.setup()
 
-    renderCoursesPage()
+    await renderCoursesPage()
     await within(coursesRegion()).findByRole('alert')
 
     shouldFail = false
@@ -268,7 +276,7 @@ describe('横断一覧からの画面遷移', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    await within(overviewRegion()).findByText('一次面接')
+    await within(await findOverviewRegion()).findByText('一次面接')
     await user.click(
       within(overviewRegion()).getByRole('link', { name: '企業「株式会社サンプル」の詳細へ' }),
     )
@@ -286,7 +294,7 @@ describe('締切が近い課題からの画面遷移', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    const assignmentsSection = within(overviewRegion()).getByRole('region', {
+    const assignmentsSection = within(await findOverviewRegion()).getByRole('region', {
       name: '締切が近い課題',
     })
     await within(assignmentsSection).findByText('正規化レポート')
@@ -311,6 +319,7 @@ describe('締切が近い課題からの画面遷移', () => {
     window.history.pushState(null, '', '/courses/1')
 
     render(<App />)
+    await screen.findByRole('region', { name: '授業管理' })
 
     expect(await within(coursesRegion()).findByText('課題（データベース論）')).toBeInTheDocument()
     expect(await within(coursesRegion()).findByText('正規化レポート')).toBeInTheDocument()
@@ -322,12 +331,12 @@ function navBar() {
 }
 
 describe('画面構成の分割とナビゲーション', () => {
-  it('アプリを開くと横断一覧画面が表示される', () => {
+  it('アプリを開くと横断一覧画面が表示される', async () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
     render(<App />)
 
-    expect(overviewRegion()).toBeInTheDocument()
+    expect(await findOverviewRegion()).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '授業管理' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '選考管理' })).not.toBeInTheDocument()
   })
@@ -352,16 +361,16 @@ describe('画面構成の分割とナビゲーション', () => {
     expect(navBar()).toBeInTheDocument()
 
     await user.click(within(navBar()).getByRole('link', { name: '横断一覧' }))
-    expect(overviewRegion()).toBeInTheDocument()
+    expect(await findOverviewRegion()).toBeInTheDocument()
   })
 
-  it('「授業ページ」「選考ページ」は固有のURLを持ち、直接開いても同じ画面が表示される', () => {
+  it('「授業ページ」「選考ページ」は固有のURLを持ち、直接開いても同じ画面が表示される', async () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubRoutingFetch()
 
     window.history.pushState(null, '', '/courses')
     const { unmount } = render(<App />)
-    expect(screen.getByRole('region', { name: '授業管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '授業管理' })).toBeInTheDocument()
     expect(
       within(navBar()).getByRole('link', { name: '授業ページ' }),
     ).toHaveAttribute('aria-current', 'page')
@@ -369,16 +378,16 @@ describe('画面構成の分割とナビゲーション', () => {
 
     window.history.pushState(null, '', '/companies')
     render(<App />)
-    expect(screen.getByRole('region', { name: '選考管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '選考管理' })).toBeInTheDocument()
   })
 
-  it('存在しないURLを開いても画面が壊れず横断一覧に案内される', () => {
+  it('存在しないURLを開いても画面が壊れず横断一覧に案内される', async () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
     window.history.pushState(null, '', '/no-such-page')
     render(<App />)
 
-    expect(overviewRegion()).toBeInTheDocument()
+    expect(await findOverviewRegion()).toBeInTheDocument()
   })
 
   it('ブラウザの「戻る」「進む」操作でも対応するページが表示される', async () => {
@@ -387,7 +396,7 @@ describe('画面構成の分割とナビゲーション', () => {
     const user = userEvent.setup()
 
     render(<App />)
-    expect(overviewRegion()).toBeInTheDocument()
+    expect(await findOverviewRegion()).toBeInTheDocument()
 
     await user.click(within(navBar()).getByRole('link', { name: '授業ページ' }))
     expect(await screen.findByRole('region', { name: '授業管理' })).toBeInTheDocument()
@@ -424,7 +433,9 @@ describe('詳細ダイアログへのディープリンク（新しいページ�
 
     // ダイアログが開くとMUIが背景をaria-hiddenにするため、背景側の要素は
     // hidden: true を指定して（アクセシビリティツリー上は非表示のまま）存在のみ確認する。
-    expect(screen.getByRole('region', { name: '選考管理', hidden: true })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('region', { name: '選考管理', hidden: true }),
+    ).toBeInTheDocument()
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('企業詳細（ID: 1）')).toBeInTheDocument()
     expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
@@ -441,7 +452,7 @@ describe('廃止した旧案件系の画面', () => {
 
       render(<App />)
 
-      expect(overviewRegion()).toBeInTheDocument()
+      expect(await findOverviewRegion()).toBeInTheDocument()
       expect(window.location.pathname).toBe('/')
       expect(await within(overviewRegion()).findByText('一次面接')).toBeInTheDocument()
       const requestedPaths = vi
@@ -459,7 +470,7 @@ describe('廃止した旧案件系の画面', () => {
 
     render(<App />)
 
-    expect(await within(overviewRegion()).findByText('一次面接')).toBeInTheDocument()
+    expect(await within(await findOverviewRegion()).findByText('一次面接')).toBeInTheDocument()
     expect(within(overviewRegion()).getByText('予定の近い選考ステップ')).toBeInTheDocument()
     expect(screen.queryByText(/計測中の作業|進行中の稼働ログ/)).not.toBeInTheDocument()
     const requestedPaths = vi
@@ -498,6 +509,7 @@ describe('URLパラメータのid検証', () => {
       window.history.pushState(null, '', `/courses/${invalidId}`)
 
       render(<App />)
+      await screen.findByRole('region', { name: '授業管理' })
 
       expect(await within(coursesRegion()).findByText('データベース論')).toBeInTheDocument()
       expect(window.location.pathname).toBe('/courses')
@@ -515,11 +527,36 @@ describe('URLパラメータのid検証', () => {
 
       render(<App />)
 
-      const region = screen.getByRole('region', { name: '選考管理' })
+      const region = await screen.findByRole('region', { name: '選考管理' })
       expect(await within(region).findByText('株式会社サンプル')).toBeInTheDocument()
       expect(window.location.pathname).toBe('/companies')
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(requestedPaths().filter((path) => path.startsWith('/companies/'))).toEqual([])
     },
   )
+})
+
+describe('ページの遅延読み込み', () => {
+  it.each([
+    ['/', '横断一覧'],
+    ['/courses', '授業管理'],
+    ['/companies', '選考管理'],
+  ])('ページ（%s）のコードを読み込んでいる間はスピナーを表示し、読み込み後にページを表示する', async (path, regionName) => {
+    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+    stubRoutingFetch()
+    window.history.pushState(null, '', path)
+    // 遅延読み込みしたページはモジュール単位でキャッシュされるため、
+    // 未読み込みの状態を再現するようAppをモジュールごと読み込み直す
+    vi.resetModules()
+    const { default: FreshApp } = await import('./App')
+
+    render(<FreshApp />)
+
+    expect(screen.getByRole('progressbar', { name: 'ページを読み込み中' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: regionName })).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'ページナビゲーション' })).toBeInTheDocument()
+
+    expect(await screen.findByRole('region', { name: regionName })).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar', { name: 'ページを読み込み中' })).not.toBeInTheDocument()
+  })
 })

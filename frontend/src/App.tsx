@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 
 import Alert from '@mui/material/Alert'
+import Box from '@mui/material/Box'
+import CircularProgress from '@mui/material/CircularProgress'
 import Container from '@mui/material/Container'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
@@ -8,12 +10,29 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-
 
 import { clearApiKey, loadApiKey, saveApiKey } from './api/apiKeyStorage'
 import { ApiKeyPanel } from './components/ApiKeyPanel'
-import { CompaniesPanel } from './components/CompaniesPanel'
-import { CoursesPanel } from './components/CoursesPanel'
 import { NavBar } from './components/NavBar'
-import { OverviewPanel } from './components/OverviewPanel'
 import { getApiBaseUrl } from './config'
 import { parsePositiveIntegerParam } from './routeParams'
+
+// 各ページのコードは開いたときに初めて読み込む（Panelはnamed exportのためdefaultに詰め替える）
+const OverviewPanel = lazy(() =>
+  import('./components/OverviewPanel').then((m) => ({ default: m.OverviewPanel })),
+)
+const CoursesPanel = lazy(() =>
+  import('./components/CoursesPanel').then((m) => ({ default: m.CoursesPanel })),
+)
+const CompaniesPanel = lazy(() =>
+  import('./components/CompaniesPanel').then((m) => ({ default: m.CompaniesPanel })),
+)
+
+/** ページのコードを読み込んでいる間に表示するスピナー。 */
+function PageLoading() {
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 6 }}>
+      <CircularProgress aria-label="ページを読み込み中" />
+    </Box>
+  )
+}
 
 type CompaniesPageProps = {
   apiKey: string
@@ -80,15 +99,17 @@ export default function App() {
             <Alert severity="info">API Keyを入力すると、APIへ接続して各画面のデータを表示します。</Alert>
           )}
 
-          <Routes>
-            <Route path="/" element={<OverviewPanel apiKey={apiKey} />} />
-            <Route path="/courses" element={<CoursesPanel apiKey={apiKey} />} />
-            <Route path="/courses/:courseId" element={<CourseAssignmentsRoute apiKey={apiKey} />} />
-            <Route path="/companies" element={<CompaniesPage apiKey={apiKey} />} />
-            <Route path="/companies/:companyId" element={<CompanyDetailRoute apiKey={apiKey} />} />
-            {/* 廃止済みの旧URL（/projects・/tasks 等）もここで横断一覧へ案内する */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route path="/" element={<OverviewPanel apiKey={apiKey} />} />
+              <Route path="/courses" element={<CoursesPanel apiKey={apiKey} />} />
+              <Route path="/courses/:courseId" element={<CourseAssignmentsRoute apiKey={apiKey} />} />
+              <Route path="/companies" element={<CompaniesPage apiKey={apiKey} />} />
+              <Route path="/companies/:companyId" element={<CompanyDetailRoute apiKey={apiKey} />} />
+              {/* 廃止済みの旧URL（/projects・/tasks 等）もここで横断一覧へ案内する */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </Stack>
       </Container>
     </BrowserRouter>

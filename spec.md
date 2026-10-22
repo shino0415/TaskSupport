@@ -291,6 +291,14 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **提出期限の表示**: 画面上の提出期限（授業ページの課題一覧、トップページの締切が近い課題）は `M/D HH:mm`（例: `11/1 23:59`）形式で表示する。API・入力欄の形式は変更しない。
 - **移行時バックアップの除外**: 移行手順で作成する `app.db.bak-<日時>` がgitで追跡されないよう、`.gitignore` に `*.db.bak*` を追加する（案A）。
 
+### フロントエンド本番ビルドのコード分割（確定: 2026-10-22）
+
+現状の本番ビルドでは全ページが1つのJSファイル（約497KB）にまとまっているため、初回表示で開いたページ分のコードだけを読み込むよう、ユーザーと協議して次のとおり確定した。
+
+- **分割範囲**: 横断一覧（`/`）・授業ページ（`/courses`, `/courses/:courseId`）・選考ページ（`/companies`, `/companies/:companyId`）の3ページを遅延読み込みにする。さらに、React・MUI・emotion・react-router等の共通ライブラリを、ページのコードとは別のJSファイルに分ける。
+- **読み込み中の表示**: ページのコードを読み込んでいる間は、MUIのスピナー（CircularProgress）を中央寄せで表示する。
+- **既存挙動の維持**: ルーティング（不正URLのリダイレクトを含む）・画面の挙動は変更しない。
+
 ## 未決定事項（要ユーザー判断）
 
 （現在、未解決の項目は無い。「論理削除済み授業に属する課題への個別操作の扱い」は2026-10-22にB案で確定し、「## 決定事項」に移した）
@@ -2258,4 +2266,32 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
     - 前回の備考の解消: `routeParams.test.ts` で `9007199254740991`（MAX_SAFE_INTEGERちょうど）は受理され、`9007199254740992`・`9007199254740993`・25桁の9・400桁の9はnullになる。`App.test.tsx` のURLパラメータ検証では、巨大id3値×授業・企業の2ルートで一覧へ置き換え遷移し、APIが呼ばれないことを確認した。いずれも実際に実行して通過している。
     - 回帰: 既存の不正値6種×2ルート、正の整数（`/courses/1`・`/companies/1`）の直接オープン、そのほかの受け入れ条件1〜5に対応するテストもすべて通過している。
     - 指摘事項なし。statusを「完了」に更新する。
+- 差し戻し回数: 0
+
+### タスク: フロントエンド 本番ビルドのページ単位コード分割
+- status: 完了
+- 概要: 「## 決定事項」の「フロントエンド本番ビルドのコード分割」に基づき、横断一覧・授業ページ・選考ページの3ページを遅延読み込みにし、共通ライブラリをページのコードとは別のJSファイルに分けることで、初回表示時に読み込むコード量を減らす。ページ読み込み中は中央寄せのスピナーを表示し、既存のルーティング・画面の挙動は変えない。
+- 受け入れ条件:
+  - [ ] 本番ビルドで、横断一覧・授業ページ・選考ページのコードがそれぞれ別のJSファイルに出力される
+  - [ ] React・MUI・emotion・react-router等の共通ライブラリが、ページのコードとは別のJSファイルに出力される
+  - [ ] 本番ビルドを配信した状態で、初回表示時には開いたページ分のコード（と共通ライブラリ）だけが読み込まれ、他ページへ移動したときに初めてそのページのコードが読み込まれる
+  - [ ] ページのコードの読み込み中は、MUIのスピナー（CircularProgress）が画面中央寄せで表示される
+  - [ ] 既存の全ルート（`/`、`/courses`、`/courses/:courseId`、`/companies`、`/companies/:companyId`、不正URLのリダイレクト）の挙動が変わらず、既存の自動テストが引き続き通過する
+  - [ ] フロントエンドの自動テスト（warning・act警告・console.error無し）、lint、型チェック、本番ビルドがいずれも警告なしで通過する（ビルド時にチャンク分割設定に関するdeprecation警告やチャンクサイズ警告が出ない）
+- 実装メモ（generator向け参考）: ビルドツールはVite 8（Rolldown）のため、チャンク分割の設定は現行で非推奨扱いになっていない方式を使い、ビルド時にdeprecation警告が出ないことを確認すること。
+- セキュリティエバリュエーターのフィードバック:
+  - 評価日: 2026-10-22。結果: 合格（Critical/High/Medium/Low該当なし）。
+  - レビュー範囲: `frontend/src/App.tsx`・`frontend/vite.config.ts`・`frontend/src/App.test.tsx` の未commit差分。加えて本番ビルド（`vite build`、出力先は作業用一時ディレクトリでリポジトリ内の`dist`は変更していない）の成果物を確認した。
+  - ビルド成果物（`assets/*.js`・`index.html`）: `*.map` ファイルも `sourceMappingURL` も出ておらず、`vite.config.ts` にも sourcemap の設定は無い。API Keyやその他の秘密情報は埋め込まれていない（`X-API-Key` はヘッダー名の定数としてのみ現れる）。`localhost` が出るのは `react-vendor` 内の react-router の内部既定値（`http://localhost`、URLを解析するときのbase）だけで、開発用の接続先（`.env.development` の値）は入っていない。`.env`・`.env.local`・`dist` が `.gitignore` で除外されていることも確認した（git管理されているのは秘密を含まない `.env.development`・`.env.example` のみ）。
+  - URLパラメータ検証の迂回: 遅延読み込みにしたのはPanelコンポーネントだけで、`CourseAssignmentsRoute`・`CompanyDetailRoute`（`parsePositiveIntegerParam`→不正値なら`<Navigate replace>`）と `path="*"` のリダイレクトは同期コードの `App.tsx` に残っている。`Suspense` は `Routes` 全体を包むだけなので、検証より先にPanelが描画される経路は無い。不正id×2ルートと遅延読み込み時のテストも残っている。
+  - API Keyの扱い: `loadApiKey`/`saveApiKey`/`clearApiKey`（sessionStorage）とpropsでの受け渡しは変わっていない。`sessionStorage` を参照しているのはエントリチャンクだけ。
+  - 参考（Info・差し戻し対象外）: `lazy()` のチャンク読み込みが失敗したとき（デプロイでハッシュが変わった後など）を受け止めるErrorBoundaryが無い。可用性・UXの問題でセキュリティ上の影響は無い。
+- 性能エバリュエーターのフィードバック:
+  - 評価日: 2026-10-22。結果: 合格。
+  - 実行結果（Node 24.19.0）: `npm run typecheck`（tsc -b）エラーなし、`npm run lint`（oxlint --deny-warnings）終了コード0、`npm test` 18ファイル244件すべてpass（warning・act警告・console.error・stderr出力なし）、本番ビルド（`tsc -b && vite build`、出力先は作業用一時ディレクトリでリポジトリ内の`dist`は変更していない）成功、deprecation警告・チャンクサイズ警告なし（最大は`react-vendor` 227.99kB・`mui-vendor` 224.86kB、エントリ`index` 5.43kB）。バックエンド回帰: `uv run pytest` 501件pass（warningなし）、`uv run ruff check .` 違反なし。
+  - ページ別・共通ライブラリ別のJSファイル: ビルド結果に`OverviewPanel-*.js`・`CoursesPanel-*.js`・`CompaniesPanel-*.js`と`react-vendor-*.js`・`mui-vendor-*.js`が別々に出力されることを確認。
+  - 初回は開いたページ分だけ読み込むこと: `dist/index.html`が読み込むのはエントリ`index-*.js`と、modulepreloadの`rolldown-runtime`・`react-vendor`・`mui-vendor`だけ。エントリから3ページへの参照は`import()`（動的import）だけで、静的importは無い。さらにビルド結果をローカルの一時HTTPサーバーで配信し、ヘッドレスChromiumで各URLを開いてリクエストを記録した結果、`/`と不正URL（`/no-such`）では`OverviewPanel`だけ、`/courses`・`/courses/1`では`CoursesPanel`だけ、`/companies`・`/companies/1`では`CompaniesPanel`だけが読み込まれ、ほかのページのファイルは読み込まれなかった（サーバーは確認後に停止済み）。
+  - スピナー: 新規テスト「ページの遅延読み込み」（`/`・`/courses`・`/companies`の3パターン）で、読み込み中は`progressbar`（「ページを読み込み中」）が表示されてページが未表示、読み込み後はスピナーが消えてページが表示されることを確認。
+  - 既存ルートの挙動: `/`・`/courses`・`/courses/:courseId`・`/companies`・`/companies/:companyId`・不正URL/旧URLのリダイレクト・不正idのリダイレクト・戻る/進むの既存テストが、遅延読み込みを待つ形に直したうえですべてpass。ヘッドレスChromiumでも各URLで対応する画面（横断一覧/授業管理/選考管理）が表示されることを確認。
+  - 参考（差し戻し対象外）: 「画面中央寄せ」はコード上（`Box`の`display: flex`・`justifyContent/alignItems: center`）で確認したが、テストでは配置までは検証していない。見た目の性質なので今回は差し戻さない。また、セキュリティエバリュエーターの指摘と同じく、チャンク読み込み失敗時（デプロイ後に古いハッシュを参照した場合など）のErrorBoundaryは無い。
 - 差し戻し回数: 0
