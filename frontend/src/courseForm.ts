@@ -2,6 +2,16 @@
 
 import type { Course, CourseDayOfWeek, CourseInput, CourseTerm } from './api/types'
 import { COURSE_DAYS_OF_WEEK, COURSE_TERMS } from './api/types'
+import {
+  COURSE_ACADEMIC_YEAR_MAX,
+  COURSE_ACADEMIC_YEAR_MIN,
+  COURSE_PERIOD_MAX,
+  COURSE_PERIOD_MIN,
+  MEMO_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  exceedsMaxLength,
+  maxLengthMessage,
+} from './inputLimits'
 
 /** フォームの入力値。選択式の未設定は空文字、数値は入力途中の状態を扱えるよう文字列で保持する。 */
 export type CourseFormValues = {
@@ -46,19 +56,31 @@ export function toCourseFormValues(course: Course | null): CourseFormValues {
   }
 }
 
-/** 必須項目の未入力・形式不正を検出する。エラーが無ければ空オブジェクトを返す。 */
+function isIntegerInRange(value: string, min: number, max: number): boolean {
+  return INTEGER_PATTERN.test(value) && Number(value) >= min && Number(value) <= max
+}
+
+/** 必須項目の未入力・形式不正・上限超過・範囲外を検出する。エラーが無ければ空オブジェクトを返す。 */
 export function validateCourseForm(values: CourseFormValues): CourseFormErrors {
   const errors: CourseFormErrors = {}
   if (values.name.trim() === '') {
     errors.name = '授業名を入力してください。'
+  } else if (exceedsMaxLength(values.name, NAME_MAX_LENGTH)) {
+    errors.name = maxLengthMessage('授業名', NAME_MAX_LENGTH)
   }
   const period = values.period.trim()
-  if (period !== '' && (!INTEGER_PATTERN.test(period) || Number(period) < 1)) {
-    errors.period = '時限は1以上の整数で入力してください。'
+  if (period !== '' && !isIntegerInRange(period, COURSE_PERIOD_MIN, COURSE_PERIOD_MAX)) {
+    errors.period = `時限は${COURSE_PERIOD_MIN}〜${COURSE_PERIOD_MAX}の整数で入力してください。`
   }
   const academicYear = values.academic_year.trim()
-  if (academicYear !== '' && !INTEGER_PATTERN.test(academicYear)) {
-    errors.academic_year = '年度は整数で入力してください。'
+  if (
+    academicYear !== '' &&
+    !isIntegerInRange(academicYear, COURSE_ACADEMIC_YEAR_MIN, COURSE_ACADEMIC_YEAR_MAX)
+  ) {
+    errors.academic_year = `年度は${COURSE_ACADEMIC_YEAR_MIN}〜${COURSE_ACADEMIC_YEAR_MAX}の整数で入力してください。`
+  }
+  if (exceedsMaxLength(values.memo, MEMO_MAX_LENGTH)) {
+    errors.memo = maxLengthMessage('メモ', MEMO_MAX_LENGTH)
   }
   return errors
 }

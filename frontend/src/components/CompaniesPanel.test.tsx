@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import type { Company, CompanyTask, InterviewStep } from '../api/types'
@@ -930,5 +930,139 @@ describe('横断一覧等からの遷移（初期選択）', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('企業詳細（ID: 2）')).toBeInTheDocument()
     expect(await within(dialog).findByText('合同会社テスト')).toBeInTheDocument()
+  })
+})
+
+describe('入力値の上限', () => {
+  const NAME_32 = 'あ'.repeat(32)
+  const MEMO_1000 = 'm'.repeat(1000)
+
+  it('企業名が32文字を超えると送信せずに示し、32文字ちょうどなら登録でき保存される', async () => {
+    const server = setupFakeServer([], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 0 件')
+    await user.click(screen.getByRole('button', { name: '企業を新規登録' }))
+    const nameField = screen.getByLabelText('企業名', { exact: false })
+    fireEvent.change(nameField, { target: { value: `${NAME_32}あ` } })
+    await user.click(screen.getByRole('button', { name: '登録する' }))
+
+    expect(await screen.findByText('企業名は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((request) => request.method === 'POST')).toBe(false)
+
+    fireEvent.change(nameField, { target: { value: NAME_32 } })
+    await user.click(screen.getByRole('button', { name: '登録する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('企業を登録しました。')).toBeInTheDocument()
+    expect(await screen.findByText(NAME_32)).toBeInTheDocument()
+    expect(server.requests.find((request) => request.method === 'POST')?.body).toEqual({
+      name: NAME_32,
+    })
+  })
+
+  it('選考ステップの種別・メモが上限を超えると送信せずに示し、上限ちょうどなら追加でき保存される', async () => {
+    const server = setupFakeServer([COMPANY_A], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('選考ステップは0件です。')
+    await user.click(screen.getByRole('button', { name: '選考ステップを追加' }))
+    const typeField = screen.getByLabelText('種別', { exact: false })
+    const memoField = screen.getByLabelText('メモ')
+    fireEvent.change(typeField, { target: { value: `${NAME_32}あ` } })
+    fireEvent.change(memoField, { target: { value: `${MEMO_1000}m` } })
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+
+    expect(await screen.findByText('選考種別は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(screen.getByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((request) => request.method === 'POST')).toBe(false)
+
+    fireEvent.change(typeField, { target: { value: NAME_32 } })
+    fireEvent.change(memoField, { target: { value: MEMO_1000 } })
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('選考ステップを追加しました。')).toBeInTheDocument()
+    expect(await screen.findByText(NAME_32)).toBeInTheDocument()
+    expect(
+      server.requests.find(
+        (request) => request.method === 'POST' && request.url === '/companies/1/interview-steps',
+      )?.body,
+    ).toMatchObject({ type: NAME_32, memo: MEMO_1000 })
+  })
+
+  it('選考ステップの編集でも種別の上限超過は送信しない', async () => {
+    const server = setupFakeServer([COMPANY_A], [STEP_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('一次面接')
+    await user.click(screen.getByRole('button', { name: '選考ステップ「一次面接」を編集' }))
+    fireEvent.change(screen.getByLabelText('種別', { exact: false }), {
+      target: { value: `${NAME_32}あ` },
+    })
+    await user.click(screen.getByRole('button', { name: '更新する' }))
+
+    expect(await screen.findByText('選考種別は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((request) => request.method === 'PATCH')).toBe(false)
+  })
+
+  it('企業タスク名・メモが上限を超えると送信せずに示し、上限ちょうどなら追加でき保存される', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('企業タスクは0件です。')
+    await user.click(screen.getByRole('button', { name: '企業タスクを追加' }))
+    const nameField = screen.getByLabelText('タスク名', { exact: false })
+    const memoField = screen.getByLabelText('メモ')
+    fireEvent.change(nameField, { target: { value: `${NAME_32}あ` } })
+    fireEvent.change(memoField, { target: { value: `${MEMO_1000}m` } })
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+
+    expect(await screen.findByText('企業タスク名は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(screen.getByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
+    expect(
+      server.requests.some(
+        (request) => request.method === 'POST' && request.url === '/companies/1/company-tasks',
+      ),
+    ).toBe(false)
+
+    fireEvent.change(nameField, { target: { value: NAME_32 } })
+    fireEvent.change(memoField, { target: { value: MEMO_1000 } })
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('企業タスクを追加しました。')).toBeInTheDocument()
+    expect(await screen.findByText(NAME_32)).toBeInTheDocument()
+    expect(
+      server.requests.find(
+        (request) => request.method === 'POST' && request.url === '/companies/1/company-tasks',
+      )?.body,
+    ).toMatchObject({ name: NAME_32, memo: MEMO_1000 })
+  })
+
+  it('企業タスクの編集でもメモの上限超過は送信しない', async () => {
+    const server = setupFakeServer([COMPANY_A], [], [COMPANY_TASK_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('株式会社サンプル')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('職務経歴書更新')
+    await user.click(screen.getByRole('button', { name: '企業タスク「職務経歴書更新」を編集' }))
+    fireEvent.change(screen.getByLabelText('メモ'), { target: { value: `${MEMO_1000}m` } })
+    await user.click(screen.getByRole('button', { name: '更新する' }))
+
+    expect(await screen.findByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((request) => request.method === 'PATCH')).toBe(false)
   })
 })

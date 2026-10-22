@@ -470,3 +470,46 @@ describe('廃止した旧案件系の画面', () => {
     )
   })
 })
+
+describe('URLパラメータのid検証', () => {
+  const INVALID_IDS = ['0', '-1', '1.5', '1e2', '0x10', 'abc']
+
+  function requestedPaths(): string[] {
+    return vi
+      .mocked(fetch)
+      .mock.calls.map(([input]) => new URL(String(input)).pathname)
+  }
+
+  it.each(INVALID_IDS)(
+    '授業を指定したURLのidが正の整数でない（%s）場合、そのidでAPIを呼ばずに授業ページへ案内する',
+    async (invalidId) => {
+      window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+      stubRoutingFetch()
+      window.history.pushState(null, '', `/courses/${invalidId}`)
+
+      render(<App />)
+
+      expect(await within(coursesRegion()).findByText('データベース論')).toBeInTheDocument()
+      expect(window.location.pathname).toBe('/courses')
+      expect(within(coursesRegion()).queryByText('課題（データベース論）')).not.toBeInTheDocument()
+      expect(requestedPaths().filter((path) => path.startsWith('/courses/'))).toEqual([])
+    },
+  )
+
+  it.each(INVALID_IDS)(
+    '企業を指定したURLのidが正の整数でない（%s）場合、そのidでAPIを呼ばずに選考ページへ案内する',
+    async (invalidId) => {
+      window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+      stubRoutingFetch()
+      window.history.pushState(null, '', `/companies/${invalidId}`)
+
+      render(<App />)
+
+      const region = screen.getByRole('region', { name: '選考管理' })
+      expect(await within(region).findByText('株式会社サンプル')).toBeInTheDocument()
+      expect(window.location.pathname).toBe('/companies')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(requestedPaths().filter((path) => path.startsWith('/companies/'))).toEqual([])
+    },
+  )
+})

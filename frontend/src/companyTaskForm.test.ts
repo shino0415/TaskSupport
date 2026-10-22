@@ -81,3 +81,20 @@ describe('toCompanyTaskInput', () => {
     })
   })
 })
+
+describe('validateCompanyTaskForm（上限）', () => {
+  it('企業タスク名は32文字まで、メモは1000文字まで受け付ける', () => {
+    expect(
+      validateCompanyTaskForm({ ...VALID, name: 'a'.repeat(32), memo: 'm'.repeat(1000) }),
+    ).toEqual({})
+  })
+
+  it('企業タスク名が32文字、メモが1000文字を超えるとメッセージを返す', () => {
+    expect(
+      validateCompanyTaskForm({ ...VALID, name: 'a'.repeat(33), memo: 'm'.repeat(1001) }),
+    ).toEqual({
+      name: '企業タスク名は32文字以内で入力してください。',
+      memo: 'メモは1000文字以内で入力してください。',
+    })
+  })
+})

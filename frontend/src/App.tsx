@@ -13,6 +13,7 @@ import { CoursesPanel } from './components/CoursesPanel'
 import { NavBar } from './components/NavBar'
 import { OverviewPanel } from './components/OverviewPanel'
 import { getApiBaseUrl } from './config'
+import { parsePositiveIntegerParam } from './routeParams'
 
 type CompaniesPageProps = {
   apiKey: string
@@ -24,18 +25,22 @@ function CompaniesPage({ apiKey, initialDetailCompanyId = null }: CompaniesPageP
   return <CompaniesPanel apiKey={apiKey} initialDetailCompanyId={initialDetailCompanyId} />
 }
 
-/** `/companies/:companyId` — 選考ページの企業詳細ダイアログを開いた状態で表示する。 */
+/** `/companies/:companyId` — 選考ページの企業詳細ダイアログを開いた状態で表示する。不正なidは選考ページへ案内する。 */
 function CompanyDetailRoute({ apiKey }: { apiKey: string }) {
-  const { companyId } = useParams()
-  const id = Number(companyId)
-  return <CompaniesPage apiKey={apiKey} initialDetailCompanyId={Number.isNaN(id) ? null : id} />
+  const id = parsePositiveIntegerParam(useParams().companyId)
+  if (id === null) {
+    return <Navigate to="/companies" replace />
+  }
+  return <CompaniesPage apiKey={apiKey} initialDetailCompanyId={id} />
 }
 
-/** `/courses/:courseId` — 授業ページで指定の授業を選択し、課題一覧を開いた状態で表示する。 */
+/** `/courses/:courseId` — 授業ページで指定の授業を選択し、課題一覧を開いた状態で表示する。不正なidは授業ページへ案内する。 */
 function CourseAssignmentsRoute({ apiKey }: { apiKey: string }) {
-  const { courseId } = useParams()
-  const id = Number(courseId)
-  return <CoursesPanel apiKey={apiKey} initialSelectedCourseId={Number.isNaN(id) ? null : id} />
+  const id = parsePositiveIntegerParam(useParams().courseId)
+  if (id === null) {
+    return <Navigate to="/courses" replace />
+  }
+  return <CoursesPanel apiKey={apiKey} initialSelectedCourseId={id} />
 }
 
 export default function App() {

@@ -31,19 +31,37 @@ describe('validateCourseForm', () => {
     expect(validateCourseForm({ ...VALID, name: '   ' }).name).toContain('授業名')
   })
 
-  it('時限は1以上の整数のみ受け付ける', () => {
+  it('時限は1〜6の整数のみ受け付ける', () => {
     expect(validateCourseForm({ ...VALID, period: '1' })).toEqual({})
-    expect(validateCourseForm({ ...VALID, period: '0' }).period).toContain('1以上の整数')
-    expect(validateCourseForm({ ...VALID, period: '-1' }).period).toContain('1以上の整数')
-    expect(validateCourseForm({ ...VALID, period: '1.5' }).period).toContain('1以上の整数')
-    expect(validateCourseForm({ ...VALID, period: 'abc' }).period).toContain('1以上の整数')
+    expect(validateCourseForm({ ...VALID, period: '6' })).toEqual({})
+    for (const period of ['0', '7', '-1', '1.5', 'abc']) {
+      expect(validateCourseForm({ ...VALID, period }).period).toBe(
+        '時限は1〜6の整数で入力してください。',
+      )
+    }
   })
 
-  it('年度は整数のみ受け付ける', () => {
-    expect(validateCourseForm({ ...VALID, academic_year: '2026.5' }).academic_year).toContain(
-      '整数',
+  it('年度は2000〜2100の整数のみ受け付ける', () => {
+    expect(validateCourseForm({ ...VALID, academic_year: '2000' })).toEqual({})
+    expect(validateCourseForm({ ...VALID, academic_year: '2100' })).toEqual({})
+    for (const academicYear of ['1999', '2101', '2026.5', 'abc']) {
+      expect(validateCourseForm({ ...VALID, academic_year: academicYear }).academic_year).toBe(
+        '年度は2000〜2100の整数で入力してください。',
+      )
+    }
+  })
+
+  it('授業名は32文字まで、メモは1000文字まで受け付ける', () => {
+    expect(validateCourseForm({ ...VALID, name: 'a'.repeat(32), memo: 'm'.repeat(1000) })).toEqual(
+      {},
     )
-    expect(validateCourseForm({ ...VALID, academic_year: 'abc' }).academic_year).toContain('整数')
+  })
+
+  it('授業名が32文字、メモが1000文字を超えるとメッセージを返す', () => {
+    expect(validateCourseForm({ ...VALID, name: 'a'.repeat(33), memo: 'm'.repeat(1001) })).toEqual({
+      name: '授業名は32文字以内で入力してください。',
+      memo: 'メモは1000文字以内で入力してください。',
+    })
   })
 })
 

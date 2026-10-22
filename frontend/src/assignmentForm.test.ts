@@ -131,3 +131,20 @@ describe('toAssignmentInput', () => {
     })
   })
 })
+
+describe('validateAssignmentForm（上限）', () => {
+  it('課題名は32文字まで、メモは1000文字まで受け付ける', () => {
+    expect(validateAssignmentForm({ ...VALID, name: 'a'.repeat(32), memo: 'm'.repeat(1000) })).toEqual(
+      {},
+    )
+  })
+
+  it('課題名が32文字、メモが1000文字を超えるとメッセージを返す', () => {
+    expect(validateAssignmentForm({ ...VALID, name: 'a'.repeat(33), memo: 'm'.repeat(1001) })).toEqual(
+      {
+        name: '課題名は32文字以内で入力してください。',
+        memo: 'メモは1000文字以内で入力してください。',
+      },
+    )
+  })
+})

@@ -272,11 +272,11 @@ describe('締切が近い課題', () => {
     expect(rows).toHaveLength(2)
     expect(within(rows[0]).getByText('正規化レポート')).toBeInTheDocument()
     expect(within(rows[0]).getByText('データベース論')).toBeInTheDocument()
-    expect(within(rows[0]).getByText('2000-01-10T23:59:00')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('1/10 23:59')).toBeInTheDocument()
     expect(within(rows[0]).getByText('未提出')).toBeInTheDocument()
     expect(within(rows[1]).getByText('ER図の作成')).toBeInTheDocument()
     expect(within(rows[1]).getByText('ソフトウェア工学')).toBeInTheDocument()
-    expect(within(rows[1]).getByText('2099-12-31T09:00:00')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('12/31 09:00')).toBeInTheDocument()
     expect(within(rows[1]).getByText('取組中')).toBeInTheDocument()
   })
 

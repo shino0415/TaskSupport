@@ -113,6 +113,8 @@ export function CompanyTaskFormDialog({
               label="メモ"
               value={values.memo}
               onChange={(event) => update('memo', event.target.value)}
+              error={errors.memo !== undefined}
+              helperText={errors.memo ?? ''}
               multiline
               minRows={2}
               fullWidth

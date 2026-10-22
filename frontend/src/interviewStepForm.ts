@@ -7,6 +7,7 @@ import type {
   InterviewStepResult,
 } from './api/types'
 import { INTERVIEW_STEP_PREP_STATUSES, INTERVIEW_STEP_RESULTS } from './api/types'
+import { MEMO_MAX_LENGTH, NAME_MAX_LENGTH, exceedsMaxLength, maxLengthMessage } from './inputLimits'
 
 /** フォームの入力値。予定日は入力途中の状態を扱えるよう文字列（空文字は未設定）で保持する。 */
 export type InterviewStepFormValues = {
@@ -48,13 +49,18 @@ export function toInterviewStepFormValues(step: InterviewStep | null): Interview
   }
 }
 
-/** 必須項目の未入力を検出する。エラーが無ければ空オブジェクトを返す。 */
+/** 必須項目の未入力・上限超過を検出する。エラーが無ければ空オブジェクトを返す。 */
 export function validateInterviewStepForm(
   values: InterviewStepFormValues,
 ): InterviewStepFormErrors {
   const errors: InterviewStepFormErrors = {}
   if (values.type.trim() === '') {
     errors.type = '選考種別を入力してください。'
+  } else if (exceedsMaxLength(values.type, NAME_MAX_LENGTH)) {
+    errors.type = maxLengthMessage('選考種別', NAME_MAX_LENGTH)
+  }
+  if (exceedsMaxLength(values.memo, MEMO_MAX_LENGTH)) {
+    errors.memo = maxLengthMessage('メモ', MEMO_MAX_LENGTH)
   }
   return errors
 }

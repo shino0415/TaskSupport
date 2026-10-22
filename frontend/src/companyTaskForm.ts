@@ -2,6 +2,7 @@
 
 import type { CompanyTask, CompanyTaskInput, TaskStatus } from './api/types'
 import { TASK_STATUSES } from './api/types'
+import { MEMO_MAX_LENGTH, NAME_MAX_LENGTH, exceedsMaxLength, maxLengthMessage } from './inputLimits'
 
 export type CompanyTaskFormValues = {
   name: string
@@ -32,11 +33,16 @@ export function toCompanyTaskFormValues(companyTask: CompanyTask | null): Compan
   }
 }
 
-/** 必須項目の未入力を検出する。エラーが無ければ空オブジェクトを返す。 */
+/** 必須項目の未入力・上限超過を検出する。エラーが無ければ空オブジェクトを返す。 */
 export function validateCompanyTaskForm(values: CompanyTaskFormValues): CompanyTaskFormErrors {
   const errors: CompanyTaskFormErrors = {}
   if (values.name.trim() === '') {
     errors.name = '企業タスク名を入力してください。'
+  } else if (exceedsMaxLength(values.name, NAME_MAX_LENGTH)) {
+    errors.name = maxLengthMessage('企業タスク名', NAME_MAX_LENGTH)
+  }
+  if (exceedsMaxLength(values.memo, MEMO_MAX_LENGTH)) {
+    errors.memo = maxLengthMessage('メモ', MEMO_MAX_LENGTH)
   }
   return errors
 }

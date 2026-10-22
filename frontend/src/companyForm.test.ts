@@ -32,3 +32,12 @@ describe('toCompanyInput', () => {
     })
   })
 })
+
+describe('validateCompanyForm（上限）', () => {
+  it('企業名は32文字まで受け付け、超えるとメッセージを返す', () => {
+    expect(validateCompanyForm({ name: 'a'.repeat(32) })).toEqual({})
+    expect(validateCompanyForm({ name: 'a'.repeat(33) })).toEqual({
+      name: '企業名は32文字以内で入力してください。',
+    })
+  })
+})

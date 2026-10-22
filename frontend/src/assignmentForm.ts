@@ -7,6 +7,7 @@ import type {
   AssignmentSubmissionMethod,
 } from './api/types'
 import { ASSIGNMENT_STATUSES, ASSIGNMENT_SUBMISSION_METHODS } from './api/types'
+import { MEMO_MAX_LENGTH, NAME_MAX_LENGTH, exceedsMaxLength, maxLengthMessage } from './inputLimits'
 
 /** フォームの入力値。提出期限はdatetime-local入力の値（空文字は未設定）、選択式の未設定は空文字。 */
 export type AssignmentFormValues = {
@@ -60,11 +61,16 @@ export function toAssignmentFormValues(assignment: Assignment | null): Assignmen
   }
 }
 
-/** 必須項目の未入力・形式不正を検出する。エラーが無ければ空オブジェクトを返す。 */
+/** 必須項目の未入力・形式不正・上限超過を検出する。エラーが無ければ空オブジェクトを返す。 */
 export function validateAssignmentForm(values: AssignmentFormValues): AssignmentFormErrors {
   const errors: AssignmentFormErrors = {}
   if (values.name.trim() === '') {
     errors.name = '課題名を入力してください。'
+  } else if (exceedsMaxLength(values.name, NAME_MAX_LENGTH)) {
+    errors.name = maxLengthMessage('課題名', NAME_MAX_LENGTH)
+  }
+  if (exceedsMaxLength(values.memo, MEMO_MAX_LENGTH)) {
+    errors.memo = maxLengthMessage('メモ', MEMO_MAX_LENGTH)
   }
   if (values.deadline !== '' && !LOCAL_DATETIME_PATTERN.test(values.deadline)) {
     errors.deadline = '提出期限は日付と時刻を入力してください。'

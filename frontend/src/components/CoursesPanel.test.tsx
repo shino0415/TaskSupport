@@ -336,7 +336,7 @@ describe('授業の新規登録', () => {
     await user.click(within(dialog).getByRole('button', { name: '登録する' }))
 
     expect(within(dialog).getByText('授業名を入力してください。')).toBeInTheDocument()
-    expect(within(dialog).getByText('時限は1以上の整数で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('時限は1〜6の整数で入力してください。')).toBeInTheDocument()
     expect(server.requests.some((r) => r.method === 'POST')).toBe(false)
   })
 
@@ -502,7 +502,7 @@ describe('課題一覧', () => {
     ).toBe(true)
     const rowA = assignmentRowOf('正規化レポート')
     expect(within(rowA).getByText('提出済み')).toBeInTheDocument()
-    expect(within(rowA).getByText('2026-11-01T23:59:00')).toBeInTheDocument()
+    expect(within(rowA).getByText('11/1 23:59')).toBeInTheDocument()
     expect(within(rowA).getByText('WebClass')).toBeInTheDocument()
     expect(within(rowA).getByText('A4で2枚')).toBeInTheDocument()
     // 任意項目が未設定の課題も表示が破綻しない
@@ -631,7 +631,7 @@ describe('課題の新規追加', () => {
     })
     const row = await waitFor(() => assignmentRowOf('ER図の作成'))
     expect(within(row).getByText('取組中')).toBeInTheDocument()
-    expect(within(row).getByText('2026-11-10T09:30')).toBeInTheDocument()
+    expect(within(row).getByText('11/10 09:30')).toBeInTheDocument()
     expect(within(row).getByText('紙')).toBeInTheDocument()
   })
 
@@ -733,7 +733,7 @@ describe('課題の編集', () => {
     })
     const row = await waitFor(() => assignmentRowOf('第3回小テスト準備'))
     expect(within(row).getByText('未提出')).toBeInTheDocument()
-    expect(within(row).getByText('2026-11-05T13:00')).toBeInTheDocument()
+    expect(within(row).getByText('11/5 13:00')).toBeInTheDocument()
     expect(within(row).getByText('その他')).toBeInTheDocument()
   })
 
@@ -857,5 +857,160 @@ describe('課題の削除', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('404')
     expect(alert).toHaveTextContent('Assignment not found')
+  })
+})
+
+describe('入力値の上限・範囲', () => {
+  const NAME_32 = 'あ'.repeat(32)
+  const MEMO_1000 = 'm'.repeat(1000)
+
+  async function openCourseCreateForm(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByText('授業は0件です。')
+    await user.click(screen.getByRole('button', { name: '新規登録' }))
+    return screen.findByRole('dialog')
+  }
+
+  it('授業名・メモの上限超過、時限・年度の範囲外は送信せず項目ごとに示す', async () => {
+    const server = setupFakeServer([])
+    const user = userEvent.setup()
+
+    renderPanel()
+    const dialog = await openCourseCreateForm(user)
+    fireEvent.change(within(dialog).getByLabelText(/授業名/), { target: { value: `${NAME_32}あ` } })
+    fireEvent.change(within(dialog).getByLabelText('メモ'), { target: { value: `${MEMO_1000}m` } })
+    await user.type(within(dialog).getByLabelText('時限'), '7')
+    await user.type(within(dialog).getByLabelText('年度'), '1999')
+    await user.click(within(dialog).getByRole('button', { name: '登録する' }))
+
+    expect(within(dialog).getByText('授業名は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('時限は1〜6の整数で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('年度は2000〜2100の整数で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'POST')).toBe(false)
+  })
+
+  it('時限0・年度2101も範囲外として送信しない', async () => {
+    const server = setupFakeServer([])
+    const user = userEvent.setup()
+
+    renderPanel()
+    const dialog = await openCourseCreateForm(user)
+    await user.type(within(dialog).getByLabelText(/授業名/), '線形代数')
+    await user.type(within(dialog).getByLabelText('時限'), '0')
+    await user.type(within(dialog).getByLabelText('年度'), '2101')
+    await user.click(within(dialog).getByRole('button', { name: '登録する' }))
+
+    expect(within(dialog).getByText('時限は1〜6の整数で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('年度は2000〜2100の整数で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'POST')).toBe(false)
+  })
+
+  it('上限ちょうどの授業名・メモと、時限6・年度2100は送信でき保存される', async () => {
+    const server = setupFakeServer([])
+    const user = userEvent.setup()
+
+    renderPanel()
+    const dialog = await openCourseCreateForm(user)
+    fireEvent.change(within(dialog).getByLabelText(/授業名/), { target: { value: NAME_32 } })
+    fireEvent.change(within(dialog).getByLabelText('メモ'), { target: { value: MEMO_1000 } })
+    await user.type(within(dialog).getByLabelText('時限'), '6')
+    await user.type(within(dialog).getByLabelText('年度'), '2100')
+    await user.click(within(dialog).getByRole('button', { name: '登録する' }))
+
+    expect(await screen.findByText('授業を登録しました。')).toBeInTheDocument()
+    expect(server.requests.find((r) => r.method === 'POST')?.body).toEqual({
+      name: NAME_32,
+      day_of_week: null,
+      period: 6,
+      academic_year: 2100,
+      term: null,
+      memo: MEMO_1000,
+    })
+    const row = await waitFor(() => rowOf(NAME_32))
+    expect(within(row).getByText('6限')).toBeInTheDocument()
+    expect(within(row).getByText('2100年度')).toBeInTheDocument()
+  })
+
+  it('時限1・年度2000は送信でき保存される', async () => {
+    const server = setupFakeServer([])
+    const user = userEvent.setup()
+
+    renderPanel()
+    const dialog = await openCourseCreateForm(user)
+    await user.type(within(dialog).getByLabelText(/授業名/), '線形代数')
+    await user.type(within(dialog).getByLabelText('時限'), '1')
+    await user.type(within(dialog).getByLabelText('年度'), '2000')
+    await user.click(within(dialog).getByRole('button', { name: '登録する' }))
+
+    expect(await screen.findByText('授業を登録しました。')).toBeInTheDocument()
+    expect(server.requests.find((r) => r.method === 'POST')?.body).toMatchObject({
+      period: 1,
+      academic_year: 2000,
+    })
+    const row = await waitFor(() => rowOf('線形代数'))
+    expect(within(row).getByText('1限')).toBeInTheDocument()
+    expect(within(row).getByText('2000年度')).toBeInTheDocument()
+  })
+
+  it('授業の編集でも上限超過・範囲外は送信しない', async () => {
+    const server = setupFakeServer([COURSE_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('データベース論')
+    await user.click(screen.getByRole('button', { name: '授業「データベース論」を編集' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText(/授業名/), { target: { value: `${NAME_32}あ` } })
+    await user.clear(within(dialog).getByLabelText('年度'))
+    await user.type(within(dialog).getByLabelText('年度'), '2101')
+    await user.click(within(dialog).getByRole('button', { name: '更新する' }))
+
+    expect(within(dialog).getByText('授業名は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('年度は2000〜2100の整数で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'PATCH')).toBe(false)
+  })
+
+  it('課題名・メモの上限超過は送信せず項目ごとに示し、上限ちょうどなら送信でき保存される', async () => {
+    const server = setupFakeServer([COURSE_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('課題は0件です。')
+    await user.click(screen.getByRole('button', { name: '課題を追加' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText(/課題名/), { target: { value: `${NAME_32}あ` } })
+    fireEvent.change(within(dialog).getByLabelText('メモ'), { target: { value: `${MEMO_1000}m` } })
+    await user.click(within(dialog).getByRole('button', { name: '追加する' }))
+
+    expect(within(dialog).getByText('課題名は32文字以内で入力してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'POST')).toBe(false)
+
+    fireEvent.change(within(dialog).getByLabelText(/課題名/), { target: { value: NAME_32 } })
+    fireEvent.change(within(dialog).getByLabelText('メモ'), { target: { value: MEMO_1000 } })
+    await user.click(within(dialog).getByRole('button', { name: '追加する' }))
+
+    expect(await screen.findByText('課題を追加しました。')).toBeInTheDocument()
+    expect(server.requests.find((r) => r.method === 'POST')?.body).toMatchObject({
+      name: NAME_32,
+      memo: MEMO_1000,
+    })
+    await waitFor(() => expect(assignmentRowOf(NAME_32)).toBeInTheDocument())
+  })
+
+  it('課題の編集でも上限超過は送信しない', async () => {
+    const server = setupFakeServer([COURSE_A], [ASSIGNMENT_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await user.click(await screen.findByRole('button', { name: '課題「正規化レポート」を編集' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('メモ'), { target: { value: `${MEMO_1000}m` } })
+    await user.click(within(dialog).getByRole('button', { name: '更新する' }))
+
+    expect(within(dialog).getByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'PATCH')).toBe(false)
   })
 })

@@ -20,7 +20,7 @@ import { fetchCompanies } from '../api/companies'
 import { toDisplayMessage } from '../api/errors'
 import { fetchUpcomingInterviewSteps } from '../api/interviewSteps'
 import type { Company, InterviewStep, UpcomingAssignment } from '../api/types'
-import { isDeadlinePassed } from '../assignmentDeadline'
+import { formatDeadline, isDeadlinePassed } from '../assignmentDeadline'
 
 type Props = {
   apiKey: string
@@ -183,7 +183,9 @@ export function OverviewPanel({ apiKey }: Props) {
                           <TableCell>{assignment.course_name}</TableCell>
                           <TableCell sx={isOverdue ? { color: 'error.main' } : undefined}>
                             <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                              <span>{assignment.deadline ?? '-'}</span>
+                              <span>
+                                {assignment.deadline === null ? '-' : formatDeadline(assignment.deadline)}
+                              </span>
                               {isOverdue && (
                                 <Typography
                                   component="span"

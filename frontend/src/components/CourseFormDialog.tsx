@@ -16,6 +16,12 @@ import type { Course, CourseDayOfWeek, CourseInput, CourseTerm } from '../api/ty
 import { COURSE_DAYS_OF_WEEK, COURSE_TERMS } from '../api/types'
 import type { CourseFormErrors, CourseFormValues } from '../courseForm'
 import { toCourseFormValues, toCourseInput, validateCourseForm } from '../courseForm'
+import {
+  COURSE_ACADEMIC_YEAR_MAX,
+  COURSE_ACADEMIC_YEAR_MIN,
+  COURSE_PERIOD_MAX,
+  COURSE_PERIOD_MIN,
+} from '../inputLimits'
 
 type Props = {
   open: boolean
@@ -111,7 +117,9 @@ export function CourseFormDialog({
               error={errors.period !== undefined}
               helperText={errors.period ?? '未設定でも登録できます。'}
               fullWidth
-              slotProps={{ htmlInput: { min: 1, step: 1 } }}
+              slotProps={{
+                htmlInput: { min: COURSE_PERIOD_MIN, max: COURSE_PERIOD_MAX, step: 1 },
+              }}
             />
             <TextField
               label="年度"
@@ -121,7 +129,13 @@ export function CourseFormDialog({
               error={errors.academic_year !== undefined}
               helperText={errors.academic_year ?? '未設定でも登録できます。'}
               fullWidth
-              slotProps={{ htmlInput: { step: 1 } }}
+              slotProps={{
+                htmlInput: {
+                  min: COURSE_ACADEMIC_YEAR_MIN,
+                  max: COURSE_ACADEMIC_YEAR_MAX,
+                  step: 1,
+                },
+              }}
             />
             <TextField
               select
@@ -141,6 +155,8 @@ export function CourseFormDialog({
               label="メモ"
               value={values.memo}
               onChange={(event) => update('memo', event.target.value)}
+              error={errors.memo !== undefined}
+              helperText={errors.memo ?? ''}
               multiline
               minRows={2}
               fullWidth

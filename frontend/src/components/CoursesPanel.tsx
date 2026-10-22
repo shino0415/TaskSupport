@@ -27,6 +27,7 @@ import {
 import { createCourse, deleteCourse, fetchCourses, updateCourse } from '../api/courses'
 import { toDisplayMessage } from '../api/errors'
 import type { Assignment, AssignmentInput, Course, CourseInput } from '../api/types'
+import { formatDeadline } from '../assignmentDeadline'
 import { AssignmentFormDialog } from './AssignmentFormDialog'
 import { CourseFormDialog } from './CourseFormDialog'
 
@@ -404,7 +405,9 @@ export function CoursesPanel({ apiKey, initialSelectedCourseId = null }: Props) 
                           <TableCell>{assignment.id}</TableCell>
                           <TableCell>{assignment.name}</TableCell>
                           <TableCell>{assignment.status}</TableCell>
-                          <TableCell>{assignment.deadline ?? '-'}</TableCell>
+                          <TableCell>
+                            {assignment.deadline === null ? '-' : formatDeadline(assignment.deadline)}
+                          </TableCell>
                           <TableCell>{assignment.submission_method ?? '-'}</TableCell>
                           <TableCell>{assignment.memo ?? '-'}</TableCell>
                           <TableCell>

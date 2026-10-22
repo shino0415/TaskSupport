@@ -111,3 +111,20 @@ describe('toInterviewStepInput', () => {
     })
   })
 })
+
+describe('validateInterviewStepForm（上限）', () => {
+  it('種別は32文字まで、メモは1000文字まで受け付ける', () => {
+    expect(
+      validateInterviewStepForm({ ...VALID_VALUES, type: 'a'.repeat(32), memo: 'm'.repeat(1000) }),
+    ).toEqual({})
+  })
+
+  it('種別が32文字、メモが1000文字を超えるとメッセージを返す', () => {
+    expect(
+      validateInterviewStepForm({ ...VALID_VALUES, type: 'a'.repeat(33), memo: 'm'.repeat(1001) }),
+    ).toEqual({
+      type: '選考種別は32文字以内で入力してください。',
+      memo: 'メモは1000文字以内で入力してください。',
+    })
+  })
+})
