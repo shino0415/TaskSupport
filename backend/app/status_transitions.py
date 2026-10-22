@@ -17,6 +17,13 @@ from collections import deque
 from enum import StrEnum
 
 
+class AssignmentStatus(StrEnum):
+    未着手 = "未着手"
+    取組中 = "取組中"
+    未提出 = "未提出"
+    提出済み = "提出済み"
+
+
 class CompanyTaskStatus(StrEnum):
     未着手 = "未着手"
     処理中 = "処理中"
@@ -36,6 +43,13 @@ class InterviewStepResult(StrEnum):
 
 
 # --- 適用箇所ごとの状態遷移グラフ（確定） ---
+
+ASSIGNMENT_STATUS_GRAPH: dict[AssignmentStatus, list[AssignmentStatus]] = {
+    AssignmentStatus.未着手: [AssignmentStatus.取組中],
+    AssignmentStatus.取組中: [AssignmentStatus.未提出],
+    AssignmentStatus.未提出: [AssignmentStatus.提出済み],
+    AssignmentStatus.提出済み: [],
+}
 
 COMPANY_TASK_STATUS_GRAPH: dict[CompanyTaskStatus, list[CompanyTaskStatus]] = {
     CompanyTaskStatus.未着手: [CompanyTaskStatus.処理中],

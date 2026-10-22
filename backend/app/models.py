@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 from app.status_transitions import (
+    AssignmentStatus,
     CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
@@ -38,7 +39,7 @@ class Assignment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     course_id: Mapped[int] = mapped_column(Integer, ForeignKey("course.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[AssignmentStatus] = mapped_column(String, nullable=False)
     deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submission_method: Mapped[str | None] = mapped_column(String, nullable=True)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)

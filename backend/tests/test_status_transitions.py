@@ -1,22 +1,62 @@
 """ステータス遷移警告ロジック（check_backward_transition）の単体テスト。
 
-適用箇所3種（CompanyTask.status, InterviewStep.prep_status, InterviewStep.result）
+適用箇所4種（Assignment.status, CompanyTask.status, InterviewStep.prep_status,
+InterviewStep.result）
 それぞれについて、境界値（同一ステータス、隣接遷移、
 複数段飛び越え遷移、明確な逆行遷移、枝分かれ先同士の無関係な遷移）を、
 各グラフの構造上該当するパターンのみ網羅する。
 
-- CompanyTask.status / InterviewStep.prep_status は分岐のない線形グラフのため、
+- Assignment.status / CompanyTask.status / InterviewStep.prep_status は分岐のない線形グラフのため、
   「枝分かれ先同士の遷移」パターンは対象外。
 - InterviewStep.result は深さ2（未定→通過/不通過で終端）の浅いグラフのため、
   「複数段飛び越え遷移」は隣接遷移と区別がつかず対象外。
 """
 
 from app.status_transitions import (
+    ASSIGNMENT_STATUS_GRAPH,
     COMPANY_TASK_STATUS_GRAPH,
     INTERVIEW_STEP_PREP_STATUS_GRAPH,
     INTERVIEW_STEP_RESULT_GRAPH,
     check_backward_transition,
 )
+
+# --- Assignment.status（線形、分岐なし） ---
+
+
+def test_assignment_status_same_status_no_warning():
+    for status in ("未着手", "取組中", "未提出", "提出済み"):
+        assert check_backward_transition(ASSIGNMENT_STATUS_GRAPH, status, status) is None
+
+
+def test_assignment_status_adjacent_forward_no_warning():
+    graph = ASSIGNMENT_STATUS_GRAPH
+    assert check_backward_transition(graph, "未着手", "取組中") is None
+    assert check_backward_transition(graph, "取組中", "未提出") is None
+    assert check_backward_transition(graph, "未提出", "提出済み") is None
+
+
+def test_assignment_status_multi_step_forward_no_warning():
+    graph = ASSIGNMENT_STATUS_GRAPH
+    assert check_backward_transition(graph, "未着手", "未提出") is None
+    assert check_backward_transition(graph, "未着手", "提出済み") is None
+    assert check_backward_transition(graph, "取組中", "提出済み") is None
+
+
+def test_assignment_status_backward_transition_returns_warning():
+    graph = ASSIGNMENT_STATUS_GRAPH
+    backward_pairs = [
+        ("取組中", "未着手"),
+        ("未提出", "取組中"),
+        ("提出済み", "未提出"),
+        ("未提出", "未着手"),
+        ("提出済み", "取組中"),
+        ("提出済み", "未着手"),
+    ]
+    for from_status, to_status in backward_pairs:
+        warning = check_backward_transition(graph, from_status, to_status)
+        assert warning is not None
+        assert from_status in warning and to_status in warning
+
 
 # --- CompanyTask.status（線形、分岐なし） ---
 

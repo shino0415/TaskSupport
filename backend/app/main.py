@@ -14,7 +14,7 @@ from app.auth import verify_api_key
 from app.cors import configure_cors
 from app.database import init_db
 from app.demo_reset import start_background_task
-from app.routers import companies, company_tasks, courses, interview_steps
+from app.routers import assignments, companies, company_tasks, courses, interview_steps
 
 
 @asynccontextmanager
@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     configure_cors(app)
 
     app.include_router(courses.router)
+    app.include_router(assignments.router)
     app.include_router(companies.router)
     app.include_router(interview_steps.router)
     app.include_router(company_tasks.router)

@@ -1867,22 +1867,50 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 課題（Assignment）CRUD一式とステータス遷移警告
-- status: 未着手
+- status: 完了
 - 概要: 「## エンドポイント一覧」の課題系（`POST/GET /courses/{id}/assignments`、`GET/PATCH/DELETE /assignments/{id}`）を実装し、授業配下の課題の作成・一覧・詳細・更新・論理削除をAPIから行えるようにする。ステータス変更は「## ステータス遷移の警告ロジック」の Assignment.status のグラフ（未着手→取組中→未提出→提出済み）で逆行を判定し、ブロックせず警告付きで200を返す。「授業（Course）CRUD一式」タスクの完了後に着手する。論理削除済み授業に属する課題をid直指定で操作した場合の扱いは「## 未決定事項」の決定待ちのため本タスクの対象外とし、別タスクで扱う。
 - 受け入れ条件:
-  - [ ] 授業配下に課題名を指定して課題を作成でき、ステータスを省略すると「未着手」で作成される。提出期限・提出方法・メモは省略しても作成できる
-  - [ ] 課題名が無い（空を含む）、ステータスが未着手/取組中/未提出/提出済み以外、提出方法がWebClass/紙/その他以外、のいずれかのリクエストは作成・更新とも422で拒否される
-  - [ ] 提出期限は日付と時刻を持つ値として保存・返却され、その日時の扱い（タイムゾーン等）は旧WorkLogの開始・終了日時と同じ扱いになっている
-  - [ ] 授業配下の課題一覧では、その授業の is_deleted=false の課題のみが返る
-  - [ ] 課題詳細で課題の各項目（所属する授業のidを含む）を取得できる
-  - [ ] 課題の各項目を部分的に更新でき、指定しなかった項目は変化しない
-  - [ ] ステータスを逆行させて更新すると（例: 提出済み→取組中、未提出→未着手）200とともに warning フィールドが返り、更新自体は反映される。同一ステータス・隣接遷移・飛び越え遷移（例: 未着手→提出済み）では warning は含まれない
-  - [ ] 課題を削除すると is_deleted が true になり、以降の一覧・詳細・更新・削除の対象にならない（詳細・更新・削除は404）
-  - [ ] 存在しない授業id・論理削除済みの授業idを指定した課題の作成・一覧取得、および存在しない課題idの指定は404が返る
-  - [ ] 「## ステータス遷移の警告ロジック」の単体テストに Assignment.status のグラフでの境界値（同一・隣接・飛び越え・逆行）が含まれている
-  - [ ] 上記の挙動を検証する自動テストがあり、選考系の既存テストも全て通過する
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 授業配下に課題名を指定して課題を作成でき、ステータスを省略すると「未着手」で作成される。提出期限・提出方法・メモは省略しても作成できる
+  - [x] 課題名が無い（空を含む）、ステータスが未着手/取組中/未提出/提出済み以外、提出方法がWebClass/紙/その他以外、のいずれかのリクエストは作成・更新とも422で拒否される
+  - [x] 提出期限は日付と時刻を持つ値として保存・返却され、その日時の扱い（タイムゾーン等）は旧WorkLogの開始・終了日時と同じ扱いになっている
+  - [x] 授業配下の課題一覧では、その授業の is_deleted=false の課題のみが返る
+  - [x] 課題詳細で課題の各項目（所属する授業のidを含む）を取得できる
+  - [x] 課題の各項目を部分的に更新でき、指定しなかった項目は変化しない
+  - [x] ステータスを逆行させて更新すると（例: 提出済み→取組中、未提出→未着手）200とともに warning フィールドが返り、更新自体は反映される。同一ステータス・隣接遷移・飛び越え遷移（例: 未着手→提出済み）では warning は含まれない
+  - [x] 課題を削除すると is_deleted が true になり、以降の一覧・詳細・更新・削除の対象にならない（詳細・更新・削除は404）
+  - [x] 存在しない授業id・論理削除済みの授業idを指定した課題の作成・一覧取得、および存在しない課題idの指定は404が返る
+  - [x] 「## ステータス遷移の警告ロジック」の単体テストに Assignment.status のグラフでの境界値（同一・隣接・飛び越え・逆行）が含まれている
+  - [x] 上記の挙動を検証する自動テストがあり、選考系の既存テストも全て通過する
+- 実装メモ:
+  - `backend/app/routers/assignments.py`（新規）: 既存の`company_tasks.py`/`interview_steps.py`と同じ構成で`POST/GET /courses/{id}/assignments`、`GET/PATCH/DELETE /assignments/{id}`を実装し、`backend/app/main.py`に登録。作成・一覧は親授業が存在し`is_deleted=false`であることを検証（それ以外は404）。一覧は`is_deleted=false`の課題のみ。id直指定の詳細・更新・削除は課題自身の`is_deleted`のみで判定し、親授業の削除状態は見ない（決定事項「論理削除済み授業に属する課題への個別操作の扱い」B案どおり。同挙動の自動テストは後続タスク「論理削除済み授業に属する課題への個別操作の扱い」で追加する）。削除は論理削除（204）。PATCHはステータスが変わる場合のみ`check_backward_transition`で判定し、逆行時は`warning`付きで200（更新は反映）。将来の`/assignments/upcoming`が`/assignments/{id}`と解釈されないよう、固定パスは`/assignments/{id}`より先に登録する旨をルーター内にコメントした。
+  - `backend/app/status_transitions.py`: `AssignmentStatus`（StrEnum）と`ASSIGNMENT_STATUS_GRAPH`（未着手→取組中→未提出→提出済み）を追加。`backend/app/models.py`の`Assignment.status`の型注釈を`Mapped[AssignmentStatus]`に変更（DB上は素のStringのまま、スキーマ変更なし）。
+  - `backend/app/schemas.py`: `AssignmentCreate`/`AssignmentUpdate`/`AssignmentRead`/`AssignmentPatchResponse`を追加。Create/Updateに`id`/`is_deleted`/`course_id`を含めない（送っても無視される）。課題名は授業と同じく空文字・空白のみを422。ステータスは省略時「未着手」。提出方法は`WebClass/紙/その他`のLiteral。PATCHで`name`/`status`への明示的なnullは422、`deadline`/`submission_method`/`memo`はnullでクリア可。
+  - 提出期限の日時の扱い（技術判断）: 旧`WorkLog.started_at`と同じくタイムゾーン無し（naive）の日時として保存・返却する（`"2026-11-01T23:59:00"`形式）。オフセット付きの値（`+09:00`や`Z`）は、SQLite保存時にオフセットが黙って捨てられ別の時刻として記録されてしまうため、Pydanticの`NaiveDatetime`で422として拒否する。秒を省略した`"2026-11-01T09:00"`は受理する。
+  - 巨大整数対策（技術判断）: パスの`course_id`/`assignment_id`にSQLite INTEGER（符号付き64bit）の範囲外の値を渡すとクエリ時にOverflowErrorで500になるため、クエリ前に範囲外idを「存在しないid」として404を返す。課題のリクエストボディには整数項目が無いため、ボディ側で同種の問題は起きない。なお既存の授業・選考系エンドポイントのパスidには同じ問題が残っている（本タスクのスコープ外のため未修正）。
+- テスト:
+  - `backend/tests/test_assignments.py`（新規）: 全項目指定/課題名のみでの作成（ステータス既定値「未着手」）、ステータス4種・提出方法3種の受理、課題名欠落・空・空白のみ・null、ステータス/提出方法の範囲外、不正な日時・オフセット付き日時を作成・更新とも422（更新時は値が変化しないことも確認）、`id`/`is_deleted`/`course_id`のmass assignment無効、提出期限がnaiveな日時として保存・返却されること、一覧が当該授業の未削除課題のみを返すこと、詳細が`course_id`を含む全項目を返すこと、部分更新・空ボディ・任意項目のnullクリア、逆行4パターンでwarning付き200かつ更新反映、同一/隣接/飛び越えでwarning無し、論理削除（DB上は行が残り`is_deleted=true`）と削除後の詳細/更新/削除の404、存在しない・削除済みの授業idでの作成/一覧の404、存在しない課題idの404、範囲外の巨大id（正負）で全5エンドポイントが404、全5エンドポイントでAPI Key無し・誤りが401かつデータ不変。
+  - `backend/tests/test_status_transitions.py`: Assignment.statusグラフの境界値（同一・隣接・飛び越え・逆行）の単体テストを追加。
+  - `DATABASE_URL`をスクラッチ領域の一時SQLiteに向けて実行し、`app.db`・`backend/app.db`のsha256が実行前後で不変なことを確認。`uv run pytest -W error`: 370件全てpass（`-W default`でもwarning 0件）。`uv run ruff check`: All checks passed。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium該当なし）。コードを読んで確認し、`DATABASE_URL`をスクラッチ領域の一時SQLiteに向けた手動プローブで裏付けを取った。
+  - 認証: `assignments.router`は`create_app()`内で`include_router`されており、グローバル依存の`verify_api_key`（`secrets.compare_digest`による定数時間比較、環境変数未設定時はfail closed）が全5エンドポイントに適用される。キー無しでの`GET /assignments/{id}`は401になることを確認。/docs・/openapi.jsonは引き続き無効。
+  - インジェクション: クエリは全てSQLAlchemy ORMのfilter（バインドパラメータ）で組み立てられ、生SQLや文字列結合は無い。`memo`にSQLメタ文字を入れても値として保存されるだけだった。新規コードにユーザー入力のログ出力や外部コマンドへの受け渡しは無い。
+  - mass assignment: `AssignmentCreate`/`AssignmentUpdate`には`id`/`is_deleted`/`course_id`が無い（Pydanticの既定`extra=ignore`）。POSTとPATCHでこれらを送っても無視され（id=999・is_deleted=true・course_id=12345/777を送っても反映されない）、`course_id`はパスから設定される。入力スキーマと出力スキーマ（`AssignmentRead`/`AssignmentPatchResponse`）は分離されている。PATCHは`exclude_unset`でスキーマ定義フィールドだけをsetattrしている。
+  - 論理削除: 一覧は`is_deleted=false`の課題に絞り込み、親授業も`is_deleted=false`で検証している。詳細・更新・削除は`_get_active_assignment_or_404`経由で削除済みの課題を404にする。DELETEは`is_deleted=True`を立てる論理削除で、物理削除の経路は無い。親授業の削除状態を見ない点は決定事項B案どおり。
+  - エラーハンドリング: 不正なJSON・型不一致・不正な日時はFastAPI標準の422になり、スタックトレース・内部パス・SQL文は返らない。範囲外の巨大idは事前に404にしているためOverflowErrorによる500にならない。`deadline`の極値（0001-01-01、9999-12-31T23:59:59）、数値（1e30、-1）、NULバイト入りの`memo`も500にならなかった。
+  - CORS/シークレット: 今回`cors.py`の変更は無い（明示オリジン列挙・`allow_credentials=False`のまま、未許可オリジンのプリフライトは拒否される）。キーやDB接続情報のハードコードは無い（テスト内の固定キーはmonkeypatchで設定するテスト専用値）。`.env`と`*.db`は`.gitignore`で除外されている。
+  - [Low・差し戻し対象外] 自由入力の文字列項目（`name`/`memo`）に長さの上限が無く、約1MBの`name`も200で保存される。API Key必須の本人専用ツールなので実害は小さく、既存の授業・選考系とも同じ挙動。必要なら後続タスクで`max_length`の導入を検討する。
+- 性能エバリュエーターのフィードバック: 合格。`DATABASE_URL`をスクラッチ領域の一時SQLiteに向けて実行し、実行前後で`app.db`・`backend/app.db`のsha256が不変なことを確認した。
+  - `uv run pytest -v -W default`: 370件全てpass、warning 0件（選考系・授業系・マイグレーション等の既存テストに回帰なし）。`uv run ruff check`: All checks passed。
+  - 作成・既定値: `test_create_assignment_reflects_input_in_response`（全項目指定）と`test_create_assignment_with_name_only_defaults_status_to_not_started`（課題名のみで作成でき、ステータスは「未着手」、提出期限・提出方法・メモはnull）でPASS。提出期限なしでの作成と、PATCHでの提出期限nullクリア（`test_update_assignment_can_clear_nullable_field[deadline]`）も確認した。
+  - 422拒否: `INVALID_FIELD_VALUES`（課題名の空・空白のみ・null、定義外のステータス、定義外の提出方法、不正な日時・オフセット付き日時）を作成・更新の両方でパラメタライズ済み。PATCHでは拒否後に値が変化しないことも検証しており、PASS。課題名欠落も別テストでPASS。
+  - 提出期限の日時: `test_deadline_is_stored_and_returned_as_naive_datetime`でAPIの返却値とDB保存値（tzinfo無し、秒まで一致）を確認、秒省略形式も受理されることを確認。PASS。
+  - 一覧: 他授業の課題と削除済み課題を除き、当該授業の未削除課題だけが返ること、0件のとき空リストになることを確認。PASS。
+  - 詳細: `course_id`を含む全項目のキー集合と値が一致することを確認。PASS。
+  - 部分更新: 一部項目の更新・全項目の更新・空ボディの各ケースで、指定しなかった項目が変化しないことを確認。PASS。
+  - ステータス警告（境界値4パターン）: 同一（取組中→取組中）・隣接（3パターン）・飛び越え（未着手→提出済み、未着手→未提出）はwarning=None、逆行（提出済み→取組中、未提出→未着手、取組中→未着手、提出済み→未提出）は200＋warning付きで、更新も反映されることをAPIレベルで確認。`test_status_transitions.py`にもAssignment.statusグラフの同一・隣接・飛び越え・逆行の単体テストがある。PASS。
+  - 論理削除: 削除後もDB上に行が残り`is_deleted=true`になること、一覧から外れること、削除後の詳細・更新・再削除が404になることを確認。PASS。
+  - 404: 存在しない授業id・削除済み授業idでの作成と一覧、存在しない課題idでの詳細・更新・削除をそれぞれ確認。範囲外の巨大id（正負）でも全5エンドポイントが500ではなく404になる。PASS。
+  - 補足（差し戻し対象外）: 親授業が削除済みの課題をid直指定で操作するケースのテストは、後続タスク「論理削除済み授業に属する課題への個別操作の扱い」で扱うため、本タスクでは評価していない。同様に`/assignments/upcoming`も後続タスクの範囲のため未評価。
 - 差し戻し回数: 0
 
 ### タスク: 論理削除済み授業に属する課題への個別操作の扱い

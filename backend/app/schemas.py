@@ -5,13 +5,22 @@ mass assignment対策として、作成用スキーマには is_deleted 等の�
 """
 
 from datetime import date as _Date
+from datetime import datetime
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    NaiveDatetime,
+    model_validator,
+)
 
 # ステータス集合はapp.status_transitionsで定義したEnumを単一の情報源とする
 # （ここで独自に列挙すると、Enum側だけ更新された際に不整合が起きるため）。
 from app.status_transitions import (
+    AssignmentStatus,
     CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
@@ -77,6 +86,62 @@ class CourseUpdate(BaseModel):
             fields = ", ".join(null_required_fields)
             raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
         return self
+
+
+SubmissionMethod = Literal["WebClass", "紙", "その他"]
+
+
+# deadlineは旧WorkLog.started_atと同じくタイムゾーン無しの日時として保存する。
+# オフセット付きの値を受け付けるとSQLite保存時にオフセットが黙って捨てられ、
+# 別の時刻として記録されてしまうため、NaiveDatetimeで422として拒否する。
+class AssignmentCreate(BaseModel):
+    name: NonBlankStr
+    # 新規課題は常にグラフの起点から始まるのが自然なため、省略時は未着手とする。
+    status: AssignmentStatus = AssignmentStatus.未着手
+    deadline: NaiveDatetime | None = None
+    submission_method: SubmissionMethod | None = None
+    memo: str | None = None
+
+
+class AssignmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    course_id: int
+    name: str
+    status: str
+    deadline: datetime | None
+    submission_method: str | None
+    memo: str | None
+    is_deleted: bool
+
+
+# DB上nullable=FalseなAssignmentのカラム（PATCHで明示的なnullを許可しない項目）。
+_ASSIGNMENT_REQUIRED_UPDATE_FIELDS = ("name", "status")
+
+
+class AssignmentUpdate(BaseModel):
+    name: NonBlankStr | None = None
+    status: AssignmentStatus | None = None
+    deadline: NaiveDatetime | None = None
+    submission_method: SubmissionMethod | None = None
+    memo: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_for_required_fields(self) -> Self:
+        null_required_fields = [
+            field
+            for field in _ASSIGNMENT_REQUIRED_UPDATE_FIELDS
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if null_required_fields:
+            fields = ", ".join(null_required_fields)
+            raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
+        return self
+
+
+class AssignmentPatchResponse(AssignmentRead):
+    warning: str | None = None
 
 
 class CompanyBase(BaseModel):
