@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
+from app.routers.ids import is_storable_id
 from app.schemas import (
     CompanyTaskCreate,
     CompanyTaskPatchResponse,
@@ -21,25 +22,29 @@ router = APIRouter(tags=["company-tasks"])
 
 
 def _get_active_company_or_404(db: Session, company_id: int) -> models.Company:
-    company = (
-        db.query(models.Company)
-        .filter(models.Company.id == company_id, models.Company.is_deleted.is_(False))
-        .first()
-    )
+    company = None
+    if is_storable_id(company_id):
+        company = (
+            db.query(models.Company)
+            .filter(models.Company.id == company_id, models.Company.is_deleted.is_(False))
+            .first()
+        )
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
     return company
 
 
 def _get_active_company_task_or_404(db: Session, company_task_id: int) -> models.CompanyTask:
-    company_task = (
-        db.query(models.CompanyTask)
-        .filter(
-            models.CompanyTask.id == company_task_id,
-            models.CompanyTask.is_deleted.is_(False),
+    company_task = None
+    if is_storable_id(company_task_id):
+        company_task = (
+            db.query(models.CompanyTask)
+            .filter(
+                models.CompanyTask.id == company_task_id,
+                models.CompanyTask.is_deleted.is_(False),
+            )
+            .first()
         )
-        .first()
-    )
     if company_task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CompanyTask not found")
     return company_task

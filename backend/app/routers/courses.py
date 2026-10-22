@@ -5,17 +5,20 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
+from app.routers.ids import is_storable_id
 from app.schemas import CourseCreate, CourseRead, CourseUpdate
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
 
 def _get_active_course_or_404(db: Session, course_id: int) -> models.Course:
-    course = (
-        db.query(models.Course)
-        .filter(models.Course.id == course_id, models.Course.is_deleted.is_(False))
-        .first()
-    )
+    course = None
+    if is_storable_id(course_id):
+        course = (
+            db.query(models.Course)
+            .filter(models.Course.id == course_id, models.Course.is_deleted.is_(False))
+            .first()
+        )
     if course is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
     return course

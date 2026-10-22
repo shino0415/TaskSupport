@@ -12,6 +12,8 @@ wheels/
 # DB files
 *.db
 *.sqlite3
+# 移行手順で作成するバックアップ（app.db.bak-<日時>）
+*.db.bak*
 
 # Environment variables
 .env

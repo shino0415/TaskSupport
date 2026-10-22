@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
+from app.routers.ids import is_storable_id
 from app.schemas import (
     AssignmentCreate,
     AssignmentPatchResponse,
@@ -20,19 +21,9 @@ from app.status_transitions import (
 
 router = APIRouter(tags=["assignments"])
 
-# SQLiteのINTEGERは符号付き64bitのため、範囲外の値をクエリに渡すとOverflowErrorで
-# 500になる。範囲外のidは存在し得ないので、クエリ前に404として扱う。
-_SQLITE_INT_MIN = -(2**63)
-_SQLITE_INT_MAX = 2**63 - 1
-
-
-def _is_storable_id(value: int) -> bool:
-    return _SQLITE_INT_MIN <= value <= _SQLITE_INT_MAX
-
-
 def _get_active_course_or_404(db: Session, course_id: int) -> models.Course:
     course = None
-    if _is_storable_id(course_id):
+    if is_storable_id(course_id):
         course = (
             db.query(models.Course)
             .filter(models.Course.id == course_id, models.Course.is_deleted.is_(False))
@@ -47,7 +38,7 @@ def _get_active_assignment_or_404(db: Session, assignment_id: int) -> models.Ass
     # 決定事項「論理削除済み授業に属する課題への個別操作の扱い」により、
     # 親授業の削除状態は見ず、課題自身のis_deletedのみで判定する。
     assignment = None
-    if _is_storable_id(assignment_id):
+    if is_storable_id(assignment_id):
         assignment = (
             db.query(models.Assignment)
             .filter(
