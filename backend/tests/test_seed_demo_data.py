@@ -21,9 +21,6 @@ from app.seed_demo_data import seed
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 EXPECTED_COUNTS = {
-    "project": 3,
-    "task": 5,
-    "work_log": 4,
     "company": 3,
     "interview_step": 5,
     "company_task": 4,
@@ -46,9 +43,6 @@ def test_seed_populates_every_table_with_expected_counts(tmp_path):
 
     assert counts == EXPECTED_COUNTS
     for model, expected_count in [
-        (models.Project, EXPECTED_COUNTS["project"]),
-        (models.Task, EXPECTED_COUNTS["task"]),
-        (models.WorkLog, EXPECTED_COUNTS["work_log"]),
         (models.Company, EXPECTED_COUNTS["company"]),
         (models.InterviewStep, EXPECTED_COUNTS["interview_step"]),
         (models.CompanyTask, EXPECTED_COUNTS["company_task"]),
@@ -62,17 +56,10 @@ def test_seed_populates_every_table_with_expected_counts(tmp_path):
 # --- 横断系エンドポイントでも何らかのデータが確認できる状態になる ---
 
 
-def test_seed_produces_data_visible_via_running_work_logs_and_upcoming_steps(tmp_path):
+def test_seed_produces_data_visible_via_upcoming_steps(tmp_path):
     session, _ = make_session(tmp_path, "seed_cross_cutting.db")
     seed(session)
     session.commit()
-
-    running_logs = (
-        session.query(models.WorkLog)
-        .filter(models.WorkLog.is_deleted.is_(False), models.WorkLog.ended_at.is_(None))
-        .all()
-    )
-    assert len(running_logs) >= 1
 
     today = date.today()
     upcoming_steps = (
@@ -100,12 +87,6 @@ def test_seed_data_contains_no_email_addresses(tmp_path):
     session.commit()
 
     text_fields = []
-    for project in session.query(models.Project).all():
-        text_fields += [project.name, project.client_name, project.memo]
-    for task in session.query(models.Task).all():
-        text_fields += [task.name, task.memo]
-    for work_log in session.query(models.WorkLog).all():
-        text_fields.append(work_log.memo)
     for company in session.query(models.Company).all():
         text_fields.append(company.name)
     for step in session.query(models.InterviewStep).all():
@@ -131,16 +112,6 @@ def test_seed_is_idempotent_when_run_repeatedly(tmp_path):
 
     def snapshot():
         return {
-            "project": sorted(
-                (p.name, p.client_name, str(p.status), p.reward)
-                for p in session.query(models.Project)
-            ),
-            "task": sorted(
-                (t.project_id, t.name, str(t.status)) for t in session.query(models.Task)
-            ),
-            "work_log": sorted(
-                (w.task_id, w.started_at, w.ended_at) for w in session.query(models.WorkLog)
-            ),
             "company": sorted(c.name for c in session.query(models.Company)),
             "interview_step": sorted(
                 (s.company_id, s.type, s.date, str(s.prep_status), str(s.result))
@@ -169,8 +140,16 @@ def test_seed_reruns_to_same_state_even_after_vandalism(tmp_path):
 
     # 荒らしを模して、勝手にデータを追加・変更・削除する
     session.add(models.Company(name="荒らしにより追加された企業"))
-    project = session.query(models.Project).first()
-    project.name = "改ざんされた案件名"
+    vandal_course = models.Course(name="荒らしにより追加された授業")
+    session.add(vandal_course)
+    session.flush()
+    session.add(
+        models.Assignment(
+            course_id=vandal_course.id, name="荒らしにより追加された課題", status="未着手"
+        )
+    )
+    step = session.query(models.InterviewStep).first()
+    step.type = "改ざんされた選考種別"
     company_task = session.query(models.CompanyTask).first()
     session.delete(company_task)
     session.commit()
@@ -178,19 +157,17 @@ def test_seed_reruns_to_same_state_even_after_vandalism(tmp_path):
     seed(session)
     session.commit()
 
-    assert session.query(models.Project).count() == EXPECTED_COUNTS["project"]
     assert session.query(models.Company).count() == EXPECTED_COUNTS["company"]
+    assert session.query(models.InterviewStep).count() == EXPECTED_COUNTS["interview_step"]
     assert session.query(models.CompanyTask).count() == EXPECTED_COUNTS["company_task"]
+    assert session.query(models.Course).count() == 0
+    assert session.query(models.Assignment).count() == 0
     assert {c.name for c in session.query(models.Company)} == {
         "架空フーズ株式会社",
         "サンプルテクノロジーズ株式会社",
         "デモ商事合同会社",
     }
-    assert {p.name for p in session.query(models.Project)} == {
-        "ECサイトリニューアル案件",
-        "業務システム保守運用",
-        "コーポレートサイト制作",
-    }
+    assert "改ざんされた選考種別" not in {s.type for s in session.query(models.InterviewStep)}
 
     session.close()
 
@@ -228,10 +205,9 @@ def test_seed_script_runs_as_standalone_command(tmp_path):
 
     engine = build_engine(f"sqlite:///{db_path}")
     inspector = inspect(engine)
-    assert {"project", "task", "work_log", "company", "interview_step", "company_task"}.issubset(
+    assert {"company", "interview_step", "company_task"}.issubset(
         set(inspector.get_table_names())
     )
     session = sessionmaker(bind=engine)()
-    assert session.query(models.Project).count() == EXPECTED_COUNTS["project"]
     assert session.query(models.Company).count() == EXPECTED_COUNTS["company"]
     session.close()

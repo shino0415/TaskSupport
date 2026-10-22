@@ -1,6 +1,6 @@
 """ステータス遷移の警告ロジック（共通の純粋関数）。
 
-案件系・選考系のPATCHエンドポイントから共通で呼ばれる想定。ステータス変更は
+授業系・選考系のPATCHエンドポイントから共通で呼ばれる想定。ステータス変更は
 ブロックせず、明確な逆行遷移を検知した場合のみ警告メッセージを返す。
 
 「見送り」「不通過」のような分岐的な結果ステータスを1本の順序リストに無理やり
@@ -17,15 +17,7 @@ from collections import deque
 from enum import StrEnum
 
 
-class ProjectStatus(StrEnum):
-    提案中 = "提案中"
-    契約中 = "契約中"
-    納品済み = "納品済み"
-    完了 = "完了"
-    見送り = "見送り"
-
-
-class TaskStatus(StrEnum):
+class CompanyTaskStatus(StrEnum):
     未着手 = "未着手"
     処理中 = "処理中"
     完了 = "完了"
@@ -45,18 +37,10 @@ class InterviewStepResult(StrEnum):
 
 # --- 適用箇所ごとの状態遷移グラフ（確定） ---
 
-PROJECT_STATUS_GRAPH: dict[ProjectStatus, list[ProjectStatus]] = {
-    ProjectStatus.提案中: [ProjectStatus.契約中, ProjectStatus.見送り],
-    ProjectStatus.契約中: [ProjectStatus.納品済み, ProjectStatus.見送り],
-    ProjectStatus.納品済み: [ProjectStatus.完了],
-    ProjectStatus.完了: [],
-    ProjectStatus.見送り: [],
-}
-
-TASK_STATUS_GRAPH: dict[TaskStatus, list[TaskStatus]] = {
-    TaskStatus.未着手: [TaskStatus.処理中],
-    TaskStatus.処理中: [TaskStatus.完了],
-    TaskStatus.完了: [],
+COMPANY_TASK_STATUS_GRAPH: dict[CompanyTaskStatus, list[CompanyTaskStatus]] = {
+    CompanyTaskStatus.未着手: [CompanyTaskStatus.処理中],
+    CompanyTaskStatus.処理中: [CompanyTaskStatus.完了],
+    CompanyTaskStatus.完了: [],
 }
 
 INTERVIEW_STEP_PREP_STATUS_GRAPH: dict[InterviewStepPrepStatus, list[InterviewStepPrepStatus]] = {

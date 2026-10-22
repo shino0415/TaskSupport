@@ -2,9 +2,8 @@
 
 本アプリをポートフォリオとして公開し、訪問者が公開済みのデモ用API Keyで
 フルCRUD操作を試せるようにするにあたり、荒らし・スパムで汚れたデータを
-安全な状態に戻すための土台。実行するたびに案件・タスク・稼働ログ・企業・
-選考ステップ・企業タスクの全テーブルの既存データを物理削除してから、
-実在の人物・企業を想起させない固定のダミーデータを再投入する（冪等）。
+安全な状態に戻すための土台。実行するたびに授業・課題・企業・選考ステップ・
+企業タスクの全テーブルの既存データを物理削除してから、実在の人物・企業を想起させない固定のダミーデータを再投入する（冪等）。
 
 DB全体を消去する操作であるため、HTTPエンドポイントとしては公開せず、
 サーバープロセスとは独立したスクリプトとして実行する。
@@ -15,17 +14,16 @@ DB全体を消去する操作であるため、HTTPエンドポイントとし�
 `python -m app.seed_demo_data` だけで実行できる。スケジューラへの登録は対象外。）
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
 from app import models
 from app.database import SessionLocal, init_db
 from app.status_transitions import (
+    CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
-    ProjectStatus,
-    TaskStatus,
 )
 
 
@@ -45,48 +43,12 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
     # 既存オブジェクトを走査させない（呼び出し元がすでに参照を保持している場合の
     # 余分な整合処理を避ける）。削除後に採番されるIDが、セッションに残った古い
     # オブジェクトのIDと衝突して警告が出ないよう、identity mapを明示的に空にする。
-    db.query(models.WorkLog).delete(synchronize_session=False)
-    db.query(models.Task).delete(synchronize_session=False)
-    db.query(models.Project).delete(synchronize_session=False)
+    db.query(models.Assignment).delete(synchronize_session=False)
+    db.query(models.Course).delete(synchronize_session=False)
     db.query(models.InterviewStep).delete(synchronize_session=False)
     db.query(models.CompanyTask).delete(synchronize_session=False)
     db.query(models.Company).delete(synchronize_session=False)
     db.expunge_all()
-
-    projects = [
-        models.Project(
-            name="ECサイトリニューアル案件",
-            client_name="架空コマース株式会社",
-            status=ProjectStatus.契約中,
-            reward=450000,
-            applied_date=today - timedelta(days=30),
-            deadline=today + timedelta(days=20),
-            platform="CrowdWorks",
-            memo="フロントエンド刷新がメインスコープ",
-        ),
-        models.Project(
-            name="業務システム保守運用",
-            client_name="デモ工業株式会社",
-            status=ProjectStatus.納品済み,
-            reward=200000,
-            applied_date=today - timedelta(days=60),
-            deadline=None,
-            platform="ランサーズ",
-            memo=None,
-        ),
-        models.Project(
-            name="コーポレートサイト制作",
-            client_name="サンプル物産株式会社",
-            status=ProjectStatus.提案中,
-            reward=150000,
-            applied_date=today - timedelta(days=5),
-            deadline=today + timedelta(days=15),
-            platform="Findy Freelance",
-            memo="提案書提出済み、返答待ち",
-        ),
-    ]
-    db.add_all(projects)
-    db.flush()
 
     companies = [
         models.Company(name="架空フーズ株式会社"),
@@ -95,61 +57,6 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
     ]
     db.add_all(companies)
     db.flush()
-
-    tasks = [
-        models.Task(
-            project_id=projects[0].id, name="デザインカンプ作成", status=TaskStatus.完了
-        ),
-        models.Task(
-            project_id=projects[0].id, name="フロントエンド実装", status=TaskStatus.処理中
-        ),
-        models.Task(
-            project_id=projects[1].id, name="月次保守対応", status=TaskStatus.処理中
-        ),
-        models.Task(
-            project_id=projects[1].id, name="バグ修正対応", status=TaskStatus.未着手
-        ),
-        models.Task(
-            project_id=projects[2].id, name="要件ヒアリング", status=TaskStatus.未着手
-        ),
-    ]
-    db.add_all(tasks)
-    db.flush()
-
-    front_end_task = tasks[1]
-    bug_fix_task = tasks[3]
-    maintenance_task = tasks[2]
-
-    work_logs = [
-        # 完了済みログ（実質時給の算出材料になる）
-        models.WorkLog(
-            task_id=front_end_task.id,
-            started_at=datetime.combine(today - timedelta(days=2), time(10, 0)),
-            ended_at=datetime.combine(today - timedelta(days=2), time(15, 0)),
-            memo="トップページ実装",
-        ),
-        # 進行中ログ（GET /work-logs/running で確認できる状態にする）
-        models.WorkLog(
-            task_id=front_end_task.id,
-            started_at=datetime.combine(today, time(9, 0)),
-            ended_at=None,
-            memo=None,
-        ),
-        models.WorkLog(
-            task_id=maintenance_task.id,
-            started_at=datetime.combine(today - timedelta(days=1), time(9, 0)),
-            ended_at=datetime.combine(today - timedelta(days=1), time(11, 30)),
-            memo="月次レポート対応",
-        ),
-        # 別タスク・別案件でも並行して進行中ログがあることを確認できる状態にする
-        models.WorkLog(
-            task_id=bug_fix_task.id,
-            started_at=datetime.combine(today, time(13, 0)),
-            ended_at=None,
-            memo="不具合調査中",
-        ),
-    ]
-    db.add_all(work_logs)
 
     interview_steps = [
         models.InterviewStep(
@@ -199,25 +106,25 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
         models.CompanyTask(
             company_id=companies[0].id,
             name="想定質問リストの作成",
-            status=TaskStatus.処理中,
+            status=CompanyTaskStatus.処理中,
             memo=None,
         ),
         models.CompanyTask(
             company_id=companies[0].id,
             name="ポートフォリオ資料の更新",
-            status=TaskStatus.完了,
+            status=CompanyTaskStatus.完了,
             memo=None,
         ),
         models.CompanyTask(
             company_id=companies[1].id,
             name="お礼メールの送付",
-            status=TaskStatus.未着手,
+            status=CompanyTaskStatus.未着手,
             memo=None,
         ),
         models.CompanyTask(
             company_id=companies[2].id,
             name="日程調整の返信",
-            status=TaskStatus.未着手,
+            status=CompanyTaskStatus.未着手,
             memo="候補日を3つ提示",
         ),
     ]
@@ -225,9 +132,6 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
     db.flush()
 
     return {
-        "project": len(projects),
-        "task": len(tasks),
-        "work_log": len(work_logs),
         "company": len(companies),
         "interview_step": len(interview_steps),
         "company_task": len(company_tasks),

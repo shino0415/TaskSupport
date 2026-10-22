@@ -64,21 +64,6 @@ def client(monkeypatch, tmp_path):
     return make_client(monkeypatch, tmp_path, ORIGINS_ENV_VALUE)
 
 
-def make_project_payload(**overrides):
-    payload = {
-        "name": "テスト案件",
-        "client_name": "テストクライアント",
-        "status": "提案中",
-        "reward": 50000,
-        "applied_date": "2026-01-01",
-        "deadline": "2026-02-01",
-        "platform": "CrowdWorks",
-        "memo": "メモ",
-    }
-    payload.update(overrides)
-    return payload
-
-
 # --- 環境変数のパース（単体） ---
 
 
@@ -115,7 +100,7 @@ def test_get_allowed_origins_returns_empty_list_when_env_var_unset(monkeypatch):
 
 @pytest.mark.parametrize("origin", [ALLOWED_ORIGIN, ANOTHER_ALLOWED_ORIGIN])
 def test_listed_origins_receive_allow_origin_header(client, origin):
-    response = client.get("/projects", headers={**AUTH_HEADERS, "Origin": origin})
+    response = client.get("/companies", headers={**AUTH_HEADERS, "Origin": origin})
     assert response.status_code == 200
     assert response.headers[ACAO] == origin
 
@@ -124,13 +109,13 @@ def test_listed_origins_receive_allow_origin_header(client, origin):
 
 
 def test_unlisted_origin_does_not_receive_allow_origin_header(client):
-    response = client.get("/projects", headers={**AUTH_HEADERS, "Origin": DISALLOWED_ORIGIN})
+    response = client.get("/companies", headers={**AUTH_HEADERS, "Origin": DISALLOWED_ORIGIN})
     assert ACAO not in response.headers
 
 
 def test_unlisted_origin_preflight_does_not_receive_allow_origin_header(client):
     response = client.options(
-        "/projects",
+        "/companies",
         headers={
             "Origin": DISALLOWED_ORIGIN,
             "Access-Control-Request-Method": "GET",
@@ -147,7 +132,7 @@ def test_origin_matching_is_exact_and_not_prefix_based(client):
         "http://localhost:5174",
         "https://localhost:5173",
     ):
-        response = client.get("/projects", headers={**AUTH_HEADERS, "Origin": origin})
+        response = client.get("/companies", headers={**AUTH_HEADERS, "Origin": origin})
         assert ACAO not in response.headers
 
 
@@ -161,11 +146,11 @@ def test_no_origin_is_allowed_when_env_var_unset_or_empty(
 ):
     client = make_client(monkeypatch, tmp_path, origins_env)
 
-    simple_response = client.get("/projects", headers={**AUTH_HEADERS, "Origin": origin})
+    simple_response = client.get("/companies", headers={**AUTH_HEADERS, "Origin": origin})
     assert ACAO not in simple_response.headers
 
     preflight_response = client.options(
-        "/projects",
+        "/companies",
         headers={
             "Origin": origin,
             "Access-Control-Request-Method": "GET",
@@ -178,13 +163,13 @@ def test_no_origin_is_allowed_when_env_var_unset_or_empty(
 @pytest.mark.parametrize("origins_env", [None, ""])
 def test_wildcard_is_not_the_default(monkeypatch, tmp_path, origins_env):
     client = make_client(monkeypatch, tmp_path, origins_env)
-    response = client.get("/projects", headers={**AUTH_HEADERS, "Origin": DISALLOWED_ORIGIN})
+    response = client.get("/companies", headers={**AUTH_HEADERS, "Origin": DISALLOWED_ORIGIN})
     assert response.headers.get(ACAO) != "*"
     assert ACAO not in response.headers
 
 
 def test_wildcard_is_not_returned_even_when_origins_are_configured(client):
-    response = client.get("/projects", headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN})
+    response = client.get("/companies", headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN})
     assert response.headers[ACAO] != "*"
 
 
@@ -194,7 +179,7 @@ def test_wildcard_is_not_returned_even_when_origins_are_configured(client):
 @pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "DELETE"])
 def test_preflight_succeeds_for_used_methods_and_auth_header(client, method):
     response = client.options(
-        "/projects",
+        "/companies",
         headers={
             "Origin": ALLOWED_ORIGIN,
             "Access-Control-Request-Method": method,
@@ -219,7 +204,7 @@ def test_preflight_does_not_require_api_key(client):
     # プリフライトはブラウザが自動送信するため認証ヘッダーを持たない。
     # グローバル依存関係の認証より前にCORSミドルウェアが応答する必要がある。
     response = client.options(
-        "/projects",
+        "/companies",
         headers={
             "Origin": ALLOWED_ORIGIN,
             "Access-Control-Request-Method": "POST",
@@ -233,58 +218,50 @@ def test_preflight_does_not_require_api_key(client):
 
 
 def test_authentication_still_rejects_requests_without_api_key_from_allowed_origin(client):
-    response = client.get("/projects", headers={"Origin": ALLOWED_ORIGIN})
+    response = client.get("/companies", headers={"Origin": ALLOWED_ORIGIN})
     assert response.status_code == 401
 
 
 def test_authentication_still_rejects_invalid_api_key_from_allowed_origin(client):
-    response = client.get("/projects", headers={"X-API-Key": "wrong-key", "Origin": ALLOWED_ORIGIN})
+    response = client.get(
+        "/companies", headers={"X-API-Key": "wrong-key", "Origin": ALLOWED_ORIGIN}
+    )
     assert response.status_code == 401
 
 
 def test_existing_endpoint_behavior_is_unchanged_with_cors_enabled(client):
-    create_response = client.post(
-        "/projects", json=make_project_payload(), headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN}
-    )
+    headers = {**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN}
+    create_response = client.post("/companies", json={"name": "テスト企業"}, headers=headers)
     assert create_response.status_code == 201
-    project_id = create_response.json()["id"]
+    company_id = create_response.json()["id"]
 
     # 親詳細に子情報を含めない
-    detail = client.get(
-        f"/projects/{project_id}", headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN}
-    )
+    detail = client.get(f"/companies/{company_id}", headers=headers)
     assert detail.status_code == 200
-    assert "tasks" not in detail.json()
+    assert "interview_steps" not in detail.json()
+
+    step_response = client.post(
+        f"/companies/{company_id}/interview-steps", json={"type": "一次面接"}, headers=headers
+    )
+    assert step_response.status_code == 201
+    step_id = step_response.json()["id"]
 
     # ステータス逆行はブロックせずwarning付きで200
-    forward = client.patch(
-        f"/projects/{project_id}",
-        json={"status": "契約中"},
-        headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN},
-    )
+    forward = client.patch(f"/interview-steps/{step_id}", json={"result": "通過"}, headers=headers)
     assert forward.status_code == 200
     assert forward.json()["warning"] is None
 
     backward = client.patch(
-        f"/projects/{project_id}",
-        json={"status": "提案中"},
-        headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN},
+        f"/interview-steps/{step_id}", json={"result": "未定"}, headers=headers
     )
     assert backward.status_code == 200
     assert backward.json()["warning"] is not None
 
     # 論理削除後は一覧・詳細から除外される
-    delete_response = client.delete(
-        f"/projects/{project_id}", headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN}
-    )
+    delete_response = client.delete(f"/companies/{company_id}", headers=headers)
     assert delete_response.status_code == 204
 
-    listed = client.get("/projects", headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN})
+    listed = client.get("/companies", headers=headers)
     assert listed.status_code == 200
-    assert [p["id"] for p in listed.json()] == []
-    assert (
-        client.get(
-            f"/projects/{project_id}", headers={**AUTH_HEADERS, "Origin": ALLOWED_ORIGIN}
-        ).status_code
-        == 404
-    )
+    assert [c["id"] for c in listed.json()] == []
+    assert client.get(f"/companies/{company_id}", headers=headers).status_code == 404

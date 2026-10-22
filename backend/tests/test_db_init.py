@@ -6,8 +6,6 @@
 - アプリケーション起動時にDBファイル・テーブルが自動生成されること
 """
 
-from datetime import date
-
 from fastapi.testclient import TestClient
 from sqlalchemy import BOOLEAN, DATE, DATETIME, INTEGER, TEXT, VARCHAR, insert, inspect
 from sqlalchemy.orm import sessionmaker
@@ -16,9 +14,8 @@ from app import models
 from app.database import Base, build_engine
 
 EXPECTED_TABLES = {
-    "project",
-    "task",
-    "work_log",
+    "course",
+    "assignment",
     "company",
     "interview_step",
     "company_task",
@@ -37,62 +34,64 @@ def test_all_tables_are_created():
     assert set(inspector.get_table_names()) == EXPECTED_TABLES
 
 
-def test_project_columns_match_spec():
+def test_course_columns_match_spec():
     engine = make_initialized_engine()
-    columns = {c["name"]: c for c in inspect(engine).get_columns("project")}
+    columns = {c["name"]: c for c in inspect(engine).get_columns("course")}
 
+    assert set(columns) == {
+        "id",
+        "name",
+        "day_of_week",
+        "period",
+        "academic_year",
+        "term",
+        "memo",
+        "is_deleted",
+    }
     assert columns["id"]["primary_key"] == 1
     assert isinstance(columns["id"]["type"], INTEGER)
     assert columns["name"]["nullable"] is False
     assert isinstance(columns["name"]["type"], VARCHAR)
-    assert columns["client_name"]["nullable"] is False
-    assert isinstance(columns["client_name"]["type"], VARCHAR)
+    assert columns["day_of_week"]["nullable"] is True
+    assert isinstance(columns["day_of_week"]["type"], VARCHAR)
+    assert columns["period"]["nullable"] is True
+    assert isinstance(columns["period"]["type"], INTEGER)
+    assert columns["academic_year"]["nullable"] is True
+    assert isinstance(columns["academic_year"]["type"], INTEGER)
+    assert columns["term"]["nullable"] is True
+    assert isinstance(columns["term"]["type"], VARCHAR)
+    assert columns["memo"]["nullable"] is True
+    assert isinstance(columns["memo"]["type"], TEXT)
+    assert columns["is_deleted"]["nullable"] is False
+    assert isinstance(columns["is_deleted"]["type"], BOOLEAN)
+
+
+def test_assignment_columns_match_spec():
+    engine = make_initialized_engine()
+    columns = {c["name"]: c for c in inspect(engine).get_columns("assignment")}
+
+    assert set(columns) == {
+        "id",
+        "course_id",
+        "name",
+        "status",
+        "deadline",
+        "submission_method",
+        "memo",
+        "is_deleted",
+    }
+    assert columns["id"]["primary_key"] == 1
+    assert isinstance(columns["id"]["type"], INTEGER)
+    assert columns["course_id"]["nullable"] is False
+    assert isinstance(columns["course_id"]["type"], INTEGER)
+    assert columns["name"]["nullable"] is False
+    assert isinstance(columns["name"]["type"], VARCHAR)
     assert columns["status"]["nullable"] is False
     assert isinstance(columns["status"]["type"], VARCHAR)
-    assert columns["reward"]["nullable"] is False
-    assert isinstance(columns["reward"]["type"], INTEGER)
-    assert columns["applied_date"]["nullable"] is False
-    assert isinstance(columns["applied_date"]["type"], DATE)
     assert columns["deadline"]["nullable"] is True
-    assert isinstance(columns["deadline"]["type"], DATE)
-    assert columns["platform"]["nullable"] is False
-    assert isinstance(columns["platform"]["type"], VARCHAR)
-    assert columns["memo"]["nullable"] is True
-    assert isinstance(columns["memo"]["type"], TEXT)
-    assert columns["is_deleted"]["nullable"] is False
-    assert isinstance(columns["is_deleted"]["type"], BOOLEAN)
-
-
-def test_task_columns_match_spec():
-    engine = make_initialized_engine()
-    columns = {c["name"]: c for c in inspect(engine).get_columns("task")}
-
-    assert columns["id"]["primary_key"] == 1
-    assert isinstance(columns["id"]["type"], INTEGER)
-    assert columns["project_id"]["nullable"] is False
-    assert isinstance(columns["project_id"]["type"], INTEGER)
-    assert columns["name"]["nullable"] is False
-    assert isinstance(columns["name"]["type"], VARCHAR)
-    assert columns["status"]["nullable"] is False
-    assert isinstance(columns["status"]["type"], VARCHAR)
-    assert columns["memo"]["nullable"] is True
-    assert isinstance(columns["memo"]["type"], TEXT)
-    assert columns["is_deleted"]["nullable"] is False
-    assert isinstance(columns["is_deleted"]["type"], BOOLEAN)
-
-
-def test_work_log_columns_match_spec():
-    engine = make_initialized_engine()
-    columns = {c["name"]: c for c in inspect(engine).get_columns("work_log")}
-
-    assert columns["id"]["primary_key"] == 1
-    assert isinstance(columns["id"]["type"], INTEGER)
-    assert columns["task_id"]["nullable"] is False
-    assert isinstance(columns["task_id"]["type"], INTEGER)
-    assert columns["started_at"]["nullable"] is True
-    assert isinstance(columns["started_at"]["type"], DATETIME)
-    assert columns["ended_at"]["nullable"] is True
-    assert isinstance(columns["ended_at"]["type"], DATETIME)
+    assert isinstance(columns["deadline"]["type"], DATETIME)
+    assert columns["submission_method"]["nullable"] is True
+    assert isinstance(columns["submission_method"]["type"], VARCHAR)
     assert columns["memo"]["nullable"] is True
     assert isinstance(columns["memo"]["type"], TEXT)
     assert columns["is_deleted"]["nullable"] is False
@@ -158,17 +157,11 @@ def test_foreign_keys_represent_parent_child_relations():
     engine = make_initialized_engine()
     inspector = inspect(engine)
 
-    task_fks = inspector.get_foreign_keys("task")
-    assert len(task_fks) == 1
-    assert task_fks[0]["referred_table"] == "project"
-    assert task_fks[0]["constrained_columns"] == ["project_id"]
-    assert task_fks[0]["referred_columns"] == ["id"]
-
-    work_log_fks = inspector.get_foreign_keys("work_log")
-    assert len(work_log_fks) == 1
-    assert work_log_fks[0]["referred_table"] == "task"
-    assert work_log_fks[0]["constrained_columns"] == ["task_id"]
-    assert work_log_fks[0]["referred_columns"] == ["id"]
+    assignment_fks = inspector.get_foreign_keys("assignment")
+    assert len(assignment_fks) == 1
+    assert assignment_fks[0]["referred_table"] == "course"
+    assert assignment_fks[0]["constrained_columns"] == ["course_id"]
+    assert assignment_fks[0]["referred_columns"] == ["id"]
 
     interview_step_fks = inspector.get_foreign_keys("interview_step")
     assert len(interview_step_fks) == 1
@@ -192,37 +185,23 @@ def test_is_deleted_defaults_to_false_at_db_level():
         conn.execute(
             insert(models.Company.__table__).values(name="テスト企業")
         )
-        conn.execute(
-            insert(models.Project.__table__).values(
-                name="テスト案件",
-                client_name="テストクライアント",
-                status="提案中",
-                reward=10000,
-                applied_date=date(2026, 1, 1),
-                platform="CrowdWorks",
-            )
-        )
+        conn.execute(insert(models.Course.__table__).values(name="テスト授業"))
 
     company = session.query(models.Company).one()
-    project = session.query(models.Project).one()
+    course = session.query(models.Course).one()
     assert company.is_deleted is False
-    assert project.is_deleted is False
+    assert course.is_deleted is False
 
     with engine.begin() as conn:
         conn.execute(
-            insert(models.Task.__table__).values(
-                project_id=project.id,
-                name="テストタスク",
+            insert(models.Assignment.__table__).values(
+                course_id=course.id,
+                name="テスト課題",
                 status="未着手",
             )
         )
-    task = session.query(models.Task).one()
-    assert task.is_deleted is False
-
-    with engine.begin() as conn:
-        conn.execute(insert(models.WorkLog.__table__).values(task_id=task.id))
-    work_log = session.query(models.WorkLog).one()
-    assert work_log.is_deleted is False
+    assignment = session.query(models.Assignment).one()
+    assert assignment.is_deleted is False
 
     with engine.begin() as conn:
         conn.execute(

@@ -1,8 +1,7 @@
 """企業タスク（CompanyTask）の作成・参照・更新・削除エンドポイント。
 
 稼働ログ（WorkLog）・時給換算に関するエンドポイントは持たない（決定事項
-「企業タスク（CompanyTask）の稼働ログ対象範囲」参照）。ステータスはTask
-（案件配下）と同一集合のため、既存のTASK_STATUS_GRAPHをそのまま再利用する。
+「企業タスク（CompanyTask）の稼働ログ対象範囲」参照）。
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,7 +15,7 @@ from app.schemas import (
     CompanyTaskRead,
     CompanyTaskUpdate,
 )
-from app.status_transitions import TASK_STATUS_GRAPH, check_backward_transition
+from app.status_transitions import COMPANY_TASK_STATUS_GRAPH, check_backward_transition
 
 router = APIRouter(tags=["company-tasks"])
 
@@ -90,7 +89,7 @@ def update_company_task(
     warning = None
     if "status" in update_data and update_data["status"] != company_task.status:
         warning = check_backward_transition(
-            TASK_STATUS_GRAPH, company_task.status, update_data["status"]
+            COMPANY_TASK_STATUS_GRAPH, company_task.status, update_data["status"]
         )
 
     for field, value in update_data.items():

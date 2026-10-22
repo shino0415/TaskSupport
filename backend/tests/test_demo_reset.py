@@ -63,9 +63,6 @@ def test_run_reset_once_reseeds_the_database_and_returns_counts(tmp_path):
     counts = demo_reset.run_reset_once(session_factory=session_factory)
 
     assert counts == {
-        "project": 3,
-        "task": 5,
-        "work_log": 4,
         "company": 3,
         "interview_step": 5,
         "company_task": 4,
@@ -74,7 +71,7 @@ def test_run_reset_once_reseeds_the_database_and_returns_counts(tmp_path):
     from app import models
 
     db = session_factory()
-    assert db.query(models.Project).count() == 3
+    assert db.query(models.Company).count() == 3
     db.close()
 
 

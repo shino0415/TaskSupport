@@ -305,7 +305,7 @@ def test_delete_company_task_is_idempotent_not_found_on_second_call(client):
     assert second_delete.status_code == 404
 
 
-# --- 既存Task（案件配下）エンドポイントへの非影響 ---
+# --- 稼働ログ・時給換算に関する項目を持たない ---
 
 
 def test_company_task_endpoints_do_not_add_work_log_or_hourly_rate_fields(client):

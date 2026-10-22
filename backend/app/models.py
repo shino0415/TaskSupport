@@ -1,6 +1,6 @@
 """SQLAlchemyモデル定義。
 
-案件系（Project/Task/WorkLog）と選考系（Company/InterviewStep）は
+授業系（Course/Assignment）と選考系（Company/InterviewStep/CompanyTask）は
 完全に独立したドメインであり、relationは互いに持たない。
 """
 
@@ -11,54 +11,36 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 from app.status_transitions import (
+    CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
-    ProjectStatus,
-    TaskStatus,
 )
 
 
-class Project(Base):
-    __tablename__ = "project"
+class Course(Base):
+    __tablename__ = "course"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    client_name: Mapped[str] = mapped_column(String, nullable=False)
-    # DB上は素のTEXT/String型のまま（sqlalchemy.Enum型に変えるとCHECK制約が追加され
-    # 挙動が変わるため使わない）。Mapped[ProjectStatus]はあくまで型チェッカー向けの注釈。
-    status: Mapped[ProjectStatus] = mapped_column(String, nullable=False)
-    reward: Mapped[int] = mapped_column(Integer, nullable=False)
-    applied_date: Mapped[date] = mapped_column(Date, nullable=False)
-    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
-    platform: Mapped[str] = mapped_column(String, nullable=False)
+    day_of_week: Mapped[str | None] = mapped_column(String, nullable=True)
+    period: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    academic_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    term: Mapped[str | None] = mapped_column(String, nullable=True)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
 
 
-class Task(Base):
-    __tablename__ = "task"
+class Assignment(Base):
+    __tablename__ = "assignment"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    project_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("project.id"), nullable=False
-    )
+    course_id: Mapped[int] = mapped_column(Integer, ForeignKey("course.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[TaskStatus] = mapped_column(String, nullable=False)
-    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_deleted: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=false()
-    )
-
-
-class WorkLog(Base):
-    __tablename__ = "work_log"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    task_id: Mapped[int] = mapped_column(Integer, ForeignKey("task.id"), nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    submission_method: Mapped[str | None] = mapped_column(String, nullable=True)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
@@ -93,9 +75,8 @@ class InterviewStep(Base):
 
 
 class CompanyTask(Base):
-    """企業タスク。Companyの子（1対多）だが、案件系のTask/WorkLogとは独立した
-    別テーブル（決定事項「企業タスク（CompanyTask）のデータモデル」参照）。
-    稼働時間計測（WorkLog相当）・時給換算に関する項目は一切持たない。
+    """企業タスク。Companyの子（1対多）。稼働時間計測・時給換算に関する項目は
+    一切持たない（決定事項「企業タスク（CompanyTask）の稼働ログ対象範囲」参照）。
     """
 
     __tablename__ = "company_task"
@@ -105,10 +86,9 @@ class CompanyTask(Base):
         Integer, ForeignKey("company.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
-    # ステータス集合はTask（案件配下）と同一の未着手/処理中/完了（決定事項
-    # 「企業タスク（CompanyTask）のステータス設計」参照）のため、専用Enumは設けず
-    # 既存のTaskStatusをそのまま再利用する。
-    status: Mapped[TaskStatus] = mapped_column(String, nullable=False)
+    # DB上は素のTEXT/String型のまま（sqlalchemy.Enum型に変えるとCHECK制約が追加され
+    # 挙動が変わるため使わない）。Mapped[CompanyTaskStatus]は型チェッカー向けの注釈。
+    status: Mapped[CompanyTaskStatus] = mapped_column(String, nullable=False)
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()

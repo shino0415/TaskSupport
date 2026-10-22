@@ -4,7 +4,6 @@ mass assignment対策として、作成用スキーマには is_deleted 等の�
 操作すべきでないフィールドを含めない。
 """
 
-from datetime import date, datetime
 from datetime import date as _Date
 from typing import Self
 
@@ -13,156 +12,10 @@ from pydantic import BaseModel, ConfigDict, model_validator
 # ステータス集合はapp.status_transitionsで定義したEnumを単一の情報源とする
 # （ここで独自に列挙すると、Enum側だけ更新された際に不整合が起きるため）。
 from app.status_transitions import (
+    CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
-    ProjectStatus,
-    TaskStatus,
 )
-
-# DB上nullable=FalseなProjectのカラム（PATCHで明示的なnullを許可しない項目）。
-# deadline/memoはnullable=TrueのためPATCHでのnullクリアを許可する。
-_PROJECT_REQUIRED_UPDATE_FIELDS = (
-    "name",
-    "client_name",
-    "status",
-    "reward",
-    "applied_date",
-    "platform",
-)
-
-
-class ProjectBase(BaseModel):
-    name: str
-    client_name: str
-    reward: int
-    applied_date: date
-    deadline: date | None = None
-    platform: str
-    memo: str | None = None
-
-
-class ProjectCreate(ProjectBase):
-    status: ProjectStatus
-
-
-class ProjectRead(ProjectBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    status: str
-    is_deleted: bool
-
-
-class ProjectUpdate(BaseModel):
-    name: str | None = None
-    client_name: str | None = None
-    status: ProjectStatus | None = None
-    reward: int | None = None
-    applied_date: date | None = None
-    deadline: date | None = None
-    platform: str | None = None
-    memo: str | None = None
-
-    @model_validator(mode="after")
-    def _reject_explicit_null_for_required_fields(self) -> Self:
-        # 未指定（exclude_unset対象外）は許可するが、必須項目（DB nullable=False）
-        # に明示的なnullを送った場合はIntegrityError(500)ではなく422で弾く。
-        null_required_fields = [
-            field
-            for field in _PROJECT_REQUIRED_UPDATE_FIELDS
-            if field in self.model_fields_set and getattr(self, field) is None
-        ]
-        if null_required_fields:
-            fields = ", ".join(null_required_fields)
-            raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
-        return self
-
-
-class ProjectPatchResponse(ProjectRead):
-    warning: str | None = None
-
-
-# DB上nullable=FalseなTaskのカラム（PATCHで明示的なnullを許可しない項目）。
-# memoはnullable=TrueのためPATCHでのnullクリアを許可する。
-_TASK_REQUIRED_UPDATE_FIELDS = ("name", "status")
-
-
-class TaskBase(BaseModel):
-    name: str
-    memo: str | None = None
-
-
-class TaskCreate(TaskBase):
-    status: TaskStatus
-
-
-class TaskRead(TaskBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    project_id: int
-    status: str
-    is_deleted: bool
-
-
-class TaskUpdate(BaseModel):
-    name: str | None = None
-    status: TaskStatus | None = None
-    memo: str | None = None
-
-    @model_validator(mode="after")
-    def _reject_explicit_null_for_required_fields(self) -> Self:
-        null_required_fields = [
-            field
-            for field in _TASK_REQUIRED_UPDATE_FIELDS
-            if field in self.model_fields_set and getattr(self, field) is None
-        ]
-        if null_required_fields:
-            fields = ", ".join(null_required_fields)
-            raise ValueError(f"次のフィールドにnullは指定できません: {fields}")
-        return self
-
-
-class TaskPatchResponse(TaskRead):
-    warning: str | None = None
-
-
-class WorkLogRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    task_id: int
-    started_at: datetime | None = None
-    ended_at: datetime | None = None
-    memo: str | None = None
-    is_deleted: bool
-
-
-class RunningWorkLogRead(BaseModel):
-    """稼働ログ横断一覧（/work-logs/running）専用のレスポンススキーマ。
-
-    どのタスク・案件に属するかを判別できるよう、WorkLogRead相当のフィールドに
-    加えてtask_name/project_id/project_nameを含める（横断一覧では所属先を
-    追うためにIDだけでなく名前も一緒に返した方が呼び出し側の追加問い合わせを
-    減らせるため）。
-    """
-
-    id: int
-    task_id: int
-    task_name: str
-    project_id: int
-    project_name: str
-    started_at: datetime | None = None
-    ended_at: datetime | None = None
-    memo: str | None = None
-    is_deleted: bool
-
-
-class HourlyRateRead(BaseModel):
-    project_id: int
-    reward: int
-    total_work_hours: float
-    hourly_rate: float | None = None
 
 
 class CompanyBase(BaseModel):
@@ -246,9 +99,7 @@ class CompanyTaskBase(BaseModel):
 
 
 class CompanyTaskCreate(CompanyTaskBase):
-    # ステータス集合はTask（案件配下）と同一のため、既存のTaskStatusをそのまま再利用する
-    # （決定事項「企業タスク（CompanyTask）のステータス設計」参照）。
-    status: TaskStatus
+    status: CompanyTaskStatus
 
 
 class CompanyTaskRead(CompanyTaskBase):
@@ -262,7 +113,7 @@ class CompanyTaskRead(CompanyTaskBase):
 
 class CompanyTaskUpdate(BaseModel):
     name: str | None = None
-    status: TaskStatus | None = None
+    status: CompanyTaskStatus | None = None
     memo: str | None = None
 
     @model_validator(mode="after")

@@ -280,284 +280,6 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 
 （現在、未解決の項目は無い。「論理削除済み授業に属する課題への個別操作の扱い」は2026-10-22にB案で確定し、「## 決定事項」に移した）
 
-## 実装タスク」内の完了済み案件系タスクは経緯の記録として残している。
-
-## 技術構成
-
-- FastAPI + Pydantic
-- SQLite + SQLAlchemy（スキーマはマイグレーション管理の仕組みで追跡・適用する。詳細は「## 実装タスク」のマイグレーション関連タスクを参照）
-- 認証: 簡易API Key方式（本人専用ツールのため）
-- テスト: pytest（ステータス遷移の警告ロジックの単体テスト、FastAPI TestClientでのエンドポイントテスト）
-- CI/CD: GitHub Actions（lint: ruff → test: pytest → build: Dockerマルチステージ → deploy）
-- フロントエンド: React + Vite + TypeScript のSPA。同一リポジトリの `frontend/` 配下に配置するモノレポ構成（本ドキュメントの対象に含む）
-- フロントエンドはAPIとは別オリジンで動作するため、バックエンド側にCORS設定が必要。許可オリジンは環境変数でカンマ区切り指定（未設定時は許可なし）
-
-## 全体設計方針
-
-- **授業系（Course/Assignment）と選考系（Company/InterviewStep/CompanyTask）は完全に独立したドメイン**。relationやロジックの共有はない（ステータス遷移の警告関数 `check_backward_transition` のような汎用の純粋関数の共用は可）
-- 削除は全テーブル共通で **is_deleted フラグによる論理削除**（物理削除はしない。ヒューマンエラー対策）
-  - 全GET系エンドポイントはデフォルトで `is_deleted=false` のレコードのみ返す
-- 親の詳細取得（`GET /courses/{id}` 等）では **子テーブルの情報を含めない**。子一覧が必要な場合は別エンドポイントを叩く
-- ステータス変更は **ブロックしない**。不自然な逆行遷移を検知した場合のみ、レスポンスに `warning` フィールドを含めて200を返す（入力ミス訂正の妨げにならないようにするため）
-
-## テーブル設計
-
-### Course（授業）
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | INTEGER (PK) | |
-| name | TEXT | 授業名（必須） |
-| day_of_week | TEXT (nullable) | 曜日。月/火/水/木/金/土/日 のいずれか |
-| period | INTEGER (nullable) | 時限。1以上の整数 |
-| academic_year | INTEGER (nullable) | 年度（例: 2026） |
-| term | TEXT (nullable) | 学期区分。前期/後期/通年 のいずれか |
-| memo | TEXT (nullable) | |
-| is_deleted | BOOLEAN | デフォルト false |
-
-relation: `course (1) --- (多) assignment`
-
-- 曜日・時限・年度・学期は任意（集中講義・オンデマンド授業など該当しないものがあるため）
-- 1授業1コマを前提とする（曜日・時限は1組のみ）
-
-### Assignment（課題、Courseに1対多）
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | INTEGER (PK) | |
-| course_id | INTEGER (FK → course.id) | |
-| name | TEXT | 課題名（必須） |
-| status | TEXT | 未着手/取組中/未提出/提出済み。作成時のデフォルトは未着手 |
-| deadline | DATETIME (nullable) | 提出期限（日付＋時刻）。期限なしの課題も登録可 |
-| submission_method | TEXT (nullable) | 提出方法。WebClass/紙/その他 のいずれか |
-| memo | TEXT (nullable) | |
-| is_deleted | BOOLEAN | デフォルト false |
-
-- ステータス「未提出」は「課題自体は完成したがまだ提出していない」状態を意味する（期限切れを意味しない）
-- deadline の日時の扱い（タイムゾーン等）は、旧WorkLog.started_at と同じ扱いに揃える
-
-### Company（企業）
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | INTEGER (PK) | |
-| name | TEXT | 企業名 |
-| is_deleted | BOOLEAN | デフォルト false |
-
-relation: `company (1) --- (多) interview_step`, `company (1) --- (多) company_task`
-
-### InterviewStep（選考ステップ、Companyに1対多）
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | INTEGER (PK) | |
-| company_id | INTEGER (FK → company.id) | |
-| type | TEXT | 書類選考/一次面接/二次面接/最終面接など |
-| date | DATE (nullable) | 予定日 |
-| prep_status | TEXT | 準備中/準備万端/完了 |
-| result | TEXT | 未定/通過/不通過 |
-| memo | TEXT (nullable) | |
-| is_deleted | BOOLEAN | デフォルト false |
-
-### CompanyTask（企業タスク、Companyに1対多）
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | INTEGER (PK) | |
-| company_id | INTEGER (FK → company.id) | |
-| name | TEXT | タスク名 |
-| status | TEXT | 未着手/処理中/完了 |
-| memo | TEXT (nullable) | |
-| is_deleted | BOOLEAN | デフォルト false |
-
-## ステータス遷移の警告ロジック
-
-ブロックはせず、逆行遷移を検知したら `warning` メッセージ付きで200を返す。共通の純粋関数として実装する。
-
-「見送り」「不通過」のような分岐的な結果ステータスを1本の順序リストに無理やり押し込まないよう、**各ステータスから遷移してよい先（forward_edges）を個別に定義する状態遷移グラフ**として持つ。判定は単純なindex比較ではなく、グラフ上の到達可能性で行う。
-
-```python
-def check_backward_transition(
-    forward_edges: dict[str, list[str]], from_status: str, to_status: str
-) -> str | None:
-    """明確な逆行遷移（to_statusがfrom_statusの前段階であるとグラフ上で判別できる場合）のみ
-    警告メッセージを返す。順当な遷移（隣接・複数段飛び越え含む）や、
-    枝分かれ先同士の無関係な遷移ではNoneを返す。"""
-    if to_status == from_status:
-        return None
-    if _is_reachable(forward_edges, from_status, to_status):
-        return None
-    if _is_reachable(forward_edges, to_status, from_status):
-        return f"{from_status} から {to_status} への変更です。意図的な変更か確認してください。"
-    return None
-
-
-def _is_reachable(forward_edges: dict[str, list[str]], start: str, goal: str) -> bool:
-    """startからgoalへforward_edgesを辿って到達できるか（幅優先探索等で判定）"""
-```
-
-適用箇所と状態遷移グラフ（確定）:
-
-- `Assignment.status`（分岐なし、線形）:
-  - 未着手 → [取組中]
-  - 取組中 → [未提出]
-  - 未提出 → [提出済み]
-  - 提出済み → []（終端）
-- `CompanyTask.status`（分岐なし、線形。旧Task.statusと同一のグラフ）:
-  - 未着手 → [処理中]
-  - 処理中 → [完了]
-  - 完了 → []（終端）
-- `InterviewStep.prep_status`（分岐なし、線形）:
-  - 準備中 → [準備万端]
-  - 準備万端 → [完了]
-  - 完了 → []（終端）
-- `InterviewStep.result`:
-  - 未定 → [通過, 不通過]
-  - 通過 → []（終端）
-  - 不通過 → []（終端）
-
-既知のトレードオフ（意図的な仕様）: グラフ上どちらの方向にも到達不可能な「枝分かれ先同士」の遷移（例: `完了`→`見送り`）は、明確な逆行とは判定できないため警告対象外となる。入力ミス訂正を妨げないという設計方針を優先した結果であり、バグではない。
-
-pytestでの単体テストの対象として、この関数の境界値（同一ステータス、隣接遷移、飛び越え遷移、明確な逆行、枝分かれ先同士の無関係な遷移）を網羅する。
-
-## エンドポイント一覧
-
-### 授業系（Course）
-
-| Method | Path | 説明 |
-|---|---|---|
-| POST | `/courses` | 授業作成 |
-| GET | `/courses` | 授業一覧（`is_deleted=false`のみ） |
-| GET | `/courses/{id}` | 授業詳細（自テーブルのみ、子は含めない） |
-| PATCH | `/courses/{id}` | 授業更新 |
-| DELETE | `/courses/{id}` | 論理削除（`is_deleted=true`） |
-
-### 課題系（Assignment）
-
-| Method | Path | 説明 |
-|---|---|---|
-| POST | `/courses/{id}/assignments` | 課題作成 |
-| GET | `/courses/{id}/assignments` | その授業の課題一覧 |
-| GET | `/assignments/{id}` | 課題詳細 |
-| PATCH | `/assignments/{id}` | 課題更新（ステータス逆行時は`warning`フィールド付きで200） |
-| DELETE | `/assignments/{id}` | 論理削除 |
-
-### 選考系（Company / InterviewStep / CompanyTask）
-
-| Method | Path | 説明 |
-|---|---|---|
-| POST | `/companies` | 企業登録 |
-| GET | `/companies` | 企業一覧 |
-| GET | `/companies/{id}` | 企業詳細（自テーブルのみ） |
-| DELETE | `/companies/{id}` | 論理削除 |
-| POST | `/companies/{id}/interview-steps` | 選考ステップ追加 |
-| GET | `/companies/{id}/interview-steps` | その企業の選考ステップ一覧 |
-| PATCH | `/interview-steps/{id}` | 更新（逆行時warning） |
-| DELETE | `/interview-steps/{id}` | 論理削除 |
-
-### 横断系
-
-| Method | Path | 説明 |
-|---|---|---|
-| GET | `/interview-steps/upcoming` | 日付が近い選考ステップ一覧（締切管理） |
-| GET | `/assignments/upcoming` | 締切が近い課題一覧。提出済み・期限なしを除き、期限切れも含めた全件を期限の早い順に返す。各課題に授業名を含める |
-
-（CompanyTask の個別エンドポイント `/companies/{id}/company-tasks`・`/company-tasks/{id}` は実装済みのものをそのまま維持する）
-
-廃止したエンドポイント: `/projects*`、`/projects/{id}/hourly-rate`、`/projects/{id}/tasks`、`/tasks*`、`/tasks/{id}/work-logs*`、`/work-logs*`（`/work-logs/running` を含む）
-
-## 決定事項
-
-以下はユーザーの判断により確定した。各エンドポイントのリクエスト/レスポンスのPydanticスキーマやバリデーションルールの具体的な書き方はこの分類には含めず、実装時にgeneratorが判断してよい技術的詳細として扱う。デプロイ先（Railway/Fly.io等）の選定は今回の開発サイクルでは扱わない。
-
-### API Key認証の方式（確定: 環境変数の固定キー）
-
-環境変数に単一の固定キーを設定し、リクエストヘッダー（例: `X-API-Key`）で照合するシンプルな方式を採用する。1人専用ツールとして運用する前提のため、キーのローテーションや複数発行の機能は設けない。将来ログイン認証（パスワード等）へ差し替える可能性を考慮し、認証チェックはFastAPIの`Depends`等を用いて業務ロジックから独立した1箇所の関門として実装し、差し替えコストを低く保つ。
-
-### ステータス遷移の状態順序と分岐ステータスの位置づけ（確定: 状態遷移グラフ方式）
-
-順序リストへの追加ではなく、状態遷移をグラフとして表現する方式を採用した。詳細は「## ステータス遷移の警告ロジック」セクションを参照。
-
-### CORSの許可オリジン指定方針（確定: 環境変数へのカンマ区切り列挙、未設定時は許可なし）
-
-許可するオリジンを環境変数（例: `CORS_ALLOW_ORIGINS`）にカンマ区切りで列挙する方式を採用する。API Key認証と同じく環境変数で運用することで、開発環境（ローカルの開発サーバー）と本番環境を設定値の差し替えだけで切り替えられる。環境変数が未設定・空の場合はどのオリジンも許可しない fail-closed とし、設定漏れが「全オリジン許可」という危険側に倒れないようにする。ワイルドカードによる全許可を既定にはしない。
-
-### フロントエンドのスタック（確定: React + Vite + TypeScript のSPA）
-
-フロントエンドはReact + Vite + TypeScriptによるSPAとして実装する。既存のAPIをそのまま利用するクライアントであり、サーバーサイドレンダリングを必要とする要件（SEO等）が無いこと、型でAPIのレスポンス構造を扱えることを重視した選定。
-
-### フロントエンドのコード配置（確定: 同一リポジトリの `frontend/` 配下、モノレポ構成）
-
-フロントエンドは別リポジトリに分けず、本リポジトリの `frontend/` 配下に置くモノレポ構成とする。1人で開発・運用する個人用ツールであり、APIとフロントエンドの変更が同時に発生することが多いため、履歴とレビュー単位を1つに保てる利点を優先した。バックエンド側のCIジョブ・Dockerビルドの対象範囲に影響が出ないよう、ビルド成果物や依存関係ディレクトリは適切に除外する。
-
-### フロントエンドで実装する画面の範囲（確定: 案件系・選考系の全機能）
-
-案件CRUD・タスク管理・稼働計測・時給換算・企業/選考ステップ管理・横断一覧（upcoming / running）まで、「## エンドポイント一覧」に定義した既存APIを一通り画面から操作できる範囲を対象とする。一部機能のみのプロトタイプには留めない。
-
-### API Keyのブラウザ側での扱い（確定: 画面で入力し sessionStorage に保持）
-
-フロントエンドはAPI Keyをソースコードやビルド時の環境変数に埋め込まず、画面上の入力欄でユーザーが入力する方式とする。入力されたキーは `sessionStorage` に保持し、リロード後は再入力なしで使えるがタブを閉じると破棄される状態にする。永続化（`localStorage`）は、ブラウザを閉じても残る分だけ端末共有時やXSS発生時の漏洩範囲が広がるため採用しない。メモリのみの保持は最も安全だがリロードのたびに再入力が必要で、日常的に稼働計測を行う用途には手間が勝ると判断した。ビルド時の環境変数への埋め込みは、配布されたJSを読めば誰でもキーを取得できるため採用しない。
-
-### フロントエンドのUI方針（確定: UIライブラリを導入する）
-
-一覧・フォーム・ダイアログが中心の画面構成であり、テーブルや入力系コンポーネントを自作するコストを避けるため、UIライブラリ（MUI等）を導入する。依存は重くなるが、案件系・選考系の全機能という画面範囲を素早く形にすることを優先した。具体的なライブラリの選定・バージョンは実装時の技術的詳細として扱う。
-
-### フロントエンドのルーティング方針（確定: 軽量ルーティングを導入する）
-
-「フロントエンド 横断一覧画面（予定選考・進行中稼働）」タスクの受け入れ条件「一覧の項目から、対応する案件・タスク・企業の詳細画面へ辿れる」の実現方式としてユーザーが選択した。それまでの各画面タスク（案件・タスク・稼働計測・選考管理）はいずれも「単一ページ構成を踏襲し、ルーターは導入しない」という実装メモ上の判断（`## 決定事項`未確定のgenerator裁量）を積み重ねてきたが、横断一覧からの遷移という要件を機に、ここで明示的にルーター（react-router、またはURLハッシュの手動パースなど軽量な実装）を導入する方針へ切り替える。ユーザーの判断理由は「ルーターがあった方が使いやすい」。具体的なライブラリ選定（react-router-dom等）・URL構造（例: `#/projects/1`）・既存4画面への遡及適用の要否は実装時の技術的詳細としてgeneratorが判断してよい。
-
-### 既存の開発用DB（backend/app.db）のマイグレーション管理への移行方法（確定: 現状スキーマを初期マイグレーション適用済みとして扱う）
-
-開発用DBには既に複数テーブルにデータ（案件・選考データ等）が入っているため、マイグレーション管理の仕組みを導入する際にこのDBを作り直す（データを破棄する）選択肢と、現状スキーマをそのまま「初期マイグレーション適用済み」として扱う（マイグレーション履歴だけを追記し、既存のテーブル構造・データ自体には手を加えない）選択肢があった。ユーザーは後者を選択した。開発中に登録した既存データを保持する。以降のマイグレーションが現状スキーマと本当に一致しているかは、実装時のレビュー・動作確認で担保する。
-
-### 本番相当環境へのマイグレーション適用の自動化方針（確定: CI/CDパイプラインに自動組み込みする）
-
-既存のCI/CDパイプライン（lint→test→Dockerビルド、実デプロイは対象外）にマイグレーション適用のステップを自動で組み込む方針とし、手動実行運用は採らない。デプロイのたびにスキーマが確実に最新化されることを優先した。意図しないタイミングでの自動適用や適用失敗時の切り戻しについては、実装時にパイプラインが失敗する（後続のデプロイに進ませない）形で安全側に倒すこと。
-
-### フロントエンドの画面構成分割の単位（確定: 「案件ページ」「選考ページ」の2ページ＋横断一覧のランディング。詳細表示はモーダル維持）
-
-「1ページに5パネルが詰め込まれすぎている」というユーザーの所感を受け、画面構成を分割するにあたり、案件管理・タスク管理・稼働計測を「案件ページ」に、企業管理・選考ステップ管理を「選考ページ」にそれぞれ集約する2ページ構成とする（`## 決定事項`の「フロントエンドで実装する画面の範囲」で確立済みの「案件系・選考系」という分類に沿う）。横断一覧（予定選考・進行中稼働）はこれまでどおりアプリの入口（ランディング、`/`）として位置づけ、そこから「案件ページ」「選考ページ」へのナビゲーションを追加する。各ページ内部の表示形態（一覧・作成/編集フォーム・詳細のモーダルダイアログ表示）は既存の実装を変更せず、そのまま踏襲する（＝詳細表示を専用ルート化する方針は採らない）。ページのまとめ方を変えるだけで、既存タスクで実装済みの機能・受け入れ条件自体は変更しない。
-
-### 企業タスク（CompanyTask）のデータモデル（確定: Task/WorkLogとは独立した新規テーブルとして新設）
-
-選考側（企業）の下にもタスクを入力できるようにする要望に対し、既存のTask（Project配下、WorkLogによる稼働計測の対象）を拡張する案と、CompanyTaskという別テーブルを新設する案があった。ユーザーは後者を選択した。「## 全体設計方針」で確立済みの「案件系（Project/Task/WorkLog）と選考系（Company/InterviewStep）は完全に独立したドメイン」という方針に、企業タスクという選考系の新概念も合わせる形で、Project配下のTask・WorkLogのテーブル設計・API・フロントエンドには一切変更を加えない。CompanyTaskはCompanyの子（1対多）として新設し、Companyの削除・取得等の既存の挙動にも影響を与えない。
-
-### 企業タスク（CompanyTask）の稼働ログ対象範囲（確定: 稼働ログ・時給換算の対象外）
-
-CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換算のいずれの対象にもしない。管理する項目は名前・ステータス・メモの3つのみとする。
-
-### 案件系の廃止と授業系への置き換え（確定: 2026-10-22）
-
-案件ページ（Project/Task/WorkLog・時給換算）をやめ、授業の課題を管理する授業系（Course/Assignment）に置き換える。ユーザーの判断は次のとおり。
-
-- **置換範囲**: 案件系のみ。選考系（Company/InterviewStep/CompanyTask）は一切変更しない。
-- **階層**: 授業（Course）→ 課題（Assignment）の2階層。稼働計測（WorkLog相当）は持たない。
-- **案件固有機能**: 時給換算（`/hourly-rate`）・報酬・クライアント名・プラットフォームはすべて削除する。
-- **既存データ**: 開発用DB・個人環境DBに入っている案件系データ（project/task/work_log）は破棄してよい。マイグレーションでこれら3テーブルをdropし、course/assignmentをcreateする。選考系テーブルとそのデータには手を加えない。
-- **Courseの項目**: 授業名、曜日（月〜日の選択式）、時限（整数）、年度（整数）、学期（前期/後期/通年）、メモ。曜日と時限は別項目として持つ。曜日・時限・年度・学期は任意。
-- **Assignmentの項目**: 課題名、ステータス、提出期限（日時、任意）、提出方法（WebClass/紙/その他の選択式、任意）、メモ。
-- **Assignmentのステータス**: 未着手 → 取組中 → 未提出（完成したが未提出）→ 提出済み の線形遷移。逆行時は既存方針どおり `warning` 付きで200を返す。
-- **トップページ（ランディング）**: 「計測中の作業（running）」を廃止し、「締切が近い課題」（`/assignments/upcoming`）を表示する。提出済み・期限なしを除き、期限切れも含めた全件を期限の早い順に表示する。「直近の選考ステップ」はそのまま残す。
-- **フロントエンドの画面構成**: 「案件ページ」を「授業ページ」に置き換える（ナビゲーションの文言も変更）。授業一覧・作成/編集、授業ごとの課題一覧・作成/編集/削除・ステータス変更を画面から操作できるようにする。旧案件系の画面・APIクライアントは削除する。
-- **デモデータ**: 公開デモ用のダミーデータ（自動リセットで投入されるもの）も案件系から授業・課題のダミーデータに差し替える。
-- **ドキュメント**: README・画面タイトル・APIタイトル等の「案件」表記を授業タスクの内容に更新する。
-
-これに伴い、上記の「フロントエンドで実装する画面の範囲」「フロントエンドの画面構成分割の単位」における案件系の記述は、本決定で授業系に読み替える。
-
-### 企業タスク（CompanyTask）のステータス設計（確定: Taskと同一のステータス集合＋既存の逆行警告ロジックを流用）
-
-企業タスクのステータスは、Task（案件配下）と全く同じ「未着手/処理中/完了」の3値を採用する。ステータス変更時は既存の「## ステータス遷移の警告ロジック」（`check_backward_transition`）をそのまま適用し、逆行遷移（例: 完了→処理中）を検知した場合に警告する。新たな状態遷移グラフは設計せず、既存のTaskステータス遷移グラフと同一の順序・分岐なし構造を再利用する。
-
-
-## 未決定事項（要ユーザー判断）
-
-### 論理削除済み授業に属する課題への個別操作の扱い
-- 状況: 授業（Course）を論理削除しても、その配下の課題（Assignment）自体の is_deleted は false のまま残る。授業経由の課題一覧（`GET /courses/{id}/assignments`）と `/assignments/upcoming` からは見えなくなるが、課題idを直接指定する `GET`/`PATCH`/`DELETE /assignments/{id}` でこうした課題を操作できるべきかが「## 決定事項」で定まっていない。
-- 選択肢:
-  - A. 親授業が論理削除済みなら課題も存在しないものとして扱い、404を返す（`/assignments/upcoming` からの除外と挙動が揃い、削除した授業の課題が残って見えることがない。一方、授業を誤って削除した場合に課題を個別に参照する手段も無くなる）
-  - B. 課題自身の is_deleted だけで判定し、親授業の削除状態は見ない（既存の選考ステップ・企業タスクの個別更新・削除と同じ挙動で実装が単純。一方、一覧からは消えた課題がid直指定だと見える・更新できる不整合が残る）
-- 影響を受けるタスク: 論理削除済み授業に属する課題への個別操作の扱い
-
 ## 実装タスク
 
 ### タスク: DBモデル定義とDB初期化
@@ -2061,20 +1783,49 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 案件系バックエンドの削除と授業系テーブルへのマイグレーション
-- status: 未着手
+- status: 完了
 - 概要: 「## 決定事項」の「案件系の廃止と授業系への置き換え」に沿い、案件系（Project/Task/WorkLog・時給換算）のバックエンド（永続化モデル・API・自動テスト）を削除し、マイグレーションで project/task/work_log の3テーブルを削除して、「## テーブル設計」どおりの course/assignment テーブルを作成する。授業系のAPIは後続タスクで実装する。選考系（Company/InterviewStep/CompanyTask）のテーブル・データ・API・挙動には一切手を加えない。
 - 受け入れ条件:
-  - [ ] 案件系のエンドポイント（`/projects*`、`/projects/{id}/hourly-rate`、`/projects/{id}/tasks`、`/tasks*`、`/tasks/{id}/work-logs*`、`/work-logs*`（`/work-logs/running`を含む））がすべて存在しなくなり、リクエストすると404が返る
-  - [ ] 案件系の永続化モデル・API実装・自動テストがコードベースから削除されている
-  - [ ] 案件系データが入った既存DB（開発用DBと同じスキーマ・選考系データも入った状態）にマイグレーションを適用すると、project/task/work_log テーブルが無くなり、course/assignment テーブルが「## テーブル設計」どおりの項目（is_deletedを含む）で作成され、company/interview_step/company_task のデータは適用前と完全に一致したまま残る
-  - [ ] テーブルが何も無いDBに全マイグレーションを適用した場合も、選考系3テーブルと course/assignment の計5テーブルが作成され、案件系テーブルは残らない
-  - [ ] 追加したマイグレーションは既存のマイグレーションと同様に巻き戻し（ダウングレード）に対応しており、巻き戻すと course/assignment が無くなって project/task/work_log が空のテーブルとして元のスキーマで復元される（削除した案件系データは復元されない）。巻き戻し後も選考系のデータは変化しない
-  - [ ] 上記のマイグレーションの適用・巻き戻しの挙動を検証する自動テストがある
-  - [ ] 企業タスクのステータス逆行警告（未着手/処理中/完了）が、案件系の削除後も従来どおり機能する（旧Taskと共有していた状態遷移グラフを削除して壊していない）
-  - [ ] デモデータ投入（手動実行・自動定期リセットとも）が案件系の削除後もエラーなく実行でき、選考系のダミーデータが従来どおり投入される（授業・課題のダミーデータへの差し替えは後続タスクで行う）
-  - [ ] 選考系を含む残りの自動テストが全て通過し、lint・CI上のマイグレーション適用ステップも成功する
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 案件系のエンドポイント（`/projects*`、`/projects/{id}/hourly-rate`、`/projects/{id}/tasks`、`/tasks*`、`/tasks/{id}/work-logs*`、`/work-logs*`（`/work-logs/running`を含む））がすべて存在しなくなり、リクエストすると404が返る
+  - [x] 案件系の永続化モデル・API実装・自動テストがコードベースから削除されている
+  - [x] 案件系データが入った既存DB（開発用DBと同じスキーマ・選考系データも入った状態）にマイグレーションを適用すると、project/task/work_log テーブルが無くなり、course/assignment テーブルが「## テーブル設計」どおりの項目（is_deletedを含む）で作成され、company/interview_step/company_task のデータは適用前と完全に一致したまま残る
+  - [x] テーブルが何も無いDBに全マイグレーションを適用した場合も、選考系3テーブルと course/assignment の計5テーブルが作成され、案件系テーブルは残らない
+  - [x] 追加したマイグレーションは既存のマイグレーションと同様に巻き戻し（ダウングレード）に対応しており、巻き戻すと course/assignment が無くなって project/task/work_log が空のテーブルとして元のスキーマで復元される（削除した案件系データは復元されない）。巻き戻し後も選考系のデータは変化しない
+  - [x] 上記のマイグレーションの適用・巻き戻しの挙動を検証する自動テストがある
+  - [x] 企業タスクのステータス逆行警告（未着手/処理中/完了）が、案件系の削除後も従来どおり機能する（旧Taskと共有していた状態遷移グラフを削除して壊していない）
+  - [x] デモデータ投入（手動実行・自動定期リセットとも）が案件系の削除後もエラーなく実行でき、選考系のダミーデータが従来どおり投入される（授業・課題のダミーデータへの差し替えは後続タスクで行う）
+  - [x] 選考系を含む残りの自動テストが全て通過し、lint・CI上のマイグレーション適用ステップも成功する
+- 実装メモ:
+  - **案件系の削除**: `backend/app/routers/{projects,tasks,work_logs}.py`、`backend/app/models.py`の`Project`/`Task`/`WorkLog`、`backend/app/schemas.py`の案件系スキーマ（Project*/Task*/WorkLog*/RunningWorkLogRead/HourlyRateRead）、`backend/app/main.py`のルーター登録、テスト`backend/tests/test_{projects,tasks,work_logs,hourly_rate}.py`を削除した。APIタイトル（「案件・選考トラッカー API」）は後続の「ドキュメント・表示名の「案件」表記の更新」タスクの対象のため変更していない。
+  - **状態遷移グラフ（技術判断）**: `backend/app/status_transitions.py`から`ProjectStatus`/`PROJECT_STATUS_GRAPH`を削除し、企業タスクと共有していた`TaskStatus`/`TASK_STATUS_GRAPH`は旧Taskが無くなったため`CompanyTaskStatus`/`COMPANY_TASK_STATUS_GRAPH`に改名した（値・遷移関係は未変更。外部から観測できない内部名のみの変更）。`Assignment.status`のグラフは後続の「課題（Assignment）CRUD一式とステータス遷移警告」タスクで追加する。
+  - **授業系モデル**: `backend/app/models.py`に`Course`/`Assignment`を「## テーブル設計」どおりに追加（`Assignment.course_id`は`course.id`へのFK、`deadline`は旧`WorkLog.started_at`と同じ`DateTime`（タイムゾーン無し）、`is_deleted`は既存テーブルと同じ`server_default=false()`）。選択肢の値の制約（曜日・学期・提出方法・ステータス）はDB上は素のString（既存方針どおりCHECK制約は付けない）で、バリデーションは後続のAPIタスクで行う。ステータスのデフォルト「未着手」もAPI層（後続タスク）で扱い、DBのデフォルト値は設けていない。
+  - **マイグレーション**: `backend/migrations/versions/b7c3e1a9d4f2_replace_project_tables_with_course.py`（down_revision=`974953724e96`）。upgradeでwork_log→task→projectの順にdropしてcourse/assignmentをcreate、downgradeでcourse/assignmentをdropして案件系3テーブルを初期リビジョンと同一定義の空テーブルとして再作成する。選考系3テーブルには触れない。空DBへの`alembic upgrade head`後に`alembic check`で「No new upgrade operations detected.」（モデル定義との差分なし）を確認した。
+  - **デモデータ**: `backend/app/seed_demo_data.py`から案件・タスク・稼働ログのダミーデータと削除処理を除去した（選考系のダミーデータは無変更）。「常に固定データのみが残る」冪等性を保つため、全件物理削除の対象に`assignment`/`course`を追加した（授業・課題のダミーデータ投入は後続タスク）。`demo_reset.py`は無変更。
+  - **既存の開発用DB（backend/app.db）について（要注意・本タスクでは未適用）**: 指示どおり実データDBにはマイグレーションを適用していない。コピーで検証したところ、`backend/app.db`は`alembic_version`が初期リビジョン`522c9ff7a611`のまま、実テーブルには既に`company_task`が存在する（アプリ起動時の`init_db()`＝`create_all`で作成されたものと思われる）。このため素の`alembic upgrade head`は既存リビジョン`974953724e96`の`create_table("company_task")`で「table company_task already exists」となり失敗する（本タスクのリビジョン以前から存在する不整合）。コピーに対して`alembic stamp 974953724e96`を実行してから`upgrade head`すると、本タスクのリビジョンが適用され、company/interview_step/company_task の全行が適用前と一致し、`alembic check`も差分なし、`downgrade -1`後も選考系データが一致することを確認した。実DBへ適用する際はこの手順（stamp→upgrade）が必要になる見込み。
+- テスト:
+  - `backend/tests/test_migrations.py`: 空DBへのhead適用で5テーブル（course/assignment/company/interview_step/company_task）のみが作成され案件系が残らないこと、案件系・選考系のデータ入りDB（置き換え直前リビジョン）へ適用すると案件系3テーブルが消え course/assignment が作成され選考系のデータ・スキーマが完全一致すること、マイグレーション後スキーマとモデル定義（create_all）の一致、downgradeで案件系3テーブルが元のスキーマ（列・型・NULL可否・デフォルト・FK）の空テーブルとして復元され選考系データが不変で再upgradeも可能なこと、migrate済みDBで旧案件系エンドポイントが404・企業タスクの逆行警告が機能することを追加・更新。既存の企業タスク追加リビジョンのテストは案件系ORMモデル削除に合わせて素のSQL投入に書き換えた。
+  - `backend/tests/test_removed_project_endpoints.py`（新規）: 旧案件系の全エンドポイント（17種のメソッド×パス）が正しいAPI Key付きでも404になること、ルーティングに`/projects`・`/tasks`・`/work-logs`・`hourly-rate`が登録されていないこと。
+  - `test_db_init.py`（course/assignmentの列・FK・is_deletedデフォルト）、`test_status_transitions.py`（Project分を削除、Task分をCompanyTaskグラフに改名）、`test_seed_demo_data.py`・`test_demo_reset.py`（件数から案件系を除外、荒らしで追加された授業・課題も再投入で消えること）、`test_cors.py`（検証対象を`/projects`から`/companies`・`/interview-steps`に変更）を更新。
+  - `uv run pytest`: 205件全てpass、`-W error`でも205件pass（warning 0件）。`uv run ruff check`: All checks passed。CIの`migrate`ジョブ相当（空DBに`uv run alembic -c backend/alembic.ini upgrade head`）も成功。
+  - 補足: 既存テストの多くは`TestClient(app)`のlifespanで既定エンジン（`DATABASE_URL`未設定時はカレントの`./app.db`）に`init_db()`を実行する既存構成のため、本タスクのセルフチェックは`DATABASE_URL`をスクラッチ領域の一時DBに向けて実行し、`app.db`・`backend/app.db`のハッシュが実行前後で変化していないことを確認した。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Lowの指摘なし）。
+  - 認証: `main.py`のグローバル依存`dependencies=[Depends(verify_api_key)]`と`docs_url/redoc_url/openapi_url=None`は維持。ルーター登録は選考系3つのみになり、案件系ルーターの削除によって認証を通らない経路は増えていない（未登録パスはAPI Keyの有無にかかわらず404となり、情報は漏れない）。
+  - 論理削除・データ漏洩: course/assignmentはモデル・テーブルのみ追加（`is_deleted`に`server_default=false`あり）。まだエンドポイントが無いため、外部からの読み取り経路は存在しない。後続の授業系CRUDタスクでは、GET系に`is_deleted=false`フィルタを入れること、Create/Updateスキーマに`id`/`is_deleted`を含めないこと、課題作成時に`course_id`が削除済みでない授業を指しているか検証することを必ず確認する。
+  - 物理削除: `seed_demo_data.seed()`の全件物理削除の対象に`assignment`/`course`が加わったが、これは既存の設計（HTTP非公開、CLI実行または`DEMO_AUTO_RESET_ENABLED`による明示的なオプトインが無い限り動かないfail closed）の範囲内で、API経由の物理削除は追加されていない。マイグレーションでの案件系テーブルのdropは決定事項（案件系データは破棄してよい）どおり。
+  - インジェクション: アプリコードでの生SQL文字列結合は無し（`text(`の使用も無し）。マイグレーションはAlembicの`op.create_table`/`drop_table`のみ。
+  - mass assignment: 企業タスクのスキーマは型名の差し替え（`TaskStatus`→`CompanyTaskStatus`）のみで、受け付けるフィールドは変わっていない。
+  - CORS・シークレット: `cors.py`は変更なし。新規テストのAPI Keyはテスト専用の値を`monkeypatch.setenv`で設定しており、本番用の値のハードコードではない。`.gitignore`の`*.db`/`.env`除外も維持。
+- 性能エバリュエーターのフィードバック: 合格（バグ・テスト不足の指摘なし）。
+  - 実行環境: `DATABASE_URL`をスクラッチ領域の一時SQLiteに向けて実行し、`app.db`・`backend/app.db`のハッシュが実行前後で変化していないことを確認した。
+  - `uv run pytest -v -W default`: 205 passed、warning 0件。`uv run ruff check`: All checks passed。CIの`migrate`ジョブ相当（空DBに`uv run alembic -c backend/alembic.ini upgrade head`）も3リビジョンとも成功し、続く`alembic check`も「No new upgrade operations detected.」だった。
+  - 案件系エンドポイント404: `test_removed_project_endpoints.py`が受け入れ条件に列挙された全パス（17種のメソッド×パス、`/work-logs/running`・`hourly-rate`を含む）を正しいAPI Key付きで404と確認しており、ルート未登録の確認もある。migrate済みDBでの404確認もある。合格。
+  - 案件系コードの削除: app/・tests/内に`Project`/`WorkLog`/`PROJECT_STATUS_GRAPH`等の参照は残っていない（残っているのは削除済みを検証するテストとdocstringのみ）。合格。
+  - データ入り既存DBへの適用: `test_course_migration_replaces_project_tables_and_keeps_selection_data`が案件系・選考系（論理削除済み行・NULL値を含む）のデータを入れた置き換え直前リビジョンのDBに適用し、案件系3テーブルの消滅、course/assignmentの列（is_deleted含む）、選考系3テーブルの全行・スキーマの完全一致を検証している。モデル（「## テーブル設計」どおりの型・NULL可否）とのスキーマ一致も`test_course_migration_schema_matches_models`で担保。合格。
+  - 空DBへの全適用: `test_upgrade_head_creates_all_tables_matching_spec`が5テーブルのみ作成・案件系が残らないことを確認。合格。
+  - 巻き戻し: `test_course_migration_downgrade_restores_empty_project_tables`が、案件系3テーブルが元のスキーマ（列・型・NULL可否・デフォルト・FK）の空テーブルとして復元されること、course/assignmentの消滅、選考系データ不変、再upgrade可能なことを確認。合格。
+  - 企業タスクの逆行警告: `test_status_transitions.py`（同一/隣接/飛び越え/逆行の4パターン）、`test_company_tasks.py`の逆行警告・順行無警告テスト、migrate済みDBでの`test_company_task_status_warning_works_against_migrated_db`が全てpass。合格。
+  - デモデータ投入: `test_seed_demo_data.py`（件数・冪等性・荒らし後の再投入）と`test_demo_reset.py`（`run_reset_once`・定期リセット・オプトイン時の自動実行）が全てpass。合格。
+  - 補足（指摘ではない）: 実装メモにある実データDB`backend/app.db`のalembicリビジョン不整合（stamp→upgradeが必要）は本タスクの範囲外の既存問題であり、本評価でも実DBには一切触れていない。
 - 差し戻し回数: 0
 
 ### タスク: 授業（Course）CRUD一式
