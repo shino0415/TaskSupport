@@ -1914,13 +1914,24 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 論理削除済み授業に属する課題への個別操作の扱い
-- status: 未着手
+- status: 完了
 - 概要: 「## 決定事項」の「論理削除済み授業に属する課題への個別操作の扱い」でB案（課題自身の is_deleted のみで判定）に確定済み。授業を論理削除した後、その配下の課題をid直指定（`GET`/`PATCH`/`DELETE /assignments/{id}`）で操作した場合の挙動を、決定内容に沿って揃える。「課題（Assignment）CRUD一式とステータス遷移警告」タスクの完了後に着手する。
 - 受け入れ条件:
-  - [ ] 論理削除済みの授業に属する（課題自身は未削除の）課題に対する詳細取得・更新・削除が、404にならず通常どおりの応答になる（「## 決定事項」の確定方針どおり）
-  - [ ] 上記の挙動を検証する自動テストがある
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] 論理削除済みの授業に属する（課題自身は未削除の）課題に対する詳細取得・更新・削除が、404にならず通常どおりの応答になる（「## 決定事項」の確定方針どおり）
+  - [x] 上記の挙動を検証する自動テストがある
+- 実装メモ:
+  - `backend/app/routers/assignments.py`は「課題（Assignment）CRUD一式」タスクの時点で既にB案どおり（`_get_active_assignment_or_404`が課題自身の`is_deleted`のみで判定）だったため、コード変更なし。
+  - `backend/tests/test_assignments.py`に、授業を論理削除した後の課題に対するテストを追加: 授業削除で課題の`is_deleted`が変わらないこと、`GET`が200で全項目を返すこと、`PATCH`が200で更新を反映すること（逆行時は`warning`付き200）、`DELETE`が204で論理削除され以後は404になること、課題自身が削除済みなら親授業の状態に関わらず`GET`/`PATCH`/`DELETE`が404になること。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Lowいずれの指摘も無し）。`git diff HEAD`で確認した変更は`backend/tests/test_assignments.py`へのテスト追加と本spec.mdのみで、アプリケーションコードの変更は無い。`DATABASE_URL`をスクラッチ領域の一時SQLiteに向けて`tests/test_assignments.py`・`tests/test_auth.py`を実行し113件pass、実行前後で`app.db`・`backend/app.db`のsha256が不変なことを確認した。
+  - 認証: 対象の`GET/PATCH/DELETE /assignments/{id}`は`create_app()`のグローバル依存`verify_api_key`配下のままで、今回の変更による影響は無い。追加テストも全て`AUTH_HEADERS`付きで呼び出しており、認証を迂回する経路は追加されていない。
+  - 論理削除: `_get_active_assignment_or_404`は課題自身の`is_deleted=false`で絞り込んでおり、削除済み課題は親授業の状態に関わらず404（追加テスト`test_deleted_assignment_of_deleted_course_returns_404`で担保）。DELETEは`is_deleted=True`を立てる論理削除のみで物理削除の経路は無い。親授業が削除済みでも未削除の課題をid直指定で参照・更新できる点は決定事項B案どおりの仕様であり、本人専用・API Key必須のため情報漏洩には当たらない。授業経由の一覧は引き続き親授業の`is_deleted=false`を検証している。
+  - mass assignment: PATCHは従来どおり`AssignmentUpdate`（`id`/`is_deleted`/`course_id`を含まない）の`exclude_unset`分のみを反映しており、親授業削除後の更新でも`course_id`の付け替え等は不可能。
+  - インジェクション/エラーハンドリング/CORS/シークレット: 該当コードの変更が無く、前タスク評価時から状態は変わらない。追加テストにハードコードされた秘密情報やログ出力は無い。
+- 性能エバリュエーターのフィードバック: 合格。
+  - `DATABASE_URL`をスクラッチ領域の一時SQLiteに向けて`backend/`で`uv run pytest -v`を実行し、376件全てpass・warning 0件（`-W default`付きでも0件）。既存テストへの回帰なし。`uv run ruff check`も「All checks passed!」。実行前後で`app.db`・`backend/app.db`のsha256が不変なことを確認した。
+  - 受け入れ条件1（親授業削除済み・課題未削除のid直指定操作が通常応答）: `test_get_assignment_of_deleted_course_returns_200`（200で全項目）、`test_update_assignment_of_deleted_course_returns_200_and_applies`（200・DB反映・warningなし）、`test_update_assignment_of_deleted_course_backward_status_returns_warning`（逆行時warning付き200）、`test_delete_assignment_of_deleted_course_returns_204_and_marks_deleted`（204・論理削除・以後GET/DELETEは404）で担保、いずれもpass。授業削除で課題の`is_deleted`が変わらないことも`test_deleting_course_does_not_change_assignment_is_deleted`でpass。
+  - 受け入れ条件2（自動テストの存在）: 上記に加え、課題自身が削除済みなら親授業の状態に関わらずGET/PATCH/DELETEが404になる境界ケース（`test_deleted_assignment_of_deleted_course_returns_404`）もpass。削除済み授業経由の作成・一覧が404になる既存テスト（`test_create_assignment_not_found_for_deleted_course`・`test_list_assignments_not_found_for_deleted_course`）も引き続きpassしており、決定事項の「授業経由の一覧からは見えない」点も維持されている。
+  - 指摘事項なし（`/assignments/upcoming`での削除済み授業配下の除外は後続タスクの範囲のため本タスクでは未評価）。
 - 差し戻し回数: 0
 
 ### タスク: 締切が近い課題の横断一覧エンドポイント（upcoming）

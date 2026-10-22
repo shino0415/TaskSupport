@@ -490,6 +490,87 @@ def test_delete_assignment_not_found_on_second_call(client):
     assert second.status_code == 404
 
 
+# --- 論理削除済み授業に属する課題へのid直指定操作（決定事項B案） ---
+
+
+def create_assignment_under_deleted_course(client, **overrides):
+    course_id = create_course(client)
+    assignment_id = create_assignment(client, course_id, **overrides)
+    response = client.delete(f"/courses/{course_id}", headers=AUTH_HEADERS)
+    assert response.status_code == 204
+    return course_id, assignment_id
+
+
+def test_deleting_course_does_not_change_assignment_is_deleted(client, session_factory):
+    _, assignment_id = create_assignment_under_deleted_course(client)
+    with session_factory() as db:
+        assert db.get(models.Assignment, assignment_id).is_deleted is False
+
+
+def test_get_assignment_of_deleted_course_returns_200(client):
+    course_id, assignment_id = create_assignment_under_deleted_course(client)
+    response = client.get(f"/assignments/{assignment_id}", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == assignment_id
+    assert body["course_id"] == course_id
+    assert body["name"] == "レポート1"
+    assert body["is_deleted"] is False
+
+
+def test_update_assignment_of_deleted_course_returns_200_and_applies(client, session_factory):
+    _, assignment_id = create_assignment_under_deleted_course(client)
+    response = client.patch(
+        f"/assignments/{assignment_id}",
+        json={"name": "レポート1（改訂）", "memo": "追記"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "レポート1（改訂）"
+    assert body["memo"] == "追記"
+    assert body["warning"] is None
+    with session_factory() as db:
+        row = db.get(models.Assignment, assignment_id)
+        assert row.name == "レポート1（改訂）"
+        assert row.memo == "追記"
+
+
+def test_update_assignment_of_deleted_course_backward_status_returns_warning(client):
+    _, assignment_id = create_assignment_under_deleted_course(client, status="提出済み")
+    response = client.patch(
+        f"/assignments/{assignment_id}", json={"status": "取組中"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "取組中"
+    assert body["warning"] is not None
+
+
+def test_delete_assignment_of_deleted_course_returns_204_and_marks_deleted(client, session_factory):
+    _, assignment_id = create_assignment_under_deleted_course(client)
+    response = client.delete(f"/assignments/{assignment_id}", headers=AUTH_HEADERS)
+    assert response.status_code == 204
+    with session_factory() as db:
+        assert db.get(models.Assignment, assignment_id).is_deleted is True
+    # 課題自身が削除済みになった後は通常どおり404
+    assert client.get(f"/assignments/{assignment_id}", headers=AUTH_HEADERS).status_code == 404
+    assert client.delete(f"/assignments/{assignment_id}", headers=AUTH_HEADERS).status_code == 404
+
+
+def test_deleted_assignment_of_deleted_course_returns_404(client):
+    course_id = create_course(client)
+    assignment_id = create_assignment(client, course_id)
+    client.delete(f"/assignments/{assignment_id}", headers=AUTH_HEADERS)
+    client.delete(f"/courses/{course_id}", headers=AUTH_HEADERS)
+    assert client.get(f"/assignments/{assignment_id}", headers=AUTH_HEADERS).status_code == 404
+    response = client.patch(
+        f"/assignments/{assignment_id}", json={"name": "x"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 404
+    assert client.delete(f"/assignments/{assignment_id}", headers=AUTH_HEADERS).status_code == 404
+
+
 # --- SQLite INTEGERの範囲を超えるid ---
 
 
