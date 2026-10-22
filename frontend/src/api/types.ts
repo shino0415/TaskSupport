@@ -1,99 +1,41 @@
 /** APIのレスポンス／リクエストで扱う型。 */
 
-/** Project.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
-export const PROJECT_STATUSES = ['提案中', '契約中', '納品済み', '完了', '見送り'] as const
+/** Course.day_of_weekの取りうる値（バックエンドのDayOfWeekと同じ集合）。 */
+export const COURSE_DAYS_OF_WEEK = ['月', '火', '水', '木', '金', '土', '日'] as const
 
-export type ProjectStatus = (typeof PROJECT_STATUSES)[number]
+export type CourseDayOfWeek = (typeof COURSE_DAYS_OF_WEEK)[number]
 
-export type Project = {
+/** Course.termの取りうる値（バックエンドのTermと同じ集合）。 */
+export const COURSE_TERMS = ['前期', '後期', '通年'] as const
+
+export type CourseTerm = (typeof COURSE_TERMS)[number]
+
+export type Course = {
   id: number
   name: string
-  client_name: string
   // 表示は取得した値をそのまま扱う（APIのレスポンスはstrのため、未知の値でも壊れないようにする）
-  status: string
-  reward: number
-  applied_date: string
-  deadline: string | null
-  platform: string
+  day_of_week: string | null
+  period: number | null
+  academic_year: number | null
+  term: string | null
   memo: string | null
   is_deleted: boolean
 }
 
-/** 案件の作成・更新で送信する内容。 */
-export type ProjectInput = {
+/** 授業の作成・更新で送信する内容。任意項目はnullで未設定（更新時はクリア）を表す。 */
+export type CourseInput = {
   name: string
-  client_name: string
-  status: ProjectStatus
-  reward: number
-  applied_date: string
-  deadline: string | null
-  platform: string
+  day_of_week: CourseDayOfWeek | null
+  period: number | null
+  academic_year: number | null
+  term: CourseTerm | null
   memo: string | null
 }
 
-/** PATCH /projects/{id} のレスポンス。逆行遷移時のみwarningが入る。 */
-export type ProjectPatchResponse = Project & {
-  warning: string | null
-}
-
-/** Task.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
+/** CompanyTask.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
 export const TASK_STATUSES = ['未着手', '処理中', '完了'] as const
 
 export type TaskStatus = (typeof TASK_STATUSES)[number]
-
-export type Task = {
-  id: number
-  project_id: number
-  name: string
-  // 表示は取得した値をそのまま扱う（APIのレスポンスはstrのため、未知の値でも壊れないようにする）
-  status: string
-  memo: string | null
-  is_deleted: boolean
-}
-
-/** タスクの作成・更新で送信する内容。 */
-export type TaskInput = {
-  name: string
-  status: TaskStatus
-  memo: string | null
-}
-
-/** PATCH /tasks/{id} のレスポンス。逆行遷移時のみwarningが入る。 */
-export type TaskPatchResponse = Task & {
-  warning: string | null
-}
-
-export type WorkLog = {
-  id: number
-  task_id: number
-  started_at: string | null
-  ended_at: string | null
-  memo: string | null
-  is_deleted: boolean
-}
-
-/** GET /work-logs/running のレスポンス。どのタスク・案件の稼働かを一覧側で判別できるよう、
- * WorkLog相当のフィールドに加えtask_name/project_id/project_nameを含む（バックエンドの
- * RunningWorkLogReadと対応）。 */
-export type RunningWorkLog = {
-  id: number
-  task_id: number
-  task_name: string
-  project_id: number
-  project_name: string
-  started_at: string | null
-  ended_at: string | null
-  memo: string | null
-  is_deleted: boolean
-}
-
-/** GET /projects/{id}/hourly-rate のレスポンス。稼働実績が無い場合hourly_rateはnull。 */
-export type HourlyRate = {
-  project_id: number
-  reward: number
-  total_work_hours: number
-  hourly_rate: number | null
-}
 
 export type Company = {
   id: number
@@ -143,8 +85,6 @@ export type InterviewStepPatchResponse = InterviewStep & {
   warning: string | null
 }
 
-/** CompanyTask.statusの取りうる値。決定事項どおりTask（案件配下）と同一集合のため
- * TASK_STATUSES/TaskStatusをそのまま再利用する（バックエンドの型再利用と対応）。 */
 export type CompanyTask = {
   id: number
   company_id: number

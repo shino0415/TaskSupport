@@ -8,13 +8,12 @@ type NavItem = {
   isActive: (pathname: string) => boolean
 }
 
-// 「案件ページ」は /projects/:projectId・/tasks/:projectId/:taskId のディープリンクも含む。
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: '横断一覧', isActive: (pathname) => pathname === '/' },
   {
-    to: '/projects',
-    label: '案件ページ',
-    isActive: (pathname) => pathname.startsWith('/projects') || pathname.startsWith('/tasks'),
+    to: '/courses',
+    label: '授業ページ',
+    isActive: (pathname) => pathname.startsWith('/courses'),
   },
   {
     to: '/companies',

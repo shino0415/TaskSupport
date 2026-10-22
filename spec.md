@@ -2014,21 +2014,58 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 案件系画面の削除と授業ページ（授業管理）の追加
-- status: 未着手
+- status: 完了
 - 概要: 「案件ページ」と旧案件系の画面・APIクライアント（案件・タスク・稼働計測・時給換算、およびトップページの「計測中の作業」表示）を削除し、代わりに「授業ページ」を追加して授業の一覧・作成・編集・削除を画面から行えるようにする。ナビゲーションの「案件ページ」を「授業ページ」に置き換える。課題の管理UIとトップページの「締切が近い課題」は後続タスクで扱う。「授業（Course）CRUD一式」タスクの完了後に着手する。
 - 受け入れ条件:
-  - [ ] ナビゲーションに「案件ページ」が無くなり、「授業ページ」「選考ページ」へ切り替えられる
-  - [ ] 授業ページは固有のURLを持ち、そのURLの直接表示・ブラウザの戻る/進むで表示される
-  - [ ] 授業ページで授業一覧（論理削除されていないもの）が表示され、曜日・時限・年度・学期が設定されているものはそれが分かる
-  - [ ] 授業を新規作成・編集でき、曜日・学期・時限・年度は任意項目として入力でき、曜日・学期は選択式で入力できる。結果が一覧に反映される
-  - [ ] 授業を削除でき、削除後は一覧に表示されなくなる
-  - [ ] APIが返したエラー（バリデーションエラー等）が画面上で提示される
-  - [ ] 旧案件系の画面・URL・APIクライアントとそのテストが削除され、旧案件系のURL（例: 旧案件ページのURL）を開いても画面が壊れず妥当な画面に案内される
-  - [ ] トップページから「計測中の作業」の表示が無くなり、「直近の選考ステップ」は従来どおり表示される。トップページ表示時に廃止済みAPIへのリクエストが発生しない
-  - [ ] 選考ページ（企業・選考ステップ・企業タスク）の表示・操作には変更が生じていない
-  - [ ] フロントエンドの自動テスト・型チェック・lintが通過する
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] ナビゲーションに「案件ページ」が無くなり、「授業ページ」「選考ページ」へ切り替えられる
+  - [x] 授業ページは固有のURLを持ち、そのURLの直接表示・ブラウザの戻る/進むで表示される
+  - [x] 授業ページで授業一覧（論理削除されていないもの）が表示され、曜日・時限・年度・学期が設定されているものはそれが分かる
+  - [x] 授業を新規作成・編集でき、曜日・学期・時限・年度は任意項目として入力でき、曜日・学期は選択式で入力できる。結果が一覧に反映される
+  - [x] 授業を削除でき、削除後は一覧に表示されなくなる
+  - [x] APIが返したエラー（バリデーションエラー等）が画面上で提示される
+  - [x] 旧案件系の画面・URL・APIクライアントとそのテストが削除され、旧案件系のURL（例: 旧案件ページのURL）を開いても画面が壊れず妥当な画面に案内される
+  - [x] トップページから「計測中の作業」の表示が無くなり、「直近の選考ステップ」は従来どおり表示される。トップページ表示時に廃止済みAPIへのリクエストが発生しない
+  - [x] 選考ページ（企業・選考ステップ・企業タスク）の表示・操作には変更が生じていない
+  - [x] フロントエンドの自動テスト・型チェック・lintが通過する
+- 実装メモ:
+  - 削除: 旧案件系の画面・APIクライアントとそのテスト（`ProjectsPanel`/`ProjectDetailDialog`/`ProjectFormDialog`/`TasksPanel`/`TaskFormDialog`/`WorkTrackingPanel`、`projectForm.ts`/`taskForm.ts`/`workLogFormat.ts`、`api/projects.ts`/`api/tasks.ts`/`api/workLogs.ts`/`api/hourlyRate.ts`）。`api/types.ts`からProject/Task/WorkLog/RunningWorkLog/HourlyRate型を削除（企業タスクが使う`TASK_STATUSES`/`TaskStatus`は残す）。
+  - 追加: `frontend/src/api/courses.ts`（`GET/POST /courses`、`PATCH/DELETE /courses/{id}`）、`frontend/src/courseForm.ts`（フォーム値の検証・送信値変換の純粋関数）、`frontend/src/components/CourseFormDialog.tsx`（新規/編集フォーム。曜日・学期は「未設定」を含む選択式、時限・年度は任意の数値入力）、`frontend/src/components/CoursesPanel.tsx`（「授業管理」領域。一覧・新規登録・編集・削除確認）。既存の案件管理画面・選考ページと同じ構成（一覧Paper＋フォームダイアログ＋削除確認ダイアログ、送信失敗はダイアログ内Alert、一覧取得/削除失敗はパネル内Alert）。
+  - 一覧の表示: 曜日・時限（「N限」）・年度（「N年度」）・学期・メモを別列で表示し、未設定は「-」。
+  - 送信値: 任意項目の未入力はnullで送る（編集時はnullでクリア）。編集はPATCHに全項目を送る。クライアント側の検証は授業名必須・時限は1以上の整数・年度は整数（バックエンドと同じ条件）。
+  - ルーティング・ナビゲーション: 授業ページを`/courses`に追加し、ナビの「案件ページ」を「授業ページ」に置き換え。旧案件系のルート（`/projects`、`/projects/:projectId`、`/tasks/:projectId/:taskId`）は削除し、既存のcatch-all（`*` → `/`）で横断一覧に案内する。
+  - トップページ（`OverviewPanel`）: 「進行中の稼働ログ」セクション・計測終了操作と`/work-logs/running`の取得を削除。見出しを「横断一覧（予定選考・進行中稼働）」→「横断一覧」に変更。「予定の近い選考ステップ」は変更なし。
+  - API Key未入力時の案内文を「…APIへ接続して案件一覧を表示します。」→「…APIへ接続して各画面のデータを表示します。」に変更（廃止した画面を指していたため）。画面見出し「案件・選考トラッカー」・README等の表記は「ドキュメント・表示名の「案件」表記の更新」タスクで扱うため変更していない。
+  - 選考ページ（`CompaniesPanel`・各ダイアログ・`companyForm.ts`等）のファイルは変更していない。
+- テスト:
+  - `frontend/src/api/courses.test.ts`（新規）: 各エンドポイントのメソッド・URL・送信JSON・API Keyヘッダー、204の削除。
+  - `frontend/src/courseForm.test.ts`（新規）: 授業名必須（空白のみ含む）、時限の境界（1は可、0・負数・小数・文字列は不可）、年度の整数判定、任意項目未入力でエラーなし、APIの値→フォーム値（null・未知の曜日/学期は未設定扱い）、フォーム値→送信値（数値変換・null化・trim）。
+  - `frontend/src/components/CoursesPanel.test.tsx`（新規）: 論理削除済みを除いた一覧表示と曜日・時限・年度・学期の表示、任意項目未設定行、0件、取得失敗、API Key未入力時にAPIを呼ばない、選択式での新規登録と一覧反映・送信内容、授業名のみの登録（任意項目null）、クライアント側検証で送信しない、APIの422エラーのダイアログ内表示と入力保持、既存値入りでの編集・一覧反映（学期を未設定に戻すとnull送信）、更新エラー表示、削除確認・削除後の一覧除外、削除失敗の表示。
+  - `frontend/src/App.test.tsx`: 疎通・エラー表示のテストを授業ページ（「授業管理」領域）に置き換え。ナビに「案件ページ」が無く授業ページ・選考ページへ切り替えられること、`/courses`の直接表示、戻る/進む、旧URL（`/projects`、`/projects/1`、`/tasks/1/11`）が横断一覧に案内され廃止済みAPIを呼ばないこと、トップページに稼働系表示が無く選考ステップが表示されることを追加。案件・タスク詳細のディープリンクテストは削除。
+  - `frontend/src/components/OverviewPanel.test.tsx`: 稼働ログ関連テストを削除し、稼働ログ表示が無く`/work-logs`・`/projects`・`/tasks`へのリクエストが発生しないことのテストを追加。
+  - 結果: `npm test` 13ファイル131件pass（warning出力なし）、`npm run lint`（oxlint --deny-warnings）エラー・警告0、`npm run typecheck`・`npm run build` 成功。
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Lowの指摘なし）。確認内容:
+  - API Key: 新規の`api/courses.ts`は全関数で既存`apiRequest`を経由し`X-API-Key`ヘッダーで送信（未入力時は送信前にエラー）。保存は既存`apiKeyStorage`（sessionStorage）のままで変更なし。ソース・テストに実キーの埋め込みは無い（テストはダミー値`my-key`）。`CoursesPanel`はAPI Key空のときAPIを呼ばない。
+  - XSS: frontend/src全体で`dangerouslySetInnerHTML`/`innerHTML`/`eval`の使用なし。授業名・メモ等のAPI由来文字列はReactのテキストノード・aria-label・テンプレート文字列としてのみ描画され、エスケープされる。
+  - 情報漏洩: エラー表示は既存`toDisplayMessage`経由で、HTTPステータスとAPIの`detail`のみ表示（スタックトレース等は出さない）。`console.*`によるログ出力も無い。
+  - mass assignment: 送信型`CourseInput`は name/day_of_week/period/academic_year/term/memo のみで、`id`・`is_deleted`を含まない。`toCourseInput`で明示的に組み立てており、取得した`Course`オブジェクトをそのまま送っていない。
+  - URL組み立て: `/courses/${courseId}`の`courseId`はnumber型（APIの取得値由来）で、パス操作の余地は無い。
+  - 旧ルート削除: `/projects`・`/tasks/...`はcatch-allで`/`へリダイレクトされ、廃止済みAPIへのリクエストは発生しない。
+  - シークレット: 接続先は`VITE_API_BASE_URL`から読み込み、ハードコードされていない。
+- 性能エバリュエーターのフィードバック: 合格。確認内容:
+  - `npm test`（vitest）: 13ファイル131件全pass。出力全体を確認し、warning・React act警告・console.error・stderr出力はいずれも0件。
+  - `npm run lint`（oxlint --deny-warnings）: エラー・警告0。`npm run typecheck`（tsc -b）: エラーなし。`npm run build`: 成功。
+  - バックエンド回帰（一時SQLiteで実行）: `uv run pytest` 396件pass（warningなし）、`uv run ruff check` 指摘なし。
+  - 受け入れ条件ごとの対応テスト（全てpass）:
+    - ナビに「案件ページ」が無く授業/選考ページへ切替: App.test.tsx「ナビゲーションバーに「案件ページ」は無く…」。
+    - `/courses`の固有URL・直接表示・戻る/進む: App.test.tsx「固有のURLを持ち…」「戻る」「進む」。
+    - 論理削除除外の一覧、曜日・時限・年度・学期の表示、未設定は「-」: CoursesPanel.test.tsx「論理削除されていない授業が表示され…」（is_deleted=trueの行が非表示であることも検証）。
+    - 新規作成・編集（選択式の曜日/学期、任意項目null、学期を未設定に戻すとnull送信）と一覧反映: CoursesPanel.test.tsx 新規登録・編集の各ケース、courseForm.test.ts（時限の境界1/0/負数/小数/文字列、年度の整数判定）。
+    - 削除と削除後の一覧除外: CoursesPanel.test.tsx「確認後に削除でき…」。
+    - APIエラーの画面表示: 一覧取得失敗・422（入力保持）・更新404・削除失敗の各ケース。
+    - 旧URL（`/projects`、`/projects/1`、`/tasks/1/11`）が横断一覧に案内され廃止済みAPIを呼ばない: App.test.tsx it.each。旧APIクライアント・画面・テストのファイル削除と、非テストコードに旧API参照が残っていないことをgrepで確認。
+    - トップページに稼働系表示が無く選考ステップは表示、廃止APIへのリクエスト無し: App.test.tsx・OverviewPanel.test.tsx。
+    - 選考ページに変更が無いこと: 企業系ファイル（`CompaniesPanel`等・`companyForm.ts`・企業API）はgit上で未変更、既存テストも全pass。
+  - 指摘事項なし。statusを「完了」に更新する。
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 授業ページへの課題管理UI追加

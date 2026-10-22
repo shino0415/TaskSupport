@@ -6,33 +6,22 @@ import userEvent from '@testing-library/user-event'
 import App from './App'
 import { API_KEY_HEADER } from './api/client'
 import { API_KEY_STORAGE_KEY } from './api/apiKeyStorage'
-import type { Company, InterviewStep, Project, RunningWorkLog, Task } from './api/types'
+import type { Company, Course, InterviewStep } from './api/types'
 
 const BASE_URL = 'http://api.test.local:8000'
 
-const SAMPLE_PROJECT: Project = {
+const SAMPLE_COURSE: Course = {
   id: 1,
-  name: 'ポートフォリオサイト制作',
-  client_name: '株式会社サンプル',
-  status: '契約中',
-  reward: 120000,
-  applied_date: '2026-08-01',
-  deadline: null,
-  platform: 'CrowdWorks',
+  name: 'データベース論',
+  day_of_week: '月',
+  period: 2,
+  academic_year: 2026,
+  term: '前期',
   memo: null,
   is_deleted: false,
 }
 
 const SAMPLE_COMPANY: Company = { id: 1, name: '株式会社サンプル', is_deleted: false }
-
-const SAMPLE_TASK: Task = {
-  id: 11,
-  project_id: 1,
-  name: '要件整理',
-  status: '処理中',
-  memo: null,
-  is_deleted: false,
-}
 
 const SAMPLE_STEP: InterviewStep = {
   id: 101,
@@ -41,18 +30,6 @@ const SAMPLE_STEP: InterviewStep = {
   date: '2026-09-01',
   prep_status: '準備中',
   result: '未定',
-  memo: null,
-  is_deleted: false,
-}
-
-const SAMPLE_RUNNING_WORK_LOG: RunningWorkLog = {
-  id: 1,
-  task_id: SAMPLE_TASK.id,
-  task_name: SAMPLE_TASK.name,
-  project_id: SAMPLE_PROJECT.id,
-  project_name: SAMPLE_PROJECT.name,
-  started_at: '2026-08-13T10:00:00',
-  ended_at: null,
   memo: null,
   is_deleted: false,
 }
@@ -68,16 +45,14 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
-// App にはタスク管理画面（TasksPanel）も同居し、同じ /projects を独自に取得するため、
-// 案件管理画面固有の表示確認は「案件管理」領域に絞って検証する。
-function projectsRegion() {
-  return screen.getByRole('region', { name: '案件管理' })
+function coursesRegion() {
+  return screen.getByRole('region', { name: '授業管理' })
 }
 
-// 案件管理画面（ProjectsPanel）は「案件ページ」（/projects）上にあるため、
+// 授業管理画面（CoursesPanel）は「授業ページ」（/courses）上にあるため、
 // その画面固有の疎通・エラー表示の確認はこのページを開いた状態でレンダリングする。
-function renderProjectsPage() {
-  window.history.pushState(null, '', '/projects')
+function renderCoursesPage() {
+  window.history.pushState(null, '', '/courses')
   render(<App />)
 }
 
@@ -117,24 +92,21 @@ describe('初期画面', () => {
 
 describe('API Keyを入力しての疎通', () => {
   it('入力したキーで認証付きリクエストし、取得内容を表示する', async () => {
-    stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_PROJECT])))
+    stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_COURSE])))
     const user = userEvent.setup()
 
-    renderProjectsPage()
+    renderCoursesPage()
     await user.type(screen.getByLabelText('API Key'), 'valid-key')
     await user.click(screen.getByRole('button', { name: '保存して接続' }))
 
-    // 「案件ページ」にはタスク管理・稼働計測の各画面も同居し、同じ /projects や
-    // 同型のレスポンスを独自に取得するため、案件管理画面固有の表示確認は
-    // 「案件管理」領域に絞って検証する。
-    expect(await within(projectsRegion()).findByText('ポートフォリオサイト制作')).toBeInTheDocument()
-    expect(within(projectsRegion()).getByText('取得件数: 1 件')).toBeInTheDocument()
-    const projectsCall = vi
+    expect(await within(coursesRegion()).findByText('データベース論')).toBeInTheDocument()
+    expect(within(coursesRegion()).getByText('取得件数: 1 件')).toBeInTheDocument()
+    const coursesCall = vi
       .mocked(fetch)
-      .mock.calls.find(([url]) => url === `${BASE_URL}/projects`)
-    expect(projectsCall).toBeDefined()
-    const [url, init] = projectsCall!
-    expect(url).toBe(`${BASE_URL}/projects`)
+      .mock.calls.find(([url]) => url === `${BASE_URL}/courses`)
+    expect(coursesCall).toBeDefined()
+    const [url, init] = coursesCall!
+    expect(url).toBe(`${BASE_URL}/courses`)
     const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers[API_KEY_HEADER]).toBe('valid-key')
   })
@@ -143,7 +115,7 @@ describe('API Keyを入力しての疎通', () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
     const user = userEvent.setup()
 
-    renderProjectsPage()
+    renderCoursesPage()
     await user.type(screen.getByLabelText('API Key'), 'valid-key')
     await user.click(screen.getByRole('button', { name: '保存して接続' }))
 
@@ -155,11 +127,11 @@ describe('API Keyを入力しての疎通', () => {
 
   it('保持済みのキーがあればリロード後も再入力なしで取得する', async () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
-    stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_PROJECT])))
+    stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_COURSE])))
 
-    renderProjectsPage()
+    renderCoursesPage()
 
-    expect(await within(projectsRegion()).findByText('ポートフォリオサイト制作')).toBeInTheDocument()
+    expect(await within(coursesRegion()).findByText('データベース論')).toBeInTheDocument()
     const [, init] = vi.mocked(fetch).mock.calls[0]!
     const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers[API_KEY_HEADER]).toBe('saved-key')
@@ -170,8 +142,8 @@ describe('API Keyを入力しての疎通', () => {
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
     const user = userEvent.setup()
 
-    renderProjectsPage()
-    await within(projectsRegion()).findByText('取得件数: 0 件')
+    renderCoursesPage()
+    await within(coursesRegion()).findByText('取得件数: 0 件')
     await user.click(screen.getByRole('button', { name: 'クリア' }))
 
     expect(window.sessionStorage.getItem(API_KEY_STORAGE_KEY)).toBeNull()
@@ -182,10 +154,10 @@ describe('API Keyを入力しての疎通', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
-    renderProjectsPage()
+    renderCoursesPage()
 
-    expect(await within(projectsRegion()).findByText('取得件数: 0 件')).toBeInTheDocument()
-    expect(within(projectsRegion()).getByText('案件は0件です。')).toBeInTheDocument()
+    expect(await within(coursesRegion()).findByText('取得件数: 0 件')).toBeInTheDocument()
+    expect(within(coursesRegion()).getByText('授業は0件です。')).toBeInTheDocument()
   })
 })
 
@@ -194,9 +166,9 @@ describe('エラー表示', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'wrong-key')
     stubFetch(() => Promise.resolve(jsonResponse(401, { detail: 'Invalid or missing API Key' })))
 
-    renderProjectsPage()
+    renderCoursesPage()
 
-    const alert = await within(projectsRegion()).findByRole('alert')
+    const alert = await within(coursesRegion()).findByRole('alert')
     expect(alert).toHaveTextContent('401')
     expect(alert).toHaveTextContent('API Key')
   })
@@ -205,9 +177,9 @@ describe('エラー表示', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
 
-    renderProjectsPage()
+    renderCoursesPage()
 
-    const alert = await within(projectsRegion()).findByRole('alert')
+    const alert = await within(coursesRegion()).findByRole('alert')
     expect(alert).toHaveTextContent(BASE_URL)
     expect(alert).toHaveTextContent('CORS')
   })
@@ -217,9 +189,9 @@ describe('エラー表示', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubFetch(() => Promise.resolve(jsonResponse(200, [])))
 
-    renderProjectsPage()
+    renderCoursesPage()
 
-    expect(await within(projectsRegion()).findByRole('alert')).toHaveTextContent(
+    expect(await within(coursesRegion()).findByRole('alert')).toHaveTextContent(
       'VITE_API_BASE_URL',
     )
   })
@@ -230,33 +202,27 @@ describe('エラー表示', () => {
     stubFetch(() =>
       shouldFail
         ? Promise.reject(new TypeError('Failed to fetch'))
-        : Promise.resolve(jsonResponse(200, [SAMPLE_PROJECT])),
+        : Promise.resolve(jsonResponse(200, [SAMPLE_COURSE])),
     )
     const user = userEvent.setup()
 
-    renderProjectsPage()
-    await within(projectsRegion()).findByRole('alert')
+    renderCoursesPage()
+    await within(coursesRegion()).findByRole('alert')
 
     shouldFail = false
     await user.click(screen.getByRole('button', { name: '再読み込み' }))
 
-    expect(await screen.findByText('ポートフォリオサイト制作')).toBeInTheDocument()
-    expect(within(projectsRegion()).queryByRole('alert')).not.toBeInTheDocument()
+    expect(await screen.findByText('データベース論')).toBeInTheDocument()
+    expect(within(coursesRegion()).queryByRole('alert')).not.toBeInTheDocument()
   })
 })
 
-/** 横断一覧からの遷移確認用に、案件・タスク・企業・選考ステップ・進行中稼働ログを一通り揃えた簡易APIサーバー。 */
+/** 画面遷移の確認用に、授業・企業・選考ステップを一通り揃えた簡易APIサーバー。 */
 function stubRoutingFetch() {
   stubFetch((input: RequestInfo | URL) => {
     const pathname = new URL(String(input)).pathname
-    if (pathname === '/projects') {
-      return Promise.resolve(jsonResponse(200, [SAMPLE_PROJECT]))
-    }
-    if (pathname === `/projects/${String(SAMPLE_PROJECT.id)}`) {
-      return Promise.resolve(jsonResponse(200, SAMPLE_PROJECT))
-    }
-    if (pathname === `/projects/${String(SAMPLE_PROJECT.id)}/tasks`) {
-      return Promise.resolve(jsonResponse(200, [SAMPLE_TASK]))
+    if (pathname === '/courses') {
+      return Promise.resolve(jsonResponse(200, [SAMPLE_COURSE]))
     }
     if (pathname === '/companies') {
       return Promise.resolve(jsonResponse(200, [SAMPLE_COMPANY]))
@@ -266,9 +232,6 @@ function stubRoutingFetch() {
     }
     if (pathname === '/interview-steps/upcoming') {
       return Promise.resolve(jsonResponse(200, [SAMPLE_STEP]))
-    }
-    if (pathname === '/work-logs/running') {
-      return Promise.resolve(jsonResponse(200, [SAMPLE_RUNNING_WORK_LOG]))
     }
     return Promise.resolve(jsonResponse(404, { detail: 'Not Found' }))
   })
@@ -295,42 +258,6 @@ describe('横断一覧からの画面遷移', () => {
     expect(within(dialog).getByText('企業詳細（ID: 1）')).toBeInTheDocument()
     expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
   })
-
-  it('進行中の稼働ログの「案件の詳細」から、対応する案件の詳細画面へ辿れる', async () => {
-    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
-    stubRoutingFetch()
-    const user = userEvent.setup()
-
-    render(<App />)
-    await within(overviewRegion()).findByText('要件整理')
-    await user.click(
-      within(overviewRegion()).getByRole('link', {
-        name: '案件「ポートフォリオサイト制作」の詳細へ',
-      }),
-    )
-
-    const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText('案件詳細（ID: 1）')).toBeInTheDocument()
-    expect(await within(dialog).findByText('CrowdWorks')).toBeInTheDocument()
-  })
-
-  it('進行中の稼働ログの「タスクの詳細」から、対応するタスクの詳細画面（タスク管理）へ辿れる', async () => {
-    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
-    stubRoutingFetch()
-    const user = userEvent.setup()
-
-    render(<App />)
-    await within(overviewRegion()).findByText('要件整理')
-    await user.click(
-      within(overviewRegion()).getByRole('link', { name: 'タスク「要件整理」の詳細へ' }),
-    )
-
-    const tasksRegion = screen.getByRole('region', { name: 'タスク管理' })
-    expect(await within(tasksRegion).findByText('取得件数: 1 件')).toBeInTheDocument()
-    const highlightedRow = within(tasksRegion).getByText('要件整理').closest('tr')!
-    expect(highlightedRow).toHaveAttribute('aria-current', 'true')
-    expect(within(highlightedRow).getByText('対象のタスク')).toBeInTheDocument()
-  })
 })
 
 function navBar() {
@@ -344,42 +271,43 @@ describe('画面構成の分割とナビゲーション', () => {
     render(<App />)
 
     expect(overviewRegion()).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '案件管理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '授業管理' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '選考管理' })).not.toBeInTheDocument()
   })
 
-  it('ナビゲーションバーはどの画面でも表示され、クリックで案件ページ・選考ページへ切り替えられる', async () => {
+  it('ナビゲーションバーに「案件ページ」は無く、どの画面でも表示され、クリックで授業ページ・選考ページへ切り替えられる', async () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubRoutingFetch()
     const user = userEvent.setup()
 
     render(<App />)
     expect(navBar()).toBeInTheDocument()
+    expect(within(navBar()).queryByRole('link', { name: '案件ページ' })).not.toBeInTheDocument()
 
-    await user.click(within(navBar()).getByRole('link', { name: '案件ページ' }))
-    expect(await screen.findByRole('region', { name: '案件管理' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'タスク管理' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: '稼働計測・時給換算' })).toBeInTheDocument()
+    await user.click(within(navBar()).getByRole('link', { name: '授業ページ' }))
+    expect(await screen.findByRole('region', { name: '授業管理' })).toBeInTheDocument()
+    expect(await within(coursesRegion()).findByText('データベース論')).toBeInTheDocument()
     expect(navBar()).toBeInTheDocument()
 
     await user.click(within(navBar()).getByRole('link', { name: '選考ページ' }))
     expect(await screen.findByRole('region', { name: '選考管理' })).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '案件管理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '授業管理' })).not.toBeInTheDocument()
     expect(navBar()).toBeInTheDocument()
 
     await user.click(within(navBar()).getByRole('link', { name: '横断一覧' }))
     expect(overviewRegion()).toBeInTheDocument()
   })
 
-  it('「案件ページ」「選考ページ」は固有のURLを持ち、直接開いても同じ画面が表示される', () => {
+  it('「授業ページ」「選考ページ」は固有のURLを持ち、直接開いても同じ画面が表示される', () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubRoutingFetch()
 
-    window.history.pushState(null, '', '/projects')
+    window.history.pushState(null, '', '/courses')
     const { unmount } = render(<App />)
-    expect(screen.getByRole('region', { name: '案件管理' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'タスク管理' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: '稼働計測・時給換算' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '授業管理' })).toBeInTheDocument()
+    expect(
+      within(navBar()).getByRole('link', { name: '授業ページ' }),
+    ).toHaveAttribute('aria-current', 'page')
     unmount()
 
     window.history.pushState(null, '', '/companies')
@@ -404,15 +332,15 @@ describe('画面構成の分割とナビゲーション', () => {
     render(<App />)
     expect(overviewRegion()).toBeInTheDocument()
 
-    await user.click(within(navBar()).getByRole('link', { name: '案件ページ' }))
-    expect(await screen.findByRole('region', { name: '案件管理' })).toBeInTheDocument()
+    await user.click(within(navBar()).getByRole('link', { name: '授業ページ' }))
+    expect(await screen.findByRole('region', { name: '授業管理' })).toBeInTheDocument()
 
     await user.click(within(navBar()).getByRole('link', { name: '選考ページ' }))
     expect(await screen.findByRole('region', { name: '選考管理' })).toBeInTheDocument()
 
     window.history.back()
     await waitFor(() => {
-      expect(screen.getByRole('region', { name: '案件管理' })).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: '授業管理' })).toBeInTheDocument()
     })
     expect(screen.queryByRole('region', { name: '選考管理' })).not.toBeInTheDocument()
 
@@ -420,11 +348,11 @@ describe('画面構成の分割とナビゲーション', () => {
     await waitFor(() => {
       expect(screen.getByRole('region', { name: '選考管理' })).toBeInTheDocument()
     })
-    expect(screen.queryByRole('region', { name: '案件管理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '授業管理' })).not.toBeInTheDocument()
   })
 })
 
-// ページ分割後も、横断一覧の各リンク先URL（/companies/:id・/projects/:id・/tasks/:id/:id）を
+// ページ分割後も、横断一覧のリンク先URL（/companies/:id）を
 // クリックを介さず直接開いた場合に同じ詳細が表示されることを検証する。
 // BrowserRouterは現在のlocationを初期状態として描画するため、この手順は
 // 「URLを直接開く」操作・「再読み込みする」操作のいずれとも同一の初期描画過程をたどる
@@ -444,39 +372,44 @@ describe('詳細ダイアログへのディープリンク（新しいページ�
     expect(within(dialog).getByText('企業詳細（ID: 1）')).toBeInTheDocument()
     expect(await within(dialog).findByText('株式会社サンプル')).toBeInTheDocument()
   })
+})
 
-  it('案件詳細のURLを直接開くと、案件ページ上に対応する案件詳細ダイアログが開いた状態で表示される', async () => {
+describe('廃止した旧案件系の画面', () => {
+  it.each(['/projects', '/projects/1', '/tasks/1/11'])(
+    '旧案件系のURL（%s）を開いても画面が壊れず横断一覧に案内され、廃止済みAPIを呼ばない',
+    async (path) => {
+      window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
+      stubRoutingFetch()
+      window.history.pushState(null, '', path)
+
+      render(<App />)
+
+      expect(overviewRegion()).toBeInTheDocument()
+      expect(window.location.pathname).toBe('/')
+      expect(await within(overviewRegion()).findByText('一次面接')).toBeInTheDocument()
+      const requestedPaths = vi
+        .mocked(fetch)
+        .mock.calls.map(([input]) => new URL(String(input)).pathname)
+      expect(requestedPaths.filter((p) => /^\/(projects|tasks|work-logs)(\/|$)/.test(p))).toEqual(
+        [],
+      )
+    },
+  )
+
+  it('トップページに「計測中の作業」「進行中の稼働ログ」は無く、「直近の選考ステップ」は表示される', async () => {
     window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
     stubRoutingFetch()
-    window.history.pushState(null, '', '/projects/1')
 
     render(<App />)
 
-    // ダイアログが開くとMUIが背景をaria-hiddenにするため、背景側の要素は
-    // hidden: true を指定して（アクセシビリティツリー上は非表示のまま）存在のみ確認する。
-    expect(screen.getByRole('region', { name: '案件管理', hidden: true })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'タスク管理', hidden: true })).toBeInTheDocument()
-    expect(
-      screen.getByRole('region', { name: '稼働計測・時給換算', hidden: true }),
-    ).toBeInTheDocument()
-    const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText('案件詳細（ID: 1）')).toBeInTheDocument()
-    expect(await within(dialog).findByText('CrowdWorks')).toBeInTheDocument()
-  })
-
-  it('タスク詳細のURLを直接開くと、案件ページのタスク管理で対象タスクが分かる状態で表示される', async () => {
-    window.sessionStorage.setItem(API_KEY_STORAGE_KEY, 'saved-key')
-    stubRoutingFetch()
-    window.history.pushState(null, '', `/tasks/${String(SAMPLE_PROJECT.id)}/${String(SAMPLE_TASK.id)}`)
-
-    render(<App />)
-
-    expect(screen.getByRole('region', { name: '案件管理' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: '稼働計測・時給換算' })).toBeInTheDocument()
-    const tasksRegion = screen.getByRole('region', { name: 'タスク管理' })
-    expect(await within(tasksRegion).findByText('取得件数: 1 件')).toBeInTheDocument()
-    const highlightedRow = within(tasksRegion).getByText('要件整理').closest('tr')!
-    expect(highlightedRow).toHaveAttribute('aria-current', 'true')
-    expect(within(highlightedRow).getByText('対象のタスク')).toBeInTheDocument()
+    expect(await within(overviewRegion()).findByText('一次面接')).toBeInTheDocument()
+    expect(within(overviewRegion()).getByText('予定の近い選考ステップ')).toBeInTheDocument()
+    expect(screen.queryByText(/計測中の作業|進行中の稼働ログ/)).not.toBeInTheDocument()
+    const requestedPaths = vi
+      .mocked(fetch)
+      .mock.calls.map(([input]) => new URL(String(input)).pathname)
+    expect(requestedPaths.filter((p) => /^\/(projects|tasks|work-logs)(\/|$)/.test(p))).toEqual(
+      [],
+    )
   })
 })
