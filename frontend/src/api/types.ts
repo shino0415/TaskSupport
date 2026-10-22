@@ -32,6 +32,44 @@ export type CourseInput = {
   memo: string | null
 }
 
+/** Assignment.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
+export const ASSIGNMENT_STATUSES = ['未着手', '取組中', '未提出', '提出済み'] as const
+
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number]
+
+/** Assignment.submission_methodの取りうる値（バックエンドのSubmissionMethodと同じ集合）。 */
+export const ASSIGNMENT_SUBMISSION_METHODS = ['WebClass', '紙', 'その他'] as const
+
+export type AssignmentSubmissionMethod = (typeof ASSIGNMENT_SUBMISSION_METHODS)[number]
+
+export type Assignment = {
+  id: number
+  course_id: number
+  name: string
+  // 表示は取得した値をそのまま扱う（APIのレスポンスはstrのため、未知の値でも壊れないようにする）
+  status: string
+  /** タイムゾーン無しの日時（例: "2026-11-01T23:59:00"）。 */
+  deadline: string | null
+  submission_method: string | null
+  memo: string | null
+  is_deleted: boolean
+}
+
+/** 課題の作成・更新で送信する内容。任意項目はnullで未設定（更新時はクリア）を表す。
+ * deadlineはタイムゾーン無しの日時文字列のみ（オフセット付きはAPIが422で拒否する）。 */
+export type AssignmentInput = {
+  name: string
+  status: AssignmentStatus
+  deadline: string | null
+  submission_method: AssignmentSubmissionMethod | null
+  memo: string | null
+}
+
+/** PATCH /assignments/{id} のレスポンス。逆行遷移時のみwarningが入る。 */
+export type AssignmentPatchResponse = Assignment & {
+  warning: string | null
+}
+
 /** CompanyTask.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
 export const TASK_STATUSES = ['未着手', '処理中', '完了'] as const
 

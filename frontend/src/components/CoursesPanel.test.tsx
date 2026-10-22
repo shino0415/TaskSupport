@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import type { Course } from '../api/types'
+import type { Assignment, Course } from '../api/types'
 import { CoursesPanel } from './CoursesPanel'
 
 const BASE_URL = 'http://api.test.local:8000'
@@ -31,6 +31,31 @@ const COURSE_B: Course = {
   is_deleted: false,
 }
 
+const ASSIGNMENT_A: Assignment = {
+  id: 101,
+  course_id: 1,
+  name: '正規化レポート',
+  status: '提出済み',
+  deadline: '2026-11-01T23:59:00',
+  submission_method: 'WebClass',
+  memo: 'A4で2枚',
+  is_deleted: false,
+}
+
+const ASSIGNMENT_B: Assignment = {
+  id: 102,
+  course_id: 1,
+  name: '小テスト準備',
+  status: '未着手',
+  deadline: null,
+  submission_method: null,
+  memo: null,
+  is_deleted: false,
+}
+
+/** 課題ステータスの逆行遷移を判定するための線形順序（バックエンドの状態遷移グラフを模す）。 */
+const ASSIGNMENT_STATUS_ORDER = ['未着手', '取組中', '未提出', '提出済み']
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -40,17 +65,32 @@ function jsonResponse(status: number, body: unknown): Response {
 
 type FakeServer = {
   courses: Course[]
+  assignments: Assignment[]
   requests: { method: string; url: string; body: unknown }[]
   /** 次の作成・更新リクエストに返すエラー（バリデーションエラー等の再現用）。 */
   nextWriteError: { status: number; detail: unknown } | null
 }
 
-/** 授業のCRUDを模した簡易APIサーバー（削除は論理削除で、一覧から除外される）。 */
-function setupFakeServer(courses: Course[]): FakeServer {
+/** 授業・課題のCRUDと課題ステータス逆行時のwarningを模した簡易APIサーバー
+ * （削除は論理削除で、一覧から除外される）。 */
+function setupFakeServer(courses: Course[], assignments: Assignment[] = []): FakeServer {
   const server: FakeServer = {
     courses: courses.map((c) => ({ ...c })),
+    assignments: assignments.map((a) => ({ ...a })),
     requests: [],
     nextWriteError: null,
+  }
+
+  function assignmentWarning(before: Assignment, patch: Partial<Assignment>): string | null {
+    if (patch.status === undefined || patch.status === before.status) {
+      return null
+    }
+    const fromIndex = ASSIGNMENT_STATUS_ORDER.indexOf(before.status)
+    const toIndex = ASSIGNMENT_STATUS_ORDER.indexOf(patch.status)
+    if (fromIndex !== -1 && toIndex !== -1 && toIndex < fromIndex) {
+      return `${before.status} から ${patch.status} への変更です。意図的な変更か確認してください。`
+    }
+    return null
   }
 
   const handler = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -76,6 +116,52 @@ function setupFakeServer(courses: Course[]): FakeServer {
       }
       server.courses.push(created)
       return Promise.resolve(jsonResponse(201, created))
+    }
+
+    const courseAssignmentsMatch = /^\/courses\/(\d+)\/assignments$/.exec(url.pathname)
+    if (courseAssignmentsMatch !== null) {
+      const courseId = Number(courseAssignmentsMatch[1])
+      if (!server.courses.some((c) => c.id === courseId && !c.is_deleted)) {
+        return Promise.resolve(jsonResponse(404, { detail: 'Course not found' }))
+      }
+      if (method === 'GET') {
+        return Promise.resolve(
+          jsonResponse(
+            200,
+            server.assignments.filter((a) => a.course_id === courseId && !a.is_deleted),
+          ),
+        )
+      }
+      if (method === 'POST') {
+        const created: Assignment = {
+          id: Math.max(100, ...server.assignments.map((a) => a.id)) + 1,
+          course_id: courseId,
+          is_deleted: false,
+          ...(body as Omit<Assignment, 'id' | 'course_id' | 'is_deleted'>),
+        }
+        server.assignments.push(created)
+        return Promise.resolve(jsonResponse(201, created))
+      }
+    }
+
+    const assignmentMatch = /^\/assignments\/(\d+)$/.exec(url.pathname)
+    if (assignmentMatch !== null) {
+      const target = server.assignments.find(
+        (a) => a.id === Number(assignmentMatch[1]) && !a.is_deleted,
+      )
+      if (target === undefined) {
+        return Promise.resolve(jsonResponse(404, { detail: 'Assignment not found' }))
+      }
+      if (method === 'PATCH') {
+        const patch = body as Partial<Assignment>
+        const warning = assignmentWarning(target, patch)
+        Object.assign(target, patch)
+        return Promise.resolve(jsonResponse(200, { ...target, warning }))
+      }
+      if (method === 'DELETE') {
+        target.is_deleted = true
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
     }
 
     const match = /^\/courses\/(\d+)$/.exec(url.pathname)
@@ -371,5 +457,375 @@ describe('授業の削除', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('404')
     expect(alert).toHaveTextContent('Course not found')
+  })
+})
+
+async function waitForDialogClosed() {
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+}
+
+/** 課題一覧の表（「課題名」列を持つのはこの表のみ）。 */
+function assignmentsTable() {
+  return screen.getByRole('columnheader', { name: '課題名' }).closest('table')!
+}
+
+function assignmentRowOf(name: string) {
+  return within(assignmentsTable()).getByText(name).closest('tr')!
+}
+
+async function showAssignments(user: ReturnType<typeof userEvent.setup>, courseName: string) {
+  await screen.findByText(courseName)
+  await user.click(screen.getByRole('button', { name: `授業「${courseName}」の課題を表示` }))
+}
+
+describe('課題一覧', () => {
+  it('授業を選ぶと課題一覧を別途取得し、課題名・ステータス・提出期限・提出方法が分かる', async () => {
+    // 授業一覧の取得件数（3件）と課題一覧の取得件数（2件）を区別できるよう授業は3件にする
+    const server = setupFakeServer(
+      [COURSE_A, COURSE_B, { ...COURSE_B, id: 3, name: '線形代数' }],
+      [
+        ASSIGNMENT_A,
+        ASSIGNMENT_B,
+        { ...ASSIGNMENT_A, id: 103, name: '削除済み課題', is_deleted: true },
+        { ...ASSIGNMENT_A, id: 104, course_id: 2, name: '他授業の課題' },
+      ],
+    )
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+
+    expect(await screen.findByText('課題（データベース論）')).toBeInTheDocument()
+    expect(await screen.findByText('取得件数: 2 件')).toBeInTheDocument()
+    expect(
+      server.requests.some((r) => r.method === 'GET' && r.url === '/courses/1/assignments'),
+    ).toBe(true)
+    const rowA = assignmentRowOf('正規化レポート')
+    expect(within(rowA).getByText('提出済み')).toBeInTheDocument()
+    expect(within(rowA).getByText('2026-11-01T23:59:00')).toBeInTheDocument()
+    expect(within(rowA).getByText('WebClass')).toBeInTheDocument()
+    expect(within(rowA).getByText('A4で2枚')).toBeInTheDocument()
+    // 任意項目が未設定の課題も表示が破綻しない
+    const rowB = assignmentRowOf('小テスト準備')
+    expect(within(rowB).getByText('未着手')).toBeInTheDocument()
+    expect(within(rowB).getAllByText('-')).toHaveLength(3)
+    expect(screen.queryByText('削除済み課題')).not.toBeInTheDocument()
+    expect(screen.queryByText('他授業の課題')).not.toBeInTheDocument()
+  })
+
+  it('授業を選ぶまでは課題一覧を取得・表示しない', async () => {
+    const server = setupFakeServer([COURSE_A], [ASSIGNMENT_A])
+
+    renderPanel()
+    await screen.findByText('データベース論')
+
+    expect(screen.queryByRole('button', { name: '課題を追加' })).not.toBeInTheDocument()
+    expect(server.requests.some((r) => r.url.includes('/assignments'))).toBe(false)
+  })
+
+  it('課題が0件の授業でも表示が破綻せず、0件であることが分かる', async () => {
+    setupFakeServer([COURSE_A, COURSE_B], [ASSIGNMENT_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, '集中講義A')
+
+    expect(await screen.findByText('課題は0件です。')).toBeInTheDocument()
+    expect(screen.getByText('取得件数: 0 件')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '課題を追加' })).toBeEnabled()
+  })
+
+  it('課題一覧の取得に失敗すると原因が分かるメッセージを表示する', async () => {
+    setupFakeServer([COURSE_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('データベース論')
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      Promise.resolve(jsonResponse(404, { detail: 'Course not found' })),
+    )
+    await showAssignments(user, 'データベース論')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('404')
+    expect(alert).toHaveTextContent('Course not found')
+  })
+
+  it('選択中の授業を削除すると課題一覧の表示も閉じる', async () => {
+    setupFakeServer([COURSE_A, COURSE_B], [ASSIGNMENT_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('正規化レポート')
+
+    await user.click(screen.getByRole('button', { name: '授業「データベース論」を削除' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '削除する' }))
+
+    expect(await screen.findByText('授業「データベース論」を削除しました。')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('正規化レポート')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: '課題を追加' })).not.toBeInTheDocument()
+  })
+})
+
+describe('課題の新規追加', () => {
+  it('提出期限（日付と時刻）・提出方法を入力して追加でき、一覧に反映される', async () => {
+    const server = setupFakeServer([COURSE_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('課題は0件です。')
+    await user.click(screen.getByRole('button', { name: '課題を追加' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('課題を新規追加')).toBeInTheDocument()
+    await user.type(within(dialog).getByLabelText(/課題名/), 'ER図の作成')
+    await selectOption(user, 'ステータス', '取組中')
+    fireEvent.change(within(dialog).getByLabelText('提出期限'), {
+      target: { value: '2026-11-10T09:30' },
+    })
+    await selectOption(user, '提出方法', '紙')
+    await user.type(within(dialog).getByLabelText('メモ'), '手書き可')
+    await user.click(within(dialog).getByRole('button', { name: '追加する' }))
+
+    expect(await screen.findByText('課題を追加しました。')).toBeInTheDocument()
+    const post = server.requests.find((r) => r.method === 'POST')
+    expect(post?.url).toBe('/courses/1/assignments')
+    expect(post?.body).toEqual({
+      name: 'ER図の作成',
+      status: '取組中',
+      deadline: '2026-11-10T09:30',
+      submission_method: '紙',
+      memo: '手書き可',
+    })
+    const row = await waitFor(() => assignmentRowOf('ER図の作成'))
+    expect(within(row).getByText('取組中')).toBeInTheDocument()
+    expect(within(row).getByText('2026-11-10T09:30')).toBeInTheDocument()
+    expect(within(row).getByText('紙')).toBeInTheDocument()
+  })
+
+  it('課題名だけで追加でき、ステータスは未着手・任意項目はnullで送られる', async () => {
+    const server = setupFakeServer([COURSE_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('課題は0件です。')
+    await user.click(screen.getByRole('button', { name: '課題を追加' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/課題名/), '期末レポート')
+    await user.click(within(dialog).getByRole('button', { name: '追加する' }))
+
+    await waitFor(() => expect(assignmentRowOf('期末レポート')).toBeInTheDocument())
+    expect(server.requests.find((r) => r.method === 'POST')?.body).toEqual({
+      name: '期末レポート',
+      status: '未着手',
+      deadline: null,
+      submission_method: null,
+      memo: null,
+    })
+  })
+
+  it('課題名が未入力なら送信せず項目ごとのメッセージを表示する', async () => {
+    const server = setupFakeServer([COURSE_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('課題は0件です。')
+    await user.click(screen.getByRole('button', { name: '課題を追加' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '追加する' }))
+
+    expect(within(dialog).getByText('課題名を入力してください。')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'POST')).toBe(false)
+  })
+
+  it('APIが返したエラーをダイアログ内に表示し、入力内容を保持する', async () => {
+    const server = setupFakeServer([COURSE_A])
+    server.nextWriteError = {
+      status: 422,
+      detail: [{ loc: ['body', 'deadline'], msg: 'Input should not have timezone info' }],
+    }
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('課題は0件です。')
+    await user.click(screen.getByRole('button', { name: '課題を追加' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/課題名/), 'ER図の作成')
+    await user.click(within(dialog).getByRole('button', { name: '追加する' }))
+
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('422')
+    expect(alert).toHaveTextContent('Input should not have timezone info')
+    expect(within(dialog).getByLabelText(/課題名/)).toHaveValue('ER図の作成')
+  })
+})
+
+describe('課題の編集', () => {
+  it('既存の値が入った状態で各項目を編集でき、結果が一覧に反映される', async () => {
+    const server = setupFakeServer([COURSE_A], [ASSIGNMENT_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('小テスト準備')
+    await user.click(screen.getByRole('button', { name: '課題「小テスト準備」を編集' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('課題を編集（ID: 102）')).toBeInTheDocument()
+    expect(within(dialog).getByLabelText(/課題名/)).toHaveValue('小テスト準備')
+    await user.clear(within(dialog).getByLabelText(/課題名/))
+    await user.type(within(dialog).getByLabelText(/課題名/), '第3回小テスト準備')
+    await selectOption(user, 'ステータス', '未提出')
+    fireEvent.change(within(dialog).getByLabelText('提出期限'), {
+      target: { value: '2026-11-05T13:00' },
+    })
+    await selectOption(user, '提出方法', 'その他')
+    await user.click(within(dialog).getByRole('button', { name: '更新する' }))
+    await waitForDialogClosed()
+
+    expect(await screen.findByText('課題を更新しました。')).toBeInTheDocument()
+    const patch = server.requests.find((r) => r.method === 'PATCH')
+    expect(patch?.url).toBe('/assignments/102')
+    expect(patch?.body).toEqual({
+      name: '第3回小テスト準備',
+      status: '未提出',
+      deadline: '2026-11-05T13:00',
+      submission_method: 'その他',
+      memo: null,
+    })
+    const row = await waitFor(() => assignmentRowOf('第3回小テスト準備'))
+    expect(within(row).getByText('未提出')).toBeInTheDocument()
+    expect(within(row).getByText('2026-11-05T13:00')).toBeInTheDocument()
+    expect(within(row).getByText('その他')).toBeInTheDocument()
+  })
+
+  it('提出期限・提出方法を未設定に戻すとnullで送られる', async () => {
+    const server = setupFakeServer([COURSE_A], [ASSIGNMENT_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('正規化レポート')
+    await user.click(screen.getByRole('button', { name: '課題「正規化レポート」を編集' }))
+
+    const dialog = await screen.findByRole('dialog')
+    // 秒が0の提出期限は分までの値として入力欄に入る
+    expect(within(dialog).getByLabelText('提出期限')).toHaveValue('2026-11-01T23:59')
+    fireEvent.change(within(dialog).getByLabelText('提出期限'), { target: { value: '' } })
+    await selectOption(user, '提出方法', '未設定')
+    await user.click(within(dialog).getByRole('button', { name: '更新する' }))
+    await waitForDialogClosed()
+
+    expect(server.requests.find((r) => r.method === 'PATCH')?.body).toMatchObject({
+      deadline: null,
+      submission_method: null,
+    })
+    await waitFor(() =>
+      expect(within(assignmentRowOf('正規化レポート')).getAllByText('-')).toHaveLength(2),
+    )
+  })
+
+  it('ステータスの逆行時はAPIの警告を表示しつつ、更新自体は成立する', async () => {
+    setupFakeServer([COURSE_A], [ASSIGNMENT_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('正規化レポート')
+    await user.click(screen.getByRole('button', { name: '課題「正規化レポート」を編集' }))
+    await selectOption(user, 'ステータス', '取組中')
+    await user.click(screen.getByRole('button', { name: '更新する' }))
+    await waitForDialogClosed()
+
+    const alert = await screen.findByText(/意図的な変更か確認してください/)
+    expect(alert).toHaveTextContent('提出済み から 取組中 への変更です')
+    expect(alert).toHaveTextContent('変更は保存されています')
+    await waitFor(() =>
+      expect(within(assignmentRowOf('正規化レポート')).getByText('取組中')).toBeInTheDocument(),
+    )
+  })
+
+  it('更新時にAPIがエラーを返すとダイアログ内に表示する', async () => {
+    const server = setupFakeServer([COURSE_A], [ASSIGNMENT_B])
+    server.nextWriteError = { status: 404, detail: 'Assignment not found' }
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('小テスト準備')
+    await user.click(screen.getByRole('button', { name: '課題「小テスト準備」を編集' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '更新する' }))
+
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('404')
+    expect(alert).toHaveTextContent('Assignment not found')
+  })
+})
+
+describe('課題の削除', () => {
+  it('確認後に削除でき、削除後は一覧に表示されなくなる', async () => {
+    const server = setupFakeServer([COURSE_A], [ASSIGNMENT_A, ASSIGNMENT_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('正規化レポート')
+    await user.click(screen.getByRole('button', { name: '課題「正規化レポート」を削除' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(
+      within(dialog).getByText('課題「正規化レポート」を削除します。よろしいですか？'),
+    ).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '削除する' }))
+
+    expect(await screen.findByText('課題「正規化レポート」を削除しました。')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(within(assignmentsTable()).queryByText('正規化レポート')).not.toBeInTheDocument(),
+    )
+    expect(within(assignmentsTable()).getByText('小テスト準備')).toBeInTheDocument()
+    expect(server.requests.some((r) => r.method === 'DELETE' && r.url === '/assignments/101')).toBe(
+      true,
+    )
+  })
+
+  it('最後の課題を削除すると0件の表示になる', async () => {
+    setupFakeServer([COURSE_A], [ASSIGNMENT_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('小テスト準備')
+    await user.click(screen.getByRole('button', { name: '課題「小テスト準備」を削除' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '削除する' }))
+
+    expect(await screen.findByText('課題は0件です。')).toBeInTheDocument()
+  })
+
+  it('削除に失敗すると原因が分かるメッセージを表示する', async () => {
+    setupFakeServer([COURSE_A], [ASSIGNMENT_B])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await showAssignments(user, 'データベース論')
+    await screen.findByText('小テスト準備')
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      Promise.resolve(jsonResponse(404, { detail: 'Assignment not found' })),
+    )
+    await user.click(screen.getByRole('button', { name: '課題「小テスト準備」を削除' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '削除する' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('404')
+    expect(alert).toHaveTextContent('Assignment not found')
   })
 })
