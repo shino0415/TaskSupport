@@ -1,7 +1,9 @@
-# 案件・選考トラッカー API 仕様書
+# 授業タスク・選考トラッカー API 仕様書
 
-個人用ツール。CrowdWorks等の受注案件の稼働時間管理と時給換算、就活の選考進捗管理を行う。
-完全に独立した2つのドメイン（案件系／選考系）を1つのAPIにまとめる。
+個人用ツール。大学の授業ごとの課題（提出期限・提出状況）の管理と、就活の選考進捗管理を行う。
+完全に独立した2つのドメイン（授業系／選考系）を1つのAPIにまとめる。
+
+> 2026-10-22: 旧「案件系（Project/Task/WorkLog・時給換算）」を廃止し、「授業系（Course/Assignment）」に置き換えた。経緯は「## 決定事項」の「案件系の廃止と授業系への置き換え」を参照。「## 実装タスク」内の完了済み案件系タスクは経緯の記録として残している。
 
 ## 技術構成
 
@@ -15,60 +17,47 @@
 
 ## 全体設計方針
 
-- **案件系（Project/Task/WorkLog）と選考系（Company/InterviewStep）は完全に独立したドメイン**。relationやロジックの共有はない
+- **授業系（Course/Assignment）と選考系（Company/InterviewStep/CompanyTask）は完全に独立したドメイン**。relationやロジックの共有はない（ステータス遷移の警告関数 `check_backward_transition` のような汎用の純粋関数の共用は可）
 - 削除は全テーブル共通で **is_deleted フラグによる論理削除**（物理削除はしない。ヒューマンエラー対策）
   - 全GET系エンドポイントはデフォルトで `is_deleted=false` のレコードのみ返す
-- 親の詳細取得（`GET /projects/{id}` 等）では **子テーブルの情報を含めない**。子一覧が必要な場合は別エンドポイントを叩く
+- 親の詳細取得（`GET /courses/{id}` 等）では **子テーブルの情報を含めない**。子一覧が必要な場合は別エンドポイントを叩く
 - ステータス変更は **ブロックしない**。不自然な逆行遷移を検知した場合のみ、レスポンスに `warning` フィールドを含めて200を返す（入力ミス訂正の妨げにならないようにするため）
 
 ## テーブル設計
 
-### Project（案件）
+### Course（授業）
 
 | カラム | 型 | 説明 |
 |---|---|---|
 | id | INTEGER (PK) | |
-| name | TEXT | 案件名 |
-| client_name | TEXT | クライアント名 |
-| status | TEXT | 提案中/契約中/納品済み/完了/見送り |
-| reward | INTEGER | 固定報酬額（時給制案件は対象外） |
-| applied_date | DATE | 応募日 |
-| deadline | DATE (nullable) | 納期 |
-| platform | TEXT | CrowdWorks等、経由プラットフォーム |
+| name | TEXT | 授業名（必須） |
+| day_of_week | TEXT (nullable) | 曜日。月/火/水/木/金/土/日 のいずれか |
+| period | INTEGER (nullable) | 時限。1以上の整数 |
+| academic_year | INTEGER (nullable) | 年度（例: 2026） |
+| term | TEXT (nullable) | 学期区分。前期/後期/通年 のいずれか |
 | memo | TEXT (nullable) | |
 | is_deleted | BOOLEAN | デフォルト false |
 
-relation: `project (1) --- (多) task`
+relation: `course (1) --- (多) assignment`
 
-### Task（タスク、Projectに1対多）
+- 曜日・時限・年度・学期は任意（集中講義・オンデマンド授業など該当しないものがあるため）
+- 1授業1コマを前提とする（曜日・時限は1組のみ）
+
+### Assignment（課題、Courseに1対多）
 
 | カラム | 型 | 説明 |
 |---|---|---|
 | id | INTEGER (PK) | |
-| project_id | INTEGER (FK → project.id) | |
-| name | TEXT | タスク名 |
-| status | TEXT | 未着手/処理中/完了 |
+| course_id | INTEGER (FK → course.id) | |
+| name | TEXT | 課題名（必須） |
+| status | TEXT | 未着手/取組中/未提出/提出済み。作成時のデフォルトは未着手 |
+| deadline | DATETIME (nullable) | 提出期限（日付＋時刻）。期限なしの課題も登録可 |
+| submission_method | TEXT (nullable) | 提出方法。WebClass/紙/その他 のいずれか |
 | memo | TEXT (nullable) | |
 | is_deleted | BOOLEAN | デフォルト false |
 
-relation: `task (1) --- (多) work_log`
-
-将来の拡張候補（未実装）: 表示順序用の `order` (INTEGER) カラム。間隔を空けた採番（10, 20, 30...）を推奨。優先度低、必要になったタイミングで着手。
-
-### WorkLog（稼働ログ、Taskに1対多）
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| id | INTEGER (PK) | |
-| task_id | INTEGER (FK → task.id) | |
-| started_at | DATETIME (nullable) | 計測開始ボタン押下時刻 |
-| ended_at | DATETIME (nullable) | 計測終了ボタン押下時刻。NULLの間は「進行中」を意味する |
-| memo | TEXT (nullable) | |
-| is_deleted | BOOLEAN | デフォルト false |
-
-- 稼働時間は保存せず `ended_at - started_at` で都度計算する（`started_at`修正時の不整合を避けるため）
-- 同一タスク内での多重start（進行中ログが複数存在すること）を許可する
-- 案件間・タスク間の同時進行も許可する
+- ステータス「未提出」は「課題自体は完成したがまだ提出していない」状態を意味する（期限切れを意味しない）
+- deadline の日時の扱い（タイムゾーン等）は、旧WorkLog.started_at と同じ扱いに揃える
 
 ### Company（企業）
 
@@ -78,7 +67,7 @@ relation: `task (1) --- (多) work_log`
 | name | TEXT | 企業名 |
 | is_deleted | BOOLEAN | デフォルト false |
 
-relation: `company (1) --- (多) interview_step`
+relation: `company (1) --- (多) interview_step`, `company (1) --- (多) company_task`
 
 ### InterviewStep（選考ステップ、Companyに1対多）
 
@@ -90,6 +79,17 @@ relation: `company (1) --- (多) interview_step`
 | date | DATE (nullable) | 予定日 |
 | prep_status | TEXT | 準備中/準備万端/完了 |
 | result | TEXT | 未定/通過/不通過 |
+| memo | TEXT (nullable) | |
+| is_deleted | BOOLEAN | デフォルト false |
+
+### CompanyTask（企業タスク、Companyに1対多）
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| id | INTEGER (PK) | |
+| company_id | INTEGER (FK → company.id) | |
+| name | TEXT | タスク名 |
+| status | TEXT | 未着手/処理中/完了 |
 | memo | TEXT (nullable) | |
 | is_deleted | BOOLEAN | デフォルト false |
 
@@ -121,13 +121,12 @@ def _is_reachable(forward_edges: dict[str, list[str]], start: str, goal: str) ->
 
 適用箇所と状態遷移グラフ（確定）:
 
-- `Project.status`:
-  - 提案中 → [契約中, 見送り]
-  - 契約中 → [納品済み, 見送り]
-  - 納品済み → [完了]
-  - 完了 → []（終端）
-  - 見送り → []（終端）
-- `Task.status`（分岐なし、線形）:
+- `Assignment.status`（分岐なし、線形）:
+  - 未着手 → [取組中]
+  - 取組中 → [未提出]
+  - 未提出 → [提出済み]
+  - 提出済み → []（終端）
+- `CompanyTask.status`（分岐なし、線形。旧Task.statusと同一のグラフ）:
   - 未着手 → [処理中]
   - 処理中 → [完了]
   - 完了 → []（終端）
@@ -146,36 +145,27 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 
 ## エンドポイント一覧
 
-### 案件系（Project）
+### 授業系（Course）
 
 | Method | Path | 説明 |
 |---|---|---|
-| POST | `/projects` | 案件作成 |
-| GET | `/projects` | 案件一覧（`is_deleted=false`のみ、ステータスでフィルタ可） |
-| GET | `/projects/{id}` | 案件詳細（自テーブルのみ、子は含めない） |
-| PATCH | `/projects/{id}` | 案件更新（ステータス逆行時は`warning`フィールド付きで200） |
-| DELETE | `/projects/{id}` | 論理削除（`is_deleted=true`） |
-| GET | `/projects/{id}/hourly-rate` | 時給換算（reward ÷ 配下タスクの合計稼働時間） |
+| POST | `/courses` | 授業作成 |
+| GET | `/courses` | 授業一覧（`is_deleted=false`のみ） |
+| GET | `/courses/{id}` | 授業詳細（自テーブルのみ、子は含めない） |
+| PATCH | `/courses/{id}` | 授業更新 |
+| DELETE | `/courses/{id}` | 論理削除（`is_deleted=true`） |
 
-### タスク系（Task）
-
-| Method | Path | 説明 |
-|---|---|---|
-| POST | `/projects/{id}/tasks` | タスク作成 |
-| GET | `/projects/{id}/tasks` | その案件のタスク一覧 |
-| PATCH | `/tasks/{id}` | タスク更新（ステータス逆行時warning） |
-| DELETE | `/tasks/{id}` | 論理削除 |
-
-### 稼働ログ系（WorkLog）
+### 課題系（Assignment）
 
 | Method | Path | 説明 |
 |---|---|---|
-| POST | `/tasks/{id}/work-logs/start` | 計測開始（新規レコード作成、`started_at`に現在時刻。多重start許可） |
-| PATCH | `/work-logs/{id}/stop` | 計測終了（`ended_at`に現在時刻） |
-| GET | `/tasks/{id}/work-logs` | そのタスクの稼働ログ一覧 |
-| DELETE | `/work-logs/{id}` | 論理削除（誤start取り消し用） |
+| POST | `/courses/{id}/assignments` | 課題作成 |
+| GET | `/courses/{id}/assignments` | その授業の課題一覧 |
+| GET | `/assignments/{id}` | 課題詳細 |
+| PATCH | `/assignments/{id}` | 課題更新（ステータス逆行時は`warning`フィールド付きで200） |
+| DELETE | `/assignments/{id}` | 論理削除 |
 
-### 選考系（Company / InterviewStep）
+### 選考系（Company / InterviewStep / CompanyTask）
 
 | Method | Path | 説明 |
 |---|---|---|
@@ -193,7 +183,11 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 | Method | Path | 説明 |
 |---|---|---|
 | GET | `/interview-steps/upcoming` | 日付が近い選考ステップ一覧（締切管理） |
-| GET | `/work-logs/running` | 現在進行中（`ended_at IS NULL`）の全ログ一覧 |
+| GET | `/assignments/upcoming` | 締切が近い課題一覧。提出済み・期限なしを除き、期限切れも含めた全件を期限の早い順に返す。各課題に授業名を含める |
+
+（CompanyTask の個別エンドポイント `/companies/{id}/company-tasks`・`/company-tasks/{id}` は実装済みのものをそのまま維持する）
+
+廃止したエンドポイント: `/projects*`、`/projects/{id}/hourly-rate`、`/projects/{id}/tasks`、`/tasks*`、`/tasks/{id}/work-logs*`、`/work-logs*`（`/work-logs/running` を含む）
 
 ## 決定事項
 
@@ -254,6 +248,24 @@ pytestでの単体テストの対象として、この関数の境界値（同�
 ### 企業タスク（CompanyTask）の稼働ログ対象範囲（確定: 稼働ログ・時給換算の対象外）
 
 CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換算のいずれの対象にもしない。管理する項目は名前・ステータス・メモの3つのみとする。
+
+### 案件系の廃止と授業系への置き換え（確定: 2026-10-22）
+
+案件ページ（Project/Task/WorkLog・時給換算）をやめ、授業の課題を管理する授業系（Course/Assignment）に置き換える。ユーザーの判断は次のとおり。
+
+- **置換範囲**: 案件系のみ。選考系（Company/InterviewStep/CompanyTask）は一切変更しない。
+- **階層**: 授業（Course）→ 課題（Assignment）の2階層。稼働計測（WorkLog相当）は持たない。
+- **案件固有機能**: 時給換算（`/hourly-rate`）・報酬・クライアント名・プラットフォームはすべて削除する。
+- **既存データ**: 開発用DB・個人環境DBに入っている案件系データ（project/task/work_log）は破棄してよい。マイグレーションでこれら3テーブルをdropし、course/assignmentをcreateする。選考系テーブルとそのデータには手を加えない。
+- **Courseの項目**: 授業名、曜日（月〜日の選択式）、時限（整数）、年度（整数）、学期（前期/後期/通年）、メモ。曜日と時限は別項目として持つ。曜日・時限・年度・学期は任意。
+- **Assignmentの項目**: 課題名、ステータス、提出期限（日時、任意）、提出方法（WebClass/紙/その他の選択式、任意）、メモ。
+- **Assignmentのステータス**: 未着手 → 取組中 → 未提出（完成したが未提出）→ 提出済み の線形遷移。逆行時は既存方針どおり `warning` 付きで200を返す。
+- **トップページ（ランディング）**: 「計測中の作業（running）」を廃止し、「締切が近い課題」（`/assignments/upcoming`）を表示する。提出済み・期限なしを除き、期限切れも含めた全件を期限の早い順に表示する。「直近の選考ステップ」はそのまま残す。
+- **フロントエンドの画面構成**: 「案件ページ」を「授業ページ」に置き換える（ナビゲーションの文言も変更）。授業一覧・作成/編集、授業ごとの課題一覧・作成/編集/削除・ステータス変更を画面から操作できるようにする。旧案件系の画面・APIクライアントは削除する。
+- **デモデータ**: 公開デモ用のダミーデータ（自動リセットで投入されるもの）も案件系から授業・課題のダミーデータに差し替える。
+- **ドキュメント**: README・画面タイトル・APIタイトル等の「案件」表記を授業タスクの内容に更新する。
+
+これに伴い、上記の「フロントエンドで実装する画面の範囲」「フロントエンドの画面構成分割の単位」における案件系の記述は、本決定で授業系に読み替える。
 
 ### 企業タスク（CompanyTask）のステータス設計（確定: Taskと同一のステータス集合＋既存の逆行警告ロジックを流用）
 
