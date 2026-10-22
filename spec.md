@@ -314,6 +314,10 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **自動デプロイ用イメージの保存場所**: 自動デプロイ専用のArtifact Registryリポジトリを新たに作り、デプロイ用サービスアカウントの書き込み権限はそのリポジトリにだけ付ける。VMが使う既存の `tasksupport` リポジトリ（`backend:latest`）にはデプロイ用サービスアカウントの権限を一切付けない。「`latest` を自動デプロイで更新しない」をworkflowの決まりだけでなくIAMでも強制し、デプロイジョブが乗っ取られても個人用VMのイメージを改ざんできないようにするため（2026-10-22、セキュリティレビューのMedium指摘を受けてユーザー確定）。
 - **自動デプロイ用リポジトリの古いイメージ**: 自動デプロイ専用のArtifact Registryリポジトリにクリーンアップポリシーを設定し、新しいものから5個のイメージを残して、それより古いものは自動で削除する。切り戻し用の版を残しつつ、保存量が無料枠を超えにくくするため。VM用の既存の `tasksupport` リポジトリには設定しない（2026-10-22、ユーザー確定）。
 - **GitHubからの認証の絞り込み**: Workload Identity連携の信頼条件はリポジトリ・masterブランチ・pushイベントで絞り、workflowファイル単位（`job_workflow_ref`等）では絞らない。代わりに、OIDCトークンの取得権限（`id-token: write`）はデプロイを行うジョブにだけ付け、他のジョブ・workflowには付けない運用で防ぐ（2026-10-22、ユーザー確定）。
+- **ビルドキャッシュ経由の改ざん経路への対応**: デプロイ用ビルド（`deploy-backend`）は、同じ実行内の通常CIの `build` ジョブが書いたGitHub Actionsキャッシュ（`cache-from: type=gha`）を使う。`build` ジョブのアクションがタグ指定のままだと、上流アクションのタグが乗っ取られた場合にキャッシュ経由で本番イメージが改ざんされうるため、`build` ジョブを含むCIワークフローの既存ジョブのアクションもコミットSHAで固定する。キャッシュの使い回しはやめない（ビルド時間を保つため）。依存パッケージ更新の決定ではGitHub Actionsのアクションのバージョンを対象外としていたので、この対応は別タスクとして行う（2026-10-22、タスク「masterへのpush時のCloud Run・Vercel自動デプロイ」のセキュリティLow指摘について、cache-from削除・現状維持ではなくユーザーが選択）。
+- **既存ジョブのアクションを固定するバージョン**: CIの既存ジョブ（lint・test・migrate・build・frontend）のアクションは、各アクションの最新版に上げたうえでそのコミットSHAに固定する。デプロイジョブと同じアクションは同じSHAに揃える。メジャー更新に伴う入力・挙動の変化への対応が要り、Actionsを対象外とした依存更新の決定より範囲が広がることはユーザー承知の上（2026-10-22、未決定事項「CIの既存ジョブのアクションをSHAで固定するときのバージョン」で選択肢Bを選択）。
+- **固定したSHAと公式タグの照合**: タスク「CIの既存ジョブのアクションのコミットSHA固定」の中で、generatorが公式リポジトリのタグを読み取り専用で参照（`git ls-remote` 等）し、今回固定するSHAとデプロイジョブの7つのSHAをすべて照合する。セキュリティエバリュエーターも同じ方法で再確認する。この照合のための読み取り専用の外部アクセスは認める（2026-10-22、未決定事項「固定したアクションのSHAと公式タグの照合方法」で選択肢Aを選択）。
+- **setup-uv のキャッシュの間引き（`prune-cache`）**: setup-uv を最新版（v9以降）に上げたことで `prune-cache` の既定値が `true` から `false` に変わるが、新しい既定値に従い、`prune-cache` は明示しない。PyPIから取得したパッケージもuvキャッシュに保存され保存量が増えるが、このプロジェクトでは数十MB程度の見込みで、Actionsキャッシュの上限（10GB）をDockerのビルドキャッシュと分け合っても問題にならないと判断（2026-10-22、タスク「CIの既存ジョブのアクションのコミットSHA固定」の要人間判断で選択肢Aを選択）。
 - **外部サービス側の設定**: GCP（Workload Identityプール・サービスアカウント・IAM付与）、Vercel（トークン発行）、GitHub（Secrets/Variables登録）の実際の設定は、generator・評価者は実行しない。リポジトリには手順を文書化し、実行はオーケストレーターがユーザーの確認を取って別途行う。
 
 ### 依存パッケージの最新版への更新（確定: 2026-10-22）
@@ -328,7 +332,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 
 ## 未決定事項（要ユーザー判断）
 
-（現在、未解決の項目は無い。「自動デプロイでのバックエンドとフロントエンドの順序」は2026-10-22に選択肢Aで解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。「依存パッケージ更新の対象範囲」「@types/node のバージョン」「依存パッケージ更新のタスク分割」は2026-10-22に解決し、「## 決定事項」の「依存パッケージの最新版への更新」に反映済み）
+（解決済みの項目: 「自動デプロイでのバックエンドとフロントエンドの順序」は2026-10-22に選択肢Aで解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。「依存パッケージ更新の対象範囲」「@types/node のバージョン」「依存パッケージ更新のタスク分割」は2026-10-22に解決し、「## 決定事項」の「依存パッケージの最新版への更新」に反映済み。「CIの既存ジョブのアクションをSHAで固定するときのバージョン」（選択肢B）と「固定したアクションのSHAと公式タグの照合方法」（選択肢A）は2026-10-22に解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み）
 
 ## 実装タスク
 
@@ -2552,4 +2556,51 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - バックエンド: `uv lock --upgrade --dry-run` は「No lockfile changes detected」、`uv tree --outdated` でも更新対象なし。`uv run ruff check` 通過、`uv run pytest` 501件通過（warning 0）。
   - 未確認: Dockerイメージのビルドは禁止事項のため実行していない（バックエンドのコード・依存・Dockerfileに変更が無いため影響は無い見込み）。マイグレーション検証はgeneratorのセルフチェック結果（`alembic upgrade head`・`alembic check` 差分なし）を参照し、本評価では再実行していない。CI上での実行結果は未push のため未確認。
   - 最新版にできなかった依存は無い。
+- 差し戻し回数: 0
+
+### タスク: CIの既存ジョブのアクションのコミットSHA固定
+- status: 完了
+- 概要: 「## 決定事項」の「masterへのpush時の自動デプロイ」の「ビルドキャッシュ経由の改ざん経路への対応」に基づき、CIワークフローのうちタグ指定のままになっている既存ジョブ（`build` ジョブ等）のアクションを、デプロイジョブと同じくコミットSHAで固定する。上流アクションのタグが乗っ取られても、ビルドキャッシュを通じて本番イメージが改ざんされないようにするため（タスク「masterへのpush時のCloud Run・Vercel自動デプロイ」のセキュリティLow指摘への対応）。キャッシュの使い回しはやめない。固定するバージョンは各アクションの最新版、照合はこのタスク内で読み取り専用の外部アクセスにより行う（いずれも2026-10-22にユーザー決定済み。「## 決定事項」参照）。
+- 受け入れ条件:
+  - [ ] `.github/workflows/` 配下のすべてのワークフローで、外部アクションの参照がすべてコミットSHAで固定され、タグやブランチ名で指定された参照が残っていない。各参照には、そのSHAが対応するタグがわかる注記が付いている（デプロイジョブと同じ書き方）
+  - [ ] 固定するバージョンが、「## 決定事項」の「既存ジョブのアクションを固定するバージョン」どおり、各アクションの最新版になっており、デプロイジョブと同じアクションは同じSHAに揃っている
+  - [ ] 今回固定したSHAと、デプロイジョブで固定済みの7つのSHA（checkout・auth・login-action・setup-buildx-action・build-push-action・setup-gcloud・setup-node）について、公式リポジトリのタグとの照合が、「## 決定事項」の「固定したSHAと公式タグの照合」どおり、読み取り専用の外部アクセスで照合され、結果がこのタスクのフィードバック欄に記録されている
+  - [ ] デプロイ用ビルドは、引き続き通常CIの `build` ジョブが書いたビルドキャッシュを使う（キャッシュの使い回しをやめていない）
+  - [ ] ジョブの構成・実行条件・順序・権限（ワークフロー全体は `contents: read`、`id-token: write` はデプロイを行うジョブだけ）、デプロイの対象・方式は変わらない
+  - [ ] ワークフロー定義の静的検査でエラーが無く、バックエンドのlint・テスト（warningなし）とフロントエンドのチェックが引き続き通る
+- 要人間判断は解消済み（2026-10-22）: 下記の選択肢から、ユーザーが **A（新しい既定値 `prune-cache: false` に従う）** を選んだ。`ci.yml` はいまの状態のままでよく、`prune-cache` は書き足さない。詳細は「## 決定事項」の「masterへのpush時の自動デプロイ」を参照。
+- 判断時の記録（generator, 2026-10-22）: `astral-sh/setup-uv` を v4 → v10.3.2 に上げると、v9.0.0 の破壊的変更で `prune-cache`（ジョブ終了時に、PyPIから取り直せるビルド済みwheelをuvのキャッシュから除いて保存する）の既定値が `true` → `false` に変わる。lint・test・migrate ジョブの uv キャッシュ（GitHub Actionsキャッシュ。Dockerのビルドキャッシュとは別物）に保存される量が増える。動作・テスト結果には影響しないが挙動が変わり、対応方法が2通りあるため判断を仰ぐ。いまの `ci.yml` は仮に A（入力を書かない＝新しい既定値）の状態。
+  - A. 新しい既定値（`prune-cache: false`）に従う（いまの状態）: 長所＝上流の推奨どおりで、PyPIからの再ダウンロードが減り依存のインストールが速くなりやすい。短所＝uvのキャッシュが大きくなり、リポジトリのActionsキャッシュ上限（10GB）を `build` ジョブのDockerビルドキャッシュ（`type=gha,mode=max`）と分け合うため、Dockerのキャッシュが追い出されやすくなる可能性がある。
+  - B. `prune-cache: true` を3ジョブに明示し、v4と同じ挙動を保つ: 長所＝キャッシュの量がいまと同じで、Dockerビルドキャッシュとの取り合いが増えない。短所＝上流の推奨（PyPIの負荷を減らす）から外れ、各ジョブで依存のwheelを毎回ダウンロードする。
+- generatorメモ（2026-10-22）:
+  - **変更内容**（`.github/workflows/ci.yml` のみ）: タグ指定だった外部アクションを、すべて最新版のコミットSHAに固定し、デプロイジョブと同じ `# vX.Y.Z` 形式でタグを注記した。`actions/checkout@v4`（lint・test・migrate・build）と `@v7`（frontend）→ `3d3c42e…`（v7.0.1）、`astral-sh/setup-uv@v4`（lint・test・migrate）→ `07a047e…`（v10.3.2）、`docker/setup-buildx-action@v3`（build）→ `f87e599…`（v4.4.1）、`docker/build-push-action@v6`（build）→ `c3c9e26…`（v7.4.0）、`actions/setup-node@v7`（frontend）→ `949feb2…`（v7.1.0）。checkout・setup-buildx・build-push・setup-node はデプロイジョブと同じSHAに揃っている。デプロイジョブ側の7つのSHAはいずれも最新版で公式タグと一致したため変更していない。ジョブ構成・`needs`・`if`・権限・`cache-from`/`cache-to: type=gha`（buildジョブが書きデプロイ用ビルドが読む流れ）・その他の入力は変えていない。
+  - **SHAとタグの照合**（2026-10-22。`git ls-remote --tags https://github.com/<repo>.git` を読み取り専用で実行し、`gh api repos/<repo>/releases/latest` と `gh api repos/<repo>/git/ref/tags/<tag>` で最新リリースとタグの種類を確認した。8つのタグはすべて軽量タグ（タグの指す先が直接commit）で `^{}` の行が無いため、`ls-remote` の値がそのままコミットSHA）:
+
+    | アクション | タグ | 固定したSHA | 使っているジョブ | 照合結果 |
+    |---|---|---|---|---|
+    | actions/checkout | v7.0.1 | 3d3c42e5aac5ba805825da76410c181273ba90b1 | lint・test・migrate・build・frontend・deploy-backend・deploy-frontend | 一致（最新リリース） |
+    | actions/setup-node | v7.1.0 | 949feb2413d6458794dcd2491c4babbbce0c15c1 | frontend・deploy-frontend | 一致（最新リリース） |
+    | astral-sh/setup-uv | v10.3.2 | 07a047e608db84b3d8c06cd9a7c7dcc9c355c18e | lint・test・migrate | 一致（最新リリース） |
+    | docker/setup-buildx-action | v4.4.1 | f87e5991a6d7451dcb8d9637bfbc97413f497069 | build・deploy-backend | 一致（最新リリース） |
+    | docker/build-push-action | v7.4.0 | c3c9e263c25d99ce0380d002d59b67737d91b0dc | build・deploy-backend | 一致（最新リリース） |
+    | docker/login-action | v4.6.0 | dbcb813823bdd20940b903addbd779551569679f | deploy-backend | 一致（最新リリース） |
+    | google-github-actions/auth | v3.0.0 | 7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 | deploy-backend | 一致（最新の版番号付きタグ。「latest」リリースは移動タグ `v3` だが同じSHA） |
+    | google-github-actions/setup-gcloud | v3.0.1 | aa5489c8933f4cc7a4f7d45035b3b1440c9c10db | deploy-backend | 一致（最新リリース） |
+
+  - **メジャー更新に伴う変化の確認**（各リリースノートを確認）: `actions/checkout` v5〜v7＝Node 24化、認証情報の保存先を別ファイルに変更、`pull_request_target`/`workflow_run` でフォークPRのチェックアウトを拒否。本CIは `push`/`pull_request` のみで、使っている入力も変わらないため対応不要。`docker/setup-buildx-action` v4・`docker/build-push-action` v7＝Node 24化と非推奨の入力・環境変数（`DOCKER_BUILD_NO_SUMMARY` 等）の削除。本CIは使っていないため対応不要。`astral-sh/setup-uv` v5〜v10＝v5で `python-version` 指定時のvenv自動有効化が入りv6で既定オフ（`activate-environment: false`）に戻ったため v4 と同じ。`enable-cache: true` を明示しているので v5 の既定値変更・v10 の危険なイベントでのキャッシュ無効化（本CIのトリガーは対象外）の影響なし。v6 の `cache-dependency-glob` 既定値変更・v5 のキャッシュキーへのPython版追加でuvキャッシュが一度作り直される。v7 で `server-url`、v6 で `pyproject-file`/`uv-file` が削除されたが未使用。`version: 0.12.1` の明示指定は引き続き有効（v10.0.0 で既知のチェックサムに含まれる）。残る `prune-cache` の既定値変更は上の「要人間判断」のとおり。
+  - **セルフチェック**: `uvx --from actionlint-py actionlint .github/workflows/ci.yml` エラーなし。`uv run ruff check .` All checks passed。`uv run pytest -W error` 501 passed（warningなし）。フロントエンド（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（251 passed）・`npm run build` すべて成功。
+- セキュリティエバリュエーターのフィードバック:（2026-10-22）**合格**。Critical/High/Medium/Low の指摘は無い。
+  - **SHAとタグの独立した再照合**（読み取り専用。`git ls-remote https://github.com/<repo>.git refs/tags/<tag> 'refs/tags/<tag>^{}'`、`gh api repos/<repo>/git/ref/tags/<tag>`（object.type）、`gh api repos/<repo>/releases/latest`、`gh api repos/<repo>/tags`（版番号付きタグの最大値）、`gh api repos/<repo>/compare/<既定ブランチ>...<tag>`（forkのコミットでないことの確認）を実行）: 8アクションすべてについて、`ls-remote` のSHAが `ci.yml` に固定したSHAと一致した。`^{}` の行は出ず、gh api の object.type は全件 `commit`（軽量タグ）なので、タグの値がそのままコミットSHA。8件とも既定ブランチと比べて ahead=0（identical または behind）で、公式リポジトリの既定ブランチの履歴上にあるコミットであり、forkだけにあるコミットではない。8件とも最新リリース（＝版番号付きタグの最大値）と一致した。`google-github-actions/auth` は「latest」リリースが移動タグ `v3` だが、`v3` も `7c6bc770…` を指しており v3.0.0 と同じ。generatorの照合一覧と食い違いは無い。
+  - **参照の固定漏れ**: `.github/workflows/` 配下は `ci.yml` だけで、`uses:` の全19箇所が40桁のコミットSHAとタグ注記で固定されている。タグ・ブランチ指定は残っていない。同じアクションはジョブ間で同じSHAに揃っている。
+  - **変更範囲**: `ci.yml` の差分は `uses:` 行の11行の置き換えだけ。ワークフロー全体の `permissions: contents: read`、`id-token: write` が deploy-backend だけにあること、`on`・`needs`・`if`・`concurrency`、`cache-from`/`cache-to: type=gha`（build が書き、deploy-backend が読む流れ）、`persist-credentials: false`（frontend・deploy系）は変わっていない。
+  - **メジャー更新に伴うセキュリティ上の既定値**: checkout v7 で、lint・test・migrate・build ジョブは以前と同じく `persist-credentials` を既定値（true）のまま使う。トークンの保存先はワークスペース内の `.git/config` から別ファイルに移っており、悪くはなっていない。トークンの権限は `contents: read` だけで、`.dockerignore` が `.git` を除外しているため、build ジョブのビルドコンテキストにも入らない。setup-uv v10 のキャッシュ無効化は `pull_request_target` 等が対象で、本CIのトリガー（`push`/`pull_request`）は影響を受けない。`prune-cache` の既定値変更はキャッシュ量だけの問題で、セキュリティ上の影響は無い（ユーザー決定どおりAで問題ない）。
+  - 参考（Info、対応は必須ではない）: lint・test・migrate・build ジョブは checkout の後で git 認証を使わないため、`persist-credentials: false` を付ければ、依存パッケージのスクリプトから読み取り専用トークンを読まれる余地をさらに減らせる。これは今回の変更より前からの状態で、本タスクの範囲外。
+- 性能エバリュエーターのフィードバック:（2026-10-22）**合格**。指摘なし。
+  - **静的検査**: `uvx --from actionlint-py actionlint .github/workflows/ci.yml` はエラー0件（終了コード0）。YAMLとして正しく読み込める（`yaml.safe_load`）。
+  - **参照の固定**: `.github/workflows/` 配下は `ci.yml` のみ。`uses:` の19箇所すべてが40桁のSHA＋`# vX.Y.Z` の注記つき。同じアクションはすべてのジョブで同じSHA（checkout 7箇所、setup-uv 3、setup-buildx 2、build-push 2、setup-node 2、auth・login-action・setup-gcloud 各1）。
+  - **変更範囲**: `git diff` で `ci.yml` の変更は `uses:` の11行だけ。ジョブ構成・`needs`・`if`・権限・`cache-from`/`cache-to: type=gha`・その他の入力は変わっていない（デプロイ用ビルドは引き続き `build` ジョブのキャッシュを使う）。`prune-cache` は書かれておらず、ユーザー決定（A）どおり。
+  - **更新後のアクションとの整合**: 固定したSHAの `action.yml` を読み取り専用で取得して確認した。5アクション（checkout・setup-uv・setup-buildx-action・build-push-action・setup-node）はすべて `runs.using: node24`。ワークフローで使っている入力（setup-uv の `version`/`python-version`/`enable-cache`、checkout の `persist-credentials`、build-push の `context`/`push`/`tags`/`build-args`/`cache-from`/`cache-to`、setup-node の `node-version`/`cache`/`cache-dependency-path`）は、すべて各 `action.yml` に定義されている。削除された入力は使われていない。
+  - **バックエンド**: `uv run ruff check` は All checks passed。`uv run pytest -v` は 501 passed で、warning は0件。
+  - **フロントエンド**（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（19ファイル・251 passed）・`npm run build` はすべて成功。
+  - **未確認**: まだpushしていないため、GitHub Actions上での実際の実行（setup-uv v10 での uv 0.12.1 の取得、uvキャッシュの作り直し、`type=gha` のキャッシュの読み書きなど）は確認していない。次のpush後に、CIのすべてのジョブが成功するかを確認すること。
 - 差し戻し回数: 0
