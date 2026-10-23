@@ -700,4 +700,12 @@ Vercelへの手動デプロイ）はユーザー自身の権限で行うため�
 
 ## 実行記録
 
-（未実行）
+- 2026-10-23（実行: ユーザーの承認のもとClaude Codeが実行。V-1のトークン発行・H-1のSecret登録・V-2の確認はユーザー自身が実施）
+  - GCP: G-1（`sts.googleapis.com` だけ新たに有効化。`iam`・`iamcredentials` は有効化済みだった）、G-2〜G-6、G-8〜G-12 を実行し、各手順の「確認」とG-13の内容を確かめた。
+    デプロイ用SA・ランタイム用SAともプロジェクト単位のロールとユーザー管理の鍵は無く、VM用 `tasksupport` リポジトリとデフォルトのCompute Engine SAにデプロイ用SAの権限は無い。
+  - G-7: 切り替え前はデフォルトのCompute Engine SA（プロジェクトの `roles/editor` を持つ）で動いていた。切り替え前の `backend:latest` と使用中イメージのダイジェストが同じであることを確かめてから
+    `tasksupport-demo-runtime` に切り替えた（リビジョン `tasksupport-demo-00003-lks`）。設定の差分は `serviceAccountName` だけで、APIの応答は200、ログに権限エラーは無かった。
+  - G-8a（クリーンアップポリシー）: 未実施。自動デプロイが6回以上動いてから、ドライランで設定する。`gcloud artifacts repositories set-cleanup-policies --help` では `--dry-run` は確認できたが、`--no-dry-run` の記載は無かったので、本番適用の前に公式ドキュメントで確かめる。
+  - Vercel/GitHub: V-1・H-1（ユーザー）、V-2（両プロジェクトともRoot Directoryは空で、Productionの `VITE_API_BASE_URL` も設定済み）、H-2（Variables 5つ）。H-3: Workflow permissionsは読み取りのみ（`default_workflow_permissions: read`）。
+  - 初回の自動デプロイ: CI run 39875651485（コミット `32aa0e2`）の再実行で、全ジョブが成功した。Cloud Runは `tasksupport-demo/backend:32aa0e2…`（リビジョン `tasksupport-demo-00004-dsj`、ランタイム用SAは専用SA）で動いており、
+    API Keyありで200、無しで401を返す。デモ用フロントエンドは200。VM用 `tasksupport/backend:latest` は変わっていない。
