@@ -430,6 +430,19 @@ VM用の既存の `tasksupport` リポジトリ（`backend:latest`）には設�
 最初は**ドライラン**で設定し、どのバージョンが削除対象になるかを確かめてから本番適用します
 （リポジトリ作成直後はイメージが無いので、後続タスクで自動デプロイが6回以上動いた後に確認するのが確実です）。
 
+ドライランの削除予定は、Artifact Registryの**データアクセス監査ログ（DATA_WRITE）**にだけ記録されます（公式ドキュメントで確認済み）。
+既定では無効なので、手順1の前にプロジェクトで有効にしておきます（2026-10-23に実施済み）。
+
+```bash
+# 0. Artifact Registry の DATA_WRITE 監査ログを有効にする（既存の bindings は変えず auditConfigs だけを足す）
+gcloud projects get-iam-policy "${PROJECT_ID}" --format=json > /tmp/iam.json
+python3 -c 'import json;p=json.load(open("/tmp/iam.json"));p.setdefault("auditConfigs",[]).append({"service":"artifactregistry.googleapis.com","auditLogConfigs":[{"logType":"DATA_WRITE"}]});json.dump(p,open("/tmp/iam.json","w"))'
+gcloud projects set-iam-policy "${PROJECT_ID}" /tmp/iam.json && rm -f /tmp/iam.json
+```
+
+- 確認: `gcloud projects get-iam-policy "${PROJECT_ID}" --format='yaml(auditConfigs)'` に `artifactregistry.googleapis.com` の `DATA_WRITE` があること。
+- 取り消し: 同じ要領で `auditConfigs` から該当項目を除いて `set-iam-policy` する。
+
 ```bash
 # 1. ドライランで設定（実際には削除しない）。リポジトリルートで実行
 gcloud artifacts repositories set-cleanup-policies "${AR_REPO}" \
@@ -483,16 +496,17 @@ gcloud artifacts repositories set-cleanup-policies "${AR_REPO}" \
   ポリシーを消すと以後の自動削除は止まりますが、**既に削除されたイメージは元に戻せません**。
   削除を一時的に止めるだけなら、手順1のコマンド（`--dry-run`）を再実行してドライランに戻してもよい。
 
-> **確認できなかった点（実行前に `gcloud artifacts repositories set-cleanup-policies --help` と公式ドキュメントで確かめること）**:
-> 以下は手元の知識に基づく記述で、この文書の作成時には公式ドキュメント・実環境で確かめていません。
-> - JSONの書式（`action.type` の `Keep`/`Delete`、`mostRecentVersions.keepCount`・`packageNamePrefixes`、`condition.tagState` の `any`）と、
->   `--dry-run` / `--no-dry-run` のフラグ名・既定値（どちらも指定しない場合の挙動）。
-> - `list-cleanup-policies` / `delete-cleanup-policies`（`--policynames`）のサブコマンド名と、`describe` の `cleanupPolicyDryRun` フィールド名。
-> - ドライランの結果がどのログ（監査ログの種類・ログ名）に出るか、データアクセス監査ログの有効化が必要か。
-> - ドライランの削除予定が出るログの種類と、確認スクリプトの `DRY_RUN_FILTER`（`methodName` が
->   `google.devtools.artifactregistry.v1.ArtifactRegistry.BatchDeleteVersions`、`protoPayload.request.validateOnly=true`、
->   `resourceName` での絞り込み）が正しいか、データアクセス監査ログの有効化が要るか、記録の中にダイジェストがどの形で入るか。
->   違っていた場合は、スクリプトのフィルタを公式ドキュメントに合わせて直してから実行する（条件が違えば1か2で止まる）。
+> **2026-10-23に公式ドキュメント（cleanup-policy のページ）と `--help` で確認できた点**:
+> - JSONの書式（`action.type` の `Keep`/`Delete`、`mostRecentVersions.keepCount`・`packageNamePrefixes`、`condition.tagState` の `any`）は正しい。
+>   KeepとDeleteの両方に当てはまるものは残る。実環境でもこのJSONで設定でき、`list-cleanup-policies` で読み返せた。
+> - `--dry-run` / `--no-dry-run`（後者は公式ドキュメントに記載あり）、`list-cleanup-policies` / `delete-cleanup-policies --policynames`、
+>   `describe` の `cleanupPolicyDryRun` は実在する。
+> - ドライランの削除予定は、データアクセス監査ログ（DATA_WRITE、要有効化）に `BatchDeleteVersions` の `validateOnly=true` として記録される。評価は1日程度ごと。
+>
+> **まだ確認できていない点**（初回の確認スクリプト実行時に確かめる）:
+> - どちらのフラグも指定しない場合の既定値。
+> - 確認スクリプトの `DRY_RUN_FILTER` の `resourceName` での絞り込みが実際の記録に合うか、記録の中にダイジェストがどの形で入るか。
+>   違っていた場合は、スクリプトのフィルタを実際の記録に合わせて直してから実行する（条件が違えば1か2で止まる）。
 > - `gcloud artifacts versions list --package=backend` の `name` の出力形式（スクリプトは `sha256:` の64桁を抜き出して使う）。
 > - `gcloud run services describe` の `--flatten='status.traffic'` と `status.traffic.revisionName`、`gcloud run revisions describe` の
 >   `status.imageDigest` のフィールド名。
@@ -705,7 +719,12 @@ Vercelへの手動デプロイ）はユーザー自身の権限で行うため�
     デプロイ用SA・ランタイム用SAともプロジェクト単位のロールとユーザー管理の鍵は無く、VM用 `tasksupport` リポジトリとデフォルトのCompute Engine SAにデプロイ用SAの権限は無い。
   - G-7: 切り替え前はデフォルトのCompute Engine SA（プロジェクトの `roles/editor` を持つ）で動いていた。切り替え前の `backend:latest` と使用中イメージのダイジェストが同じであることを確かめてから
     `tasksupport-demo-runtime` に切り替えた（リビジョン `tasksupport-demo-00003-lks`）。設定の差分は `serviceAccountName` だけで、APIの応答は200、ログに権限エラーは無かった。
-  - G-8a（クリーンアップポリシー）: 未実施。自動デプロイが6回以上動いてから、ドライランで設定する。`gcloud artifacts repositories set-cleanup-policies --help` では `--dry-run` は確認できたが、`--no-dry-run` の記載は無かったので、本番適用の前に公式ドキュメントで確かめる。
+  - G-8a（クリーンアップポリシー）: 下の追記を参照。
   - Vercel/GitHub: V-1・H-1（ユーザー）、V-2（両プロジェクトともRoot Directoryは空で、Productionの `VITE_API_BASE_URL` も設定済み）、H-2（Variables 5つ）。H-3: Workflow permissionsは読み取りのみ（`default_workflow_permissions: read`）。
   - 初回の自動デプロイ: CI run 39875651485（コミット `32aa0e2`）の再実行で、全ジョブが成功した。Cloud Runは `tasksupport-demo/backend:32aa0e2…`（リビジョン `tasksupport-demo-00004-dsj`、ランタイム用SAは専用SA）で動いており、
     API Keyありで200、無しで401を返す。デモ用フロントエンドは200。VM用 `tasksupport/backend:latest` は変わっていない。
+- 2026-10-23（実行: ユーザーの承認のもとClaude Codeが実行）G-8a の準備
+  - 公式ドキュメントで、ドライランの結果の確認にはデータアクセス監査ログ（DATA_WRITE）の有効化が要ると分かったため、G-8aの手順0を追加し、実行した。
+    `artifactregistry.googleapis.com` の `DATA_WRITE` を `auditConfigs` に足しただけで、`bindings` は変わっていない（前後を比べて確認した）。
+  - G-8aの手順1（ドライラン）を実行。`tasksupport-demo` に `keep-5-most-recent` と `delete-older` が設定され、`cleanupPolicyDryRun` は `True`。VM用 `tasksupport` リポジトリにはポリシーが無い。
+  - 残り: 自動デプロイが6回以上動き、さらに1日以上たってから `check-cleanup-dry-run.sh` を実行する。終了コード0を確かめ、ユーザーの確認を取ってから手順2（`--no-dry-run`）に進む。
