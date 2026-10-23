@@ -2604,3 +2604,30 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - **フロントエンド**（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（19ファイル・251 passed）・`npm run build` はすべて成功。
   - **未確認**: まだpushしていないため、GitHub Actions上での実際の実行（setup-uv v10 での uv 0.12.1 の取得、uvキャッシュの作り直し、`type=gha` のキャッシュの読み書きなど）は確認していない。次のpush後に、CIのすべてのジョブが成功するかを確認すること。
 - 差し戻し回数: 0
+
+### タスク: CIの既存ジョブのcheckoutで認証情報を残さない設定
+- status: 完了
+- 概要: タスク「CIの既存ジョブのアクションのコミットSHA固定」のセキュリティエバリュエーターのInfo指摘への対応（2026-10-23ユーザー依頼）。CIワークフローの lint・test・migrate・build ジョブのリポジトリ取得（checkout）で、デプロイジョブ・frontendジョブと同じく認証情報を作業ツリーに残さない設定（`persist-credentials: false`）にし、依存パッケージのスクリプト等からトークンを読まれる余地をなくす。frontendジョブは設定済みのため変更しない。このタスクの変更をmasterにpushすると自動デプロイ（2026-10-23稼働開始）が動くため、pushはユーザーの確認を取ってから行う。
+- 受け入れ条件:
+  - [x] CIワークフローの lint・test・migrate・build ジョブのcheckoutがすべて、認証情報を作業ツリーに残さない設定になっている。frontend・deploy-backend・deploy-frontend ジョブも引き続き同じ設定のままで、ワークフロー内に認証情報を残すcheckoutが無い
+  - [x] 対象ジョブがcheckoutの後にgitの認証を必要とする操作をしておらず、CIのチェック（lint・テスト・マイグレーション検証・Dockerイメージのビルド）が従来どおり動く
+  - [x] ジョブの構成・実行条件・順序・権限（ワークフロー全体は `contents: read`、`id-token: write` はデプロイを行うジョブだけ）・キャッシュ（`build` ジョブが書いたビルドキャッシュをデプロイ用ビルドが使う流れを含む）・アクションの固定SHAとタグ注記は変わらない
+  - [x] ワークフロー定義の静的検査でエラーが無く、バックエンドのlint・テスト（warningなし）とフロントエンドのチェック（型チェック・lint・テスト・本番ビルド）が引き続き通る
+- セキュリティエバリュエーターのフィードバック:
+  - 結果: 合格（Critical/High/Medium/Lowの指摘なし）
+  - 確認内容（`git diff .github/workflows/ci.yml` で確認、差分は追加8行のみ）:
+    - lint・test・migrate・build の4ジョブのcheckoutに `with: persist-credentials: false` が追加されている。ワークフロー内のcheckoutは計7箇所（lint・test・migrate・build・frontend・deploy-backend・deploy-frontend）で、`persist-credentials: false` も7箇所。認証情報を残すcheckoutは無い。
+    - 差分は上記の追加行のみで、アクションの固定SHAとタグ注記・ワークフロー全体の `permissions: contents: read`・deploy-backendだけの `id-token: write`・needs・if・concurrency・キャッシュ（buildの `cache-to: type=gha,mode=max` → deploy-backendの `cache-from: type=gha`）は変わっていない。
+    - 対象4ジョブはcheckout後に `uv sync --locked`・ruff・pytest・`alembic upgrade head`（SQLite）・Dockerイメージのビルド（push: false）だけを行い、git fetch/push等のgit認証を要する操作は無い。pyproject.tomlにgitソースの依存は無く、サブモジュール（.gitmodules）も無い。また `.dockerignore` で `.git` を除外しているため、変更前もビルドコンテキストにトークンは入っていなかった。今回の変更で新たに増えるリスクは無い。
+  - 補足（Info）: actionlintがローカルに無いため、ワークフロー定義の静的検査は実施していない（YAMLの構造は目視で問題なし）。静的検査は性能評価側で確認すること。
+- 性能エバリュエーターのフィードバック:
+  - 結果: 合格（受け入れ条件4項目すべて満たす。指摘なし）
+  - **変更範囲**: `git diff .github/workflows/ci.yml` は追加8行のみ（lint・test・migrate・build の checkout に `with: persist-credentials: false`）。削除行は0で、`uses:` の固定SHAとタグ注記、needs・if・権限・キャッシュの設定は変わっていない。
+  - **checkoutの設定**（条件1）: YAMLを読み込んで確認した。7ジョブ（lint・test・migrate・build・frontend・deploy-backend・deploy-frontend）のcheckoutは計7箇所で、すべて `persist-credentials: false`。認証情報を残すcheckoutは無い。
+  - **権限**（条件3）: ワークフロー全体は `contents: read`。`id-token: write` は deploy-backend だけ。deploy-frontend は `contents: read`。その他のジョブはジョブ単位の権限指定なし。
+  - **gitの認証を要する操作**（条件2）: 対象4ジョブの `run:` は `uv sync --locked`・`ruff check`・`pytest`・`alembic upgrade head` の4種類と、Dockerビルド（push: false）だけで、git操作は無い。
+  - **静的検査**（条件4）: actionlint 1.7.12（`uvx --from actionlint-py actionlint`）でエラーなし（exit 0）。YAMLとして正しく読み込めることも確認した。
+  - **バックエンド**: `uv run ruff check` は All checks passed。`uv run pytest -v` は 501 passed で、warning は0件。
+  - **フロントエンド**（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（19ファイル・251 passed）・`npm run build` はすべて exit 0。
+  - **未確認**: まだpushしていないため、GitHub Actions上での実際の実行は確認していない。masterへのpushで自動デプロイが動くため、pushはユーザーの確認を取ってから行い、push後にCIのすべてのジョブが成功するかを確認すること。
+- 差し戻し回数: 0
