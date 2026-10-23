@@ -2,7 +2,7 @@
 # build-argsが渡されない場合（ローカルでのdocker build単体実行等）はこのデフォルト値にフォールバックする。
 # COPY --from=<image>にはビルド引数の変数展開が使えないため、公式uvイメージを
 # 一旦別ステージ（uv）としてFROMし、builderステージからはそのステージ名を参照する。
-ARG UV_VERSION=0.12.1
+ARG UV_VERSION=0.13.5
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 

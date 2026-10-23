@@ -127,8 +127,8 @@ VM（個人利用環境）は自動デプロイの対象外のため、次の手
 ## 個人利用環境（Compute Engine）
 
 - VM名: `tasksupport-personal`（ゾーン `us-central1-a`、マシンタイプ `e2-micro`、常時無料枠対象）
-- 静的外部IP: `tasksupport-personal-ip`（リージョン `us-central1`、実IP `136.112.37.243`）
-- TLS: CaddyコンテナがIPアドレスから機械的に決まる `136.112.37.243.sslip.io` でLet's Encrypt証明書を自動取得
+- 静的外部IP: `tasksupport-personal-ip`（リージョン `us-central1`。実IPは `gcloud compute addresses describe tasksupport-personal-ip --region=us-central1 --format="value(address)"` で確認）
+- TLS: CaddyコンテナがIPアドレスから機械的に決まる `<静的IP>.sslip.io` でLet's Encrypt証明書を自動取得
 - フロントエンド: 新規Vercelプロジェクト `tasksupport-personal-frontend`
   （`https://tasksupport-personal-frontend.vercel.app`。masterへのpush時に自動デプロイされる）
 - バックエンドは自動デプロイの対象外。更新は上記「VMの更新手順」で手動で行う。

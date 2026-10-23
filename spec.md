@@ -344,6 +344,11 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **更新ツールの入力形式**: 更新内容は、既存APIの更新リクエスト本文と同じ形のオブジェクト `changes` で受け取り、含めたキーだけをPATCHで送る。`null` を含めた項目はそのまま `null` を送る（DB上で空にできる項目は空に戻り、必須項目は既存APIが422で拒否する）。既存APIと完全に1対1にするためで、モデルが残したい項目まで `null` にすると空になるおそれがあることはユーザー承知の上（2026-10-23、タスク「MCPサーバーの書き込み系ツール」の要人間判断で選択肢Bを選択）。
 - **更新ツールの扱い**: 更新は既存の値を上書き・消去しうるため、削除と同じく破壊的な操作としてツールに印（`destructive_hint=True`）を付ける。`changes` に含まれた未知のキーは既存APIと同じく送らずに無視するが、無視したキーはツールの結果に添えて知らせる（2026-10-23、セキュリティレビューの指摘を受けてユーザーが決定）。
 
+### uvの最新版への更新と個人用VMアドレスの記載（確定: 2026-10-23）
+
+- **uv**: 「ライブラリは常に最新版」の方針どおり、手元・CI・Dockerイメージのビルドで使うuv本体を最新版（2026-10-23時点で0.13.5）にする。手元のuvはオーケストレーターが `uv self update` で更新済み（2026-10-23）。CIの `UV_VERSION` とDockerfileの `UV_VERSION` はタスクで更新する。
+- **個人用VMのアドレス**: 文書（`deploy/README.md` 等）に書かれた個人用VMの実IP・sslip.ioのホスト名はプレースホルダーに置き換える。git履歴（公開リポジトリの過去のcommit）と、個人用フロントエンドの公開JSに埋め込まれた接続先からは引き続き見えることはユーザー承知の上で、履歴の書き換え・IPの変更・フロントエンドの非公開化は行わない。守りはAPI Keyで担保する（2026-10-23、ユーザーが選択肢A「文書だけ伏せる」を選択）。
+
 ## 未決定事項（要ユーザー判断）
 
 （解決済みの項目: 「自動デプロイでのバックエンドとフロントエンドの順序」は2026-10-22に選択肢Aで解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。「依存パッケージ更新の対象範囲」「@types/node のバージョン」「依存パッケージ更新のタスク分割」は2026-10-22に解決し、「## 決定事項」の「依存パッケージの最新版への更新」に反映済み。「CIの既存ジョブのアクションをSHAで固定するときのバージョン」（選択肢B）と「固定したアクションのSHAと公式タグの照合方法」（選択肢A）は2026-10-22に解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。MCPサーバーの設計（つなぐ先・操作範囲・実行形態・データへのアクセス方法・言語と配置・秘密情報の渡し方・ツールの粒度）は2026-10-23にユーザーと協議して確定し、「## 決定事項」の「MCPサーバー」に反映済み）
@@ -2822,3 +2827,43 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - リンク: `../spec.md`（「決定事項」→「### MCPサーバー」節あり）、`README.md` の `./mcp-server/README.md`、`deploy/README.md` の `../mcp-server/README.md` は、いずれも実在する。READMEのURL・API Keyはプレースホルダーだけ。
   - 個人用VM・デモ環境には接続していない。push・docker・デプロイも実行していない。
 - 差し戻し回数: 0
+
+### タスク: uvの最新版への更新と個人用VMアドレスの伏せ字化
+- status: 完了
+- 概要: 「## 決定事項」の「uvの最新版への更新と個人用VMアドレスの記載」に基づき、CI（`.github/workflows/ci.yml` の `UV_VERSION`）とDockerfile（`UV_VERSION`）で使うuv本体を最新版にし、文書中の個人用VMの実IP・ホスト名をプレースホルダーに置き換える。この変更をmasterへpushするとDockerイメージが新しいuvでビルドされ自動デプロイされるため、pushはユーザーの確認を取ってから行う。
+- 受け入れ条件:
+  - [x] CIとDockerfileで指定するuvの版が、PyPI/GitHubで確認した最新版になっている（ほかにuvの版を指定している箇所があれば同じ版に揃っている）。指定するDockerイメージのタグが実在する
+  - [x] 新しいuvで、ルートと `mcp-server/` の両方で `uv lock --check`・`uv sync --locked` が通る。ロックファイルの形式が新しいuvで変わる場合は、その変更だけが入っている（依存の版は変えない）
+  - [x] 新しいuvのリリースノートを確認し、このリポジトリの使い方（`uv sync --locked`・`--no-dev`・`uv run`・`uv_build`・Dockerfileのマルチステージ等）に影響する破壊的変更が無い、または対応済みである
+  - [x] リポジトリ内の文書・設定例に、個人用VMの実IP・sslip.ioの実ホスト名が含まれない（`<静的IP>.sslip.io` 等のプレースホルダー、または既存の例示用の値に置き換わっている）。手順として必要な情報（静的IPの名前・リージョン等）は失われていない
+  - [x] actionlintでエラーが無く、バックエンド・MCPサーバーのlint・テスト（warningなし）とフロントエンドのチェックが通る。Dockerイメージのビルドは実行禁止のため、CI上で確認する旨を記録する
+- 実装メモ:
+  - **変更ファイル**: `.github/workflows/ci.yml`（`UV_VERSION: "0.12.1"` → `"0.13.5"`）、`Dockerfile`（`ARG UV_VERSION=0.12.1` → `0.13.5`）、`deploy/README.md`（130・131行目）。ほかにuvの版を指定している箇所は無い（`git grep` で確認。`mcp-server/pyproject.toml` の `uv_build>=0.13.5,<0.14.0` は前タスクで対応済みで0.13.5と整合）。`uv.lock` は2つとも変更なし。
+  - **最新版の確認**（2026-10-23、読み取りのみ）: PyPIの `uv` 最新が 0.13.5、GitHubの最新リリースが `0.13.5`（2026-10-22公開）。`ghcr.io/astral-sh/uv:0.13.5` はレジストリAPI（匿名トークンでmanifest取得）で HTTP 200（存在しないタグ `0.13.99` は404で対照確認）。CIの `astral-sh/setup-uv`（v10.3.2、SHA固定のまま）の同梱チェックサム一覧に `x86_64-unknown-linux-gnu-0.13.5` があり、GitHubリリースの `.sha256` と一致（`f68d291c…928f`）。
+  - **リリースノート確認（0.13.0〜0.13.5）**: 0.13.0の破壊的変更は「既定の安定版Pythonが3.15に」「constraintsファイル内の `--require-hashes` を尊重・editableを拒否」「Windows ARM64でネイティブPython優先」「Python 3.10以降でdistutilsパッチを省略」「`--constraint` 等の値を1つのパスとして扱う」「tarの展開・uv_buildのsdist作成に `tar-codec` を使用（sdistのバイト列・ハッシュが変わりうる）」「`uv build --clear` の出力先制限」。このリポジトリへの影響は無し: Pythonは `.python-version`（ルート・mcp-server とも3.12）・CIの `python-version: "3.12"`・Dockerの `python:3.12-slim`（既存の3.12を使うためダウンロードは起きない）で固定済み。constraintsファイル・`--require-hashes`・Windows ARM64・`uv build --clear` は未使用。uv_build はリリースノートに「設定の破壊的変更なし、上限は `<0.14` に」とあり、`mcp-server` は前タスクで対応済み（sdistを公開・ハッシュ固定していないので tar-codec の影響もない）。0.13.1〜0.13.5 に破壊的変更は無い（0.13.4 は侵害されたルートCAの除外を含むセキュリティ更新）。0.13.0でキャッシュの形式が変わったため、CIの setup-uv キャッシュとDockerのビルドで依存の再ダウンロードが一度起きうる（動作には影響なし）。`uv sync --locked`/`--no-dev`、`uv run`、Dockerfileの `COPY --from` によるマルチステージ、setup-uv の `version`・`enable-cache` 入力に関わる変更は無い。
+  - **ロックファイル**: uv 0.13.5 でルート・`mcp-server/` とも `uv lock --check` OK、`uv sync --locked` OK、`uv lock` で再生成しても差分なし（形式変更なし・依存の版も変わらない）。
+  - **個人用VMアドレス**: `deploy/README.md` の実IPを削り、静的IPの名前 `tasksupport-personal-ip`・リージョン `us-central1` は残したうえで、実IPの確認方法として `gcloud compute addresses describe tasksupport-personal-ip --region=us-central1 --format="value(address)"`（読み取りのみ）を書いた。sslip.ioのホスト名は `<静的IP>.sslip.io` に置き換えた（`deploy/compute-engine/README.md` と同じ表記）。作業ツリー全体で個人用VMの実IP（ドット・ハイフン区切りとも）が0件であることを確認（値はここに書かない。確認の詳細は下の「修正メモ（1回目差し戻し対応）」）。`.env.example`・`Caddyfile` の `34.123.45.67` は既存の例示用の値なのでそのまま。
+  - **セルフチェック**: actionlint 1.7.12（`uvx --from actionlint-py actionlint`）エラーなし。ルート `ruff check .` OK・`pytest -W error` 501 passed。mcp-server `ruff check` OK・`pytest -W error` 278 passed。フロントエンド（Node 24.19.0）typecheck・lint（`--deny-warnings`）・test 251 passed・build OK。
+  - **未確認（CI上で確認すること）**: docker build/pull は禁止のため、`ghcr.io/astral-sh/uv:0.13.5` を使ったDockerイメージのビルドと、setup-uv での uv 0.13.5 の取得は未実行。push後にCIの全ジョブ（特に build）が成功することを確認すること。このタスクの変更をmasterへpushすると新しいuvでビルドしたイメージが自動デプロイされるため、pushはユーザーの確認を取ってから行う。
+  - **修正メモ（1回目差し戻し対応、2026-10-23）**: 上の「個人用VMアドレス」の項に実IPそのものを書いていたため、値を含まない言い方に直した。以前の「spec.md 内にも実IPは無かった」は誤りだった（この実装メモ自体に入っていた）ので削除した。確認方法: `git show HEAD:deploy/README.md` から「deploy/README.md から伏せた値」（ドット区切り）を取り出してシェル変数に入れ、ハイフン区切りの形も作り、`grep -rIlF`（`.git`・`.venv`・`node_modules` を除く、gitignore対象も含む作業ツリー全体）に渡して検索した。値は画面・ファイルに出していない。結果は両形式とも0件。
+- セキュリティエバリュエーターのフィードバック:
+  - 1回目（2026-10-23）: **不合格（修正待ち）**
+    - [High] 個人用VMの実IPが、このタスクで追加した spec.md の実装メモ（「**個人用VMアドレス**」の項。「作業ツリー全体で `<実IP>`（`-` 区切りを含む）が無いことを確認」の部分）にそのまま書かれている。HEADの spec.md には実IPは無く（`git show HEAD:spec.md` で0件）、この未commitの差分で新たに入ったもの。作業ツリー全体（`.venv`・`node_modules`・`.git` を除く、gitignore対象も含む）で実IPを検索して見つかったのはこの1箇所だけ。受け入れ条件「リポジトリ内の文書・設定例に、個人用VMの実IP・sslip.ioの実ホスト名が含まれない」を満たしておらず、このままcommit・pushすると、文書から伏せたはずの値が最新のmasterに再び載る。実装メモの記述も「spec.md 内にも実IPは無かった」となっていて事実と異なる。修正: その箇所を「実IP（ドット・ハイフン区切りとも）」等の値を含まない言い方に変え、`grep -rIE` 等で作業ツリーに実IPが0件であることを確かめ直す（確認時のコマンドや結果を spec.md に書くときも値を書かない）。
+    - [Info] 確認済みで問題なし: uv 0.13.5 は GitHub の astral-sh/uv の最新リリース（2026-10-22公開、作成者 astral-releases-bot、immutable、draft/prereleaseではない）で、PyPIの最新とも一致。SHA固定の setup-uv（`07a047e6…` は公式タグ v10.3.2 と一致）の同梱 `known-checksums.json` にある `x86_64-unknown-linux-gnu-0.13.5` の値が、GitHubリリースの資産ダイジェスト（`f68d291c…928f`）と一致し、setup-uv はダウンロード後に照合して不一致なら失敗するコードになっている。`ghcr.io/astral-sh/uv:0.13.5` は匿名トークンでmanifest取得 HTTP 200（`sha256:32a7bb39…a6ff`）、`gh attestation verify oci://ghcr.io/astral-sh/uv:0.13.5 --repo astral-sh/uv` で astral-sh/uv の `publish-docker-image.yml` によるビルド来歴の署名を検証できた。
+    - [Info] Dockerfile は `ghcr.io/astral-sh/uv:${UV_VERSION}` と `python:3.12-slim` をタグ指定のまま（今回の変更前から同じ）。タグは付け替え可能なので、レジストリ側の侵害やタグの差し替えがあると、ビルドされるイメージ（自動デプロイされる）に別物が入りうる。今回確認したダイジェストは上記。ダイジェスト固定（`uv:0.13.5@sha256:…`）にすると防げるが、更新のたびにダイジェストを書き換える手間が増えるため、要否はユーザー判断（今回は差し戻し理由にしない）。
+    - [Info] ほかのジョブ・権限・デプロイの流れに変更は無い（ci.yml の差分は `UV_VERSION` の1行のみ。トップレベル `permissions: contents: read`、`id-token: write` が deploy-backend だけにあること、各アクションのSHA固定、`persist-credentials: false`、ジョブの依存関係はそのまま）。ほかにuvの版を指定している箇所は無い（`git grep` で確認）。
+    - [Info] 追加した `gcloud compute addresses describe ... --format="value(address)"` は読み取り専用（`compute.addresses.get` 相当）で、出力も静的IPだけ。秘密情報は出ない。`--project` を付けていないので gcloud の既定プロジェクトが別だとエラーになるだけで、安全上の問題は無い。
+    - [Info] 作業ツリーにAPI Keyの実値は無い。見つかったのは公開前提のデモ用API Key（既存の文書）、テスト用の値、`.env.example` のプレースホルダー、gitignore対象の `.claude/settings.local.json` にあるローカル検証用のテストキーだけ。`frontend/dist`・`frontend/.vercel`（gitignore対象）にも実IP・sslip.ioのホスト名は無い。`.env` は `.gitignore` で除外済み。
+  - 2回目（2026-10-23、差し戻し1回目の修正後の再レビュー）: **合格（性能評価待ち）**
+    - [解消] 前回の[High]（spec.md の実装メモに個人用VMの実IPが書かれていた）は解消。`git show HEAD:deploy/README.md` から実IP（1件のみ）とsslip.ioの実ホスト名を取り出してシェル変数に入れ、ドット区切り・ハイフン区切り・それぞれの `.sslip.io` 付きの4形式を、`.git`・`.venv`・`node_modules` を除く作業ツリー全体（gitignore対象を含む）に `grep -rlF`（バイナリ含む）で検索し、いずれも0件。値は画面・ファイルに出していない。実装メモの記述も値を含まない言い方になっており、事実と一致している。
+    - [Info] 作業ツリー内のほかのIPアドレス形の文字列は、既存の例示用の値（`.env.example`・`Caddyfile`・spec.md の `34.123.45.67`）と `frontend/public/icons.svg` のパスデータ（数値の並びがIP形に見えるだけ）のみで、実アドレスではない。
+    - [Info] 前回確認した内容から変化なし: ci.yml の差分は `UV_VERSION: "0.13.5"` の1行のみ（setup-uv のSHA固定・permissions・ジョブ構成はそのまま）、Dockerfile の差分は `ARG UV_VERSION=0.13.5` の1行のみ、deploy/README.md の差分は実IP・ホスト名をプレースホルダーと読み取り専用の `gcloud compute addresses describe` に置き換えた2行のみ。spec.md の差分は決定事項とこのタスク節の追加だけで、秘密情報は含まれない。前回の[Info]（Dockerイメージのダイジェスト固定の要否はユーザー判断）は引き続き未対応だが差し戻し理由ではない。
+- 性能エバリュエーターのフィードバック:
+  - 1回目（2026-10-23）: **合格（完了）**
+    - [OK] uvの版: 手元の uv は 0.13.5、PyPIの `uv` 最新も 0.13.5（読み取りのみで確認）。`git diff` で ci.yml は `UV_VERSION: "0.13.5"`、Dockerfile は `ARG UV_VERSION=0.13.5` の各1行だけの変更。ほかにuvの版を指定している箇所は無い（setup-uv は全ジョブで `env.UV_VERSION` を参照、docker build の build-args も同じ値。`mcp-server/pyproject.toml` の `uv_build>=0.13.5,<0.14.0` と整合）
+    - [OK] ロックファイル: ルート・`mcp-server/` とも `uv lock --check`・`uv sync --locked` が通り、`uv.lock` に差分なし
+    - [OK] リリースノート: 実装メモとセキュリティ評価の確認内容（0.13.0の破壊的変更はこのリポジトリの使い方に影響なし）を前提とし、下記のlint・テスト・ロック確認がuv 0.13.5で通ることで裏付けた
+    - [OK] 個人用VMアドレス: `git show HEAD:deploy/README.md` から実IP（例示用の `34.123.45.67` 以外の1件）をシェル変数に取り出し、ドット区切り・ハイフン区切り・それぞれの `.sslip.io` 付きの4形式を `.git`・`.venv`・`node_modules` を除く作業ツリー全体に `grep -rIlF` で検索し、いずれも0件（値は画面・ファイルに出していない）。deploy/README.md の追加行にIP形の文字列は無く、静的IPの名前 `tasksupport-personal-ip`・リージョン `us-central1` と読み取り専用の確認コマンドが残っている
+    - [OK] actionlint（`uvx --from actionlint-py actionlint`）エラーなし。ルート `uv run ruff check .` OK・`uv run pytest` 501 passed（warningなし）。mcp-server `uv run ruff check` OK・`uv run pytest` 278 passed（warningなし）。フロントエンド（Node 24.19.0）`npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test` 251 passed・`npm run build` OK
+    - [未確認・CIで確認] Dockerイメージのビルド（`ghcr.io/astral-sh/uv:0.13.5` 使用）と setup-uv による uv 0.13.5 の取得は実行禁止のため未実行。push後にCIの全ジョブ（特に build）の成功を確認すること。pushすると自動デプロイされるため、pushはユーザーの確認を取ってから行う
+- 差し戻し回数: 1
