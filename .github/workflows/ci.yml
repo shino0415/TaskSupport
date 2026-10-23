@@ -97,7 +97,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # バックエンドのジョブとは独立して並行実行する。自動デプロイ（deploy-backend）は
-  # buildとこのジョブの両方に依存する。
+  # build・このジョブ・mcpに依存する。
   frontend:
     name: Frontend (typecheck, lint, test, build)
     runs-on: ubuntu-latest
@@ -124,14 +124,38 @@ jobs:
       - name: Build
         run: npm run build
 
+  # MCPサーバー（mcp-server/、独立したuvプロジェクト）のチェック。バックエンドとは別のロックファイルで動かす。
+  mcp:
+    name: MCP server (ruff, pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: mcp-server/uv.lock
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Run ruff
+        run: uv run ruff check
+      - name: Run pytest
+        run: uv run pytest
+
   # ---- masterへのpush時の自動デプロイ（deploy/github-actions/README.md 参照） ----
   # 外部サービス側の設定（Workload Identity連携・Secrets/Variables等）が済むまでは失敗する。
   # サードパーティのアクションがSecretsやOIDCトークンに触れるため、デプロイジョブではコミットSHAで固定する。
 
   deploy-backend:
     name: Deploy backend (Cloud Run tasksupport-demo)
-    # build（lint→test→migrate→build）とfrontendのチェックがすべて成功したときだけ動く
-    needs: [build, frontend]
+    # build（lint→test→migrate→build）・frontend・mcpのチェックがすべて成功したときだけ動く
+    needs: [build, frontend, mcp]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 20

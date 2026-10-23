@@ -113,6 +113,7 @@ flowchart LR
 │   └── src/
 │       ├── api/                # APIクライアント・型定義
 │       └── components/         # 画面（授業ページ / 選考ページ / 横断一覧）
+├── mcp-server/                # 個人用VMのAPIを呼ぶローカルMCPサーバー（独立したuvプロジェクト）
 ├── spec.md                    # 仕様書・設計判断ログ・実装タスク一覧
 └── Dockerfile
 ```
@@ -145,6 +146,10 @@ npm run dev
 ```
 
 起動後、画面上の入力欄でAPI Keyを入力すると接続できる（`sessionStorage`に保持されるため、リロードしても再入力不要・タブを閉じると破棄される）。
+
+### MCPサーバー（個人利用環境向け、任意）
+
+Claude Code 等のMCPクライアントから個人用VMのデータを読み書きするためのローカルMCPサーバーを `mcp-server/` に置いている。設定ファイルの作り方・登録手順・運用上の注意は [`mcp-server/README.md`](./mcp-server/README.md) を参照。
 
 ## テスト / Lint
 

@@ -144,6 +144,9 @@ VM（個人利用環境）は自動デプロイの対象外のため、次の手
     --zone=us-central1-a \
     --format="value(metadata.items.filter('key:env-file').firstof('value'))"
   ```
+- 手元のMCPクライアント（Claude Code等）からこの環境のAPIを呼ぶローカルMCPサーバーがある。
+  設定ファイル（API Keyはリポジトリ外に権限600で置く）と登録手順は
+  [`../mcp-server/README.md`](../mcp-server/README.md) を参照してください。
 
 ## 秘密情報の扱い
 

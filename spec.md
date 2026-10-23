@@ -2771,14 +2771,54 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: MCPサーバーのCI組み込みと利用手順の文書化
-- status: 未着手
+- status: 完了
 - 概要: 「MCPサーバーの書き込み系ツール」の完了後に着手し、MCPサーバーのlint・自動テストを既存のCIに組み込み、設定ファイルの作り方とMCPクライアント（Claude Code等）への登録手順を文書化する。なお、この変更をmasterへpushすると自動デプロイが動くため、pushはユーザーの確認を取ってから行う。
 - 受け入れ条件:
-  - [ ] masterへのpush・プルリクエストで、MCPサーバーのlint・自動テストがロックファイルに基づいてCIで実行され、失敗したらCIが失敗する。MCPサーバーのチェックが失敗した場合は自動デプロイが行われない
-  - [ ] 追加したCIジョブは、既存ジョブと同じく外部アクションをコミットSHAとタグ注記で固定し（既存と同じアクションは同じSHA）、checkoutで認証情報を残さず、OIDCトークンの取得権限を持たない
-  - [ ] 既存のジョブの構成・権限・キャッシュ・デプロイの流れは、MCPのチェックをデプロイの前提に加える以外は変わらず、バックエンド・フロントエンドのDockerイメージ・本番ビルドにMCPサーバー用の依存が入らない
-  - [ ] `mcp-server/README.md` に、MCPサーバーの概要・提供するツール・設定ファイルの作り方（権限600）・MCPクライアントへの登録手順が記載され、既存のREADMEやdeploy配下の文書から辿れる。記載どおりに操作するとMCPクライアントから使える。手順中のURL・API Keyはプレースホルダーで、個人用VMのAPI Keyは記載しない
-  - [ ] ワークフロー定義の静的検査でエラーが無く、MCPサーバー・バックエンドのlint・テスト（warningなし）とフロントエンドのチェックが通る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - [x] masterへのpush・プルリクエストで、MCPサーバーのlint・自動テストがロックファイルに基づいてCIで実行され、失敗したらCIが失敗する。MCPサーバーのチェックが失敗した場合は自動デプロイが行われない
+  - [x] 追加したCIジョブは、既存ジョブと同じく外部アクションをコミットSHAとタグ注記で固定し（既存と同じアクションは同じSHA）、checkoutで認証情報を残さず、OIDCトークンの取得権限を持たない
+  - [x] 既存のジョブの構成・権限・キャッシュ・デプロイの流れは、MCPのチェックをデプロイの前提に加える以外は変わらず、バックエンド・フロントエンドのDockerイメージ・本番ビルドにMCPサーバー用の依存が入らない
+  - [x] `mcp-server/README.md` に、MCPサーバーの概要・提供するツール・設定ファイルの作り方（権限600）・MCPクライアントへの登録手順が記載され、既存のREADMEやdeploy配下の文書から辿れる。記載どおりに操作するとMCPクライアントから使える。手順中のURL・API Keyはプレースホルダーで、個人用VMのAPI Keyは記載しない
+  - [x] ワークフロー定義の静的検査でエラーが無く、MCPサーバー・バックエンドのlint・テスト（warningなし）とフロントエンドのチェックが通る
+- 実装メモ（2026-10-23）:
+  - CI（`.github/workflows/ci.yml`）: ジョブ `mcp` を追加（`frontend` と同じく独立して並行実行）。checkout（`persist-credentials: false`）→ setup-uv（既存ジョブと同じSHA・タグ注記・`version`/`python-version: "3.12"`/`enable-cache: true`、加えて `cache-dependency-glob: mcp-server/uv.lock` でMCPのロックファイルだけをキャッシュキーにする）→ `defaults.run.working-directory: mcp-server` で `uv sync --locked`・`uv run ruff check`・`uv run pytest`。`permissions` はワークフロー全体の `contents: read` のままで、ジョブ単位の指定・`id-token` は無し。`deploy-backend` の `needs` を `[build, frontend, mcp]` にした（`deploy-frontend` は `deploy-backend` に依存するので、MCPのチェック失敗時はどちらもデプロイされない）。ほかのジョブは、`frontend` ジョブの上のコメント（デプロイの依存先の説明）を実態に合わせた以外は変更なし。
+  - 既存 `lint` ジョブの `uv run ruff check .`（リポジトリ直下）は `mcp-server/` も対象に含むが、ruffは各ディレクトリに最も近い `pyproject.toml`（`mcp-server/pyproject.toml`）の設定で検査し、importの解決や依存のインストールは不要なため、ルートの `.venv` にmcp依存が無くても問題ない（実行してAll checks passed、対象ファイルに `mcp-server/` 配下12件を含むことを `--show-files` で確認）。調整は不要だった。
+  - Dockerイメージ: Dockerfileは `pyproject.toml`・`uv.lock`（ルート）と `backend/app` だけをCOPYするため、MCPの依存・コードはイメージに入らない（Dockerfile・`.dockerignore` は変更なし）。フロントエンドの本番ビルドも `frontend/` 内だけで完結し影響なし。
+  - 文書: `mcp-server/README.md` を新規作成（概要、ツール24個の一覧と更新の `changes` の扱い・破壊的操作の説明、前提、設定ファイルの作り方と起動時の検査内容、`TASKSUPPORT_MCP_CONFIG`、Claude Codeへの登録（`claude mcp add tasksupport -- uv --directory <リポジトリの絶対パス>/mcp-server run tasksupport-mcp`。構文はインストール済みClaude Code 2.1.309の `claude mcp add --help` と公式ドキュメント https://code.claude.com/docs/en/mcp で確認）、スコープ local/user/project の違いと `.mcp.json` にAPI Keyが入らないこと、Claude Desktopの設定例、書き込み・削除ツールを自動承認しない運用の推奨（実データ由来の文字列によるプロンプトインジェクションの説明、`permissions.allow` に読み取り10ツールだけ・`permissions.ask` に `mcp__tasksupport__create_*`/`update_*`/`delete_*` を入れる設定例。ルールの評価順 deny→ask→allow は公式ドキュメント https://code.claude.com/docs/en/permissions で確認）、動作確認、トラブルシュート（設定エラー文の一覧と対処、401等））。URL・API Keyはプレースホルダー（`https://<個人用VMのホスト名>`・`<個人用VMのAPI Key>`）のみ。ルートの `README.md`（ディレクトリ構成とセットアップ節）と `deploy/README.md`（個人利用環境の節）からリンクした。
+  - 手順の確認: README記載の起動コマンド `uv --directory <絶対パス>/mcp-server run tasksupport-mcp` を別ディレクトリから実行し、(1) 設定ファイル無し・権限644で `tasksupport-mcp: <原因>` を出して終了コード1、(2) ダミー設定（`https://api.example.invalid`、権限600）で stdio の initialize → tools/list に24ツールが返る、(3) `< /dev/null` で何も出さず終了コード0、を確認（ダミー設定はscratchpadに作り、確認後に削除）。`claude mcp add` 自体は `~/.claude.json` を書き換えるため実行していない（実機での登録確認は計画どおりユーザーの協力のもとで行う）。
+  - セルフチェック: actionlint（`uvx --from actionlint-py actionlint`）エラーなし。mcp-server `ruff check` OK・`pytest` 278 passed（warningなし）。リポジトリ直下 `ruff check .` OK・`pytest` 501 passed（warningなし）。フロントエンド（Node 24.19.0）typecheck・lint（`--deny-warnings`）・test 251 passed・build OK。
+- 修正メモ（2026-10-23、セキュリティ評価の[Medium]への対応。オーケストレーター判断の改善で差し戻しではない）:
+  - `mcp-server/README.md`「推奨: 書き込み・削除ツールを自動承認しない」の箇条書きと設定例の前置きだけを変更。`permissions.ask` に `mcp__tasksupport__create_*`/`update_*`/`delete_*` を入れる設定を「念のため」から**必須**に格上げし、理由として、auto mode ではどのルールにも当たらない操作を分類器が人の確認なしに判断するため ask ルールが無いと書き込み・削除が確認なしで実行されうること、明示的な ask ルールに当たるツールは auto mode・`bypassPermissions` を含むどのモードでも自動承認されず毎回確認されること（`dontAsk` や `-p` での `bypassPermissions` では確認の代わりに拒否）、評価順 deny→ask→allow で ask が allow より優先されることを書いた。
+  - `bypassPermissions` は「確認と安全チェックを省いて即時実行するモードで、公式も隔離環境だけでの利用を求めている。ask ルールに当たるツールはこのモードでも確認されるが、入れ忘れると確認なしで実行されるので使わない」と、公式の記述に合わせて書き直した（旧版は「確認を省くモード」とだけ書いていた）。
+  - 設定の置き場所を「すべてのプロジェクトに効かせるなら `~/.claude/settings.json`、このリポジトリだけなら リポジトリ直下の `.claude/settings.local.json`（自分専用・commitしない）」と明記し、ask/deny ルールのツール名にワイルドカードが使えることを添えた。設定例のJSON自体は変更なし（書式は公式の「Tool name wildcards」「MCP」節と照合して正しいことを再確認）。
+  - 根拠の確認元: https://code.claude.com/docs/en/permission-modes（「Actions no mode auto-approves」「How the classifier evaluates actions」「Skip all checks with bypassPermissions mode」、および表の `-p` 実行で確認が要る呼び出しは拒否される旨）、https://code.claude.com/docs/en/permissions（評価順 deny→ask→allow、ask/deny のツール名グロブ、allow は `mcp__<server>__` 接頭辞の後だけグロブ可、`~/.claude/settings.json` が全プロジェクト・`.claude/settings.local.json` はリポジトリルートから読まれる）。
+  - ほかの節・URL・API Key の記載は変更なし。Claude Code の設定ファイルには触れていない。
+  - セルフチェック: mcp-server `ruff check` OK・`pytest` 278 passed（warningなし）。
+- セキュリティエバリュエーターのフィードバック: 合格（2026-10-23、Critical/Highなし）。
+  - 再評価（2026-10-23）: 合格。Critical/High/Mediumなし。前回の[Medium]は解消済み。
+    - 解消の確認: `mcp-server/README.md`「推奨: 書き込み・削除ツールを自動承認しない」で、`permissions.ask` に `create_*`/`update_*`/`delete_*` を入れる設定が必須になった。追記内容を公式ドキュメントと突き合わせ、次の点が一致することを確認した。
+      - permission-modes の「How the classifier evaluates actions」: どのルールにも当たらない操作は auto mode では分類器が判断する（手順3）。
+      - 同「Actions no mode auto-approves」: 明示的な ask ルールに当たるツールは `bypassPermissions` を含むどのモードでも自動承認されない。
+      - `dontAsk` では確認が要る呼び出しが拒否される。`-p` で `bypassPermissions` を使った場合も、確認が残る呼び出しは拒否される（Common setups の表）。
+      - `bypassPermissions` は確認と安全チェックを省いて即時実行するモードで、公式は隔離環境だけでの利用を求めている。
+      - permissions のページ: 評価順は deny→ask→allow で、ask は allow より優先される。ask/deny ではツール名の位置にグロブを書け、allow は `mcp__<server>__` 接頭辞の後だけグロブを書ける。`.claude/settings.local.json` はリポジトリルートの自分専用設定で、`~/.claude/settings.json` はユーザー設定。
+    - 設定例と置き場所: 設定例のJSONには、ツール名のルールしか入っていない（URL・API Key・パスは含まれない）。どちらの置き場所に書いても秘密情報は漏れない。このリポジトリでは `.claude/settings.local.json` が、利用者のグローバルgitignore（`~/.config/git/ignore`）で除外されていることを `git check-ignore` で確認した。README も「commitしない」と明記している。
+    - 前回確認したCI・README類: `ci.yml`・`README.md`・`deploy/README.md` の差分は前回レビュー時から変わっておらず、新たな問題は無い（SHA固定、`persist-credentials: false`、権限の継承、`needs: [build, frontend, mcp]`）。`mcp-server/README.md` の変更箇所にも、実URL・API Key は入っていない。
+    - [Info] `deploy/README.md` の130・131行目にある個人用VMの実IP・sslip.ioホスト名は、今回の差分に含まれない以前からの記載で、このタスクの対象外。
+  - [Medium・非ブロッキング・解消済み] `mcp-server/README.md`「推奨: 書き込み・削除ツールを自動承認しない」で `permissions.ask` を「念のため」の任意設定として書いており、確認を省くモードとして `bypassPermissions` だけを挙げている。公式ドキュメント（https://code.claude.com/docs/en/permission-modes 「How the classifier evaluates actions」）では、auto mode ではどのルールにも当たらない操作は人の確認なしに分類器（classifier）が判断する。そのため ask ルールが無いと、auto mode では `create_*`/`update_*`/`delete_*` が人の確認なしで実行され得る（プラン・設定によっては auto mode への切り替えを勧められる）。一方、明示的な ask ルールは auto・`bypassPermissions` を含むどのモードでも確認を求め、`dontAsk` では拒否される。次回の文書更新で、ask ルールを「念のため」ではなく必須の推奨とし、auto mode でも ask ルールがあれば毎回確認されること（無ければ分類器任せになること）を書き足すのが望ましい。README にある設定例どおりに設定すれば、どのモードでも書き込み・削除は自動承認されないため、差し戻しはしない。
+  - 確認済み・問題なし（CI）: ジョブ `mcp` は checkout（`3d3c42e…` # v7.0.1、`persist-credentials: false`）・setup-uv（`07a047e…` # v10.3.2）とも、既存と同じSHAにタグ注記を付けて固定している。ジョブ単位の `permissions`・`id-token` は無く、ワークフロー全体の `contents: read` を継承する。secrets・vars・環境変数も参照しない。既存ジョブからの差分は、`deploy-backend` の `needs` に `mcp` を足したこととコメントの更新だけで、`deploy-frontend` は `deploy-backend` 経由で引き続きゲートされる。Docker の GHA キャッシュ（`type=gha`）には触れていない。uv キャッシュは `cache-dependency-glob: mcp-server/uv.lock` のハッシュでキーが分かれ、バックエンドのキャッシュとは衝突しない。PR から書き込まれるキャッシュは既存ジョブと同じく PR の ref にスコープされ、master からは復元されない。そのため新たな汚染経路は無い。
+  - 確認済み・問題なし（文書）: README 3ファイルに個人用VMの実URL・ホスト名・IP・API Key は含まれず、`https://<個人用VMのホスト名>`・`<個人用VMのAPI Key>` のプレースホルダーだけだった。設定ファイルの手順（ディレクトリを700にし、`touch` 後に600にしてからエディタで書く。シェル履歴に残さない注意あり）は安全で、記載された起動時検査は `config.py` の実装（所有者UIDの確認、`mode & ~0o600` で拒否、ディレクトリの `& 0o022` で拒否）や `api_client.py` の `follow_redirects=False`・タイムアウトと一致する。権限設定例の書式は公式ドキュメント（https://code.claude.com/docs/en/permissions）と照合し、正しいことを確認した。具体的には、allow は読み取り10ツールを個別名で並べ、ask の `mcp__tasksupport__create_*` 等のツール名グロブは ask/deny で使える。評価順 deny→ask→allow と「ask が allow より優先」の記述も一致する。スコープの説明（local/user は `~/.claude.json`、project は `.mcp.json` で初回承認あり）と `--env` の位置も公式ドキュメント（https://code.claude.com/docs/en/mcp）と一致する。`.mcp.json` や Claude Desktop 設定には起動コマンドだけが入り、API Key は入らない。パブリックリポジトリで project スコープを使うとホームパスが漏れる点の注意もある。プロンプトインジェクションの説明（memo 等の自由テキスト経由の誤った書き込み・削除、復元不可の論理削除、人の確認で止める方針）は妥当。
+- 性能エバリュエーターのフィードバック: 合格（2026-10-23）。バグ・テスト不足なし。
+  - ワークフロー: actionlint（`uvx --from actionlint-py actionlint`）エラーなし。YAMLとして読め、ジョブは lint/test/migrate/build/frontend/mcp/deploy-backend/deploy-frontend。`deploy-backend.needs` は `[build, frontend, mcp]`、`deploy-frontend` は `deploy-backend` に依存。`git diff` 上の ci.yml の変更は、`mcp` ジョブの追加、`deploy-backend` の `needs` とコメント、`frontend` 上のコメントだけ。
+  - mcpジョブのローカル再現（`mcp-server/` で同じ順）: `uv sync --locked` OK → `uv run ruff check` All checks passed → `uv run pytest` 278 passed、warning 0。
+  - lintジョブ相当: リポジトリ直下の `uv run ruff check .` All checks passed。`uv run pytest` 501 passed、warning 0。
+  - フロントエンド（Node 24.19.0）: typecheck OK、lint（`--deny-warnings`）OK、test 251 passed（19ファイル）、build OK。
+  - Docker: Dockerfileが COPY するのは `pyproject.toml`・`uv.lock`（ルート）・`backend/app`・`entrypoint.sh` だけで、`mcp-server` は含まれない。
+  - READMEの手順: 別ディレクトリから、記載の起動コマンド `uv --directory <絶対パス>/mcp-server run tasksupport-mcp` を `TASKSUPPORT_MCP_CONFIG` 付きで実行した（ダミー設定 `https://api.example.invalid/` をscratchpadに置き、確認後に削除）。確認できたこと:
+    - 設定ファイルが無いとき・権限644のとき: `tasksupport-mcp: <原因>` を出して終了コード1になる。エラー文はトラブルシュート表と一致する。
+    - 権限600で `< /dev/null` のとき: 何も出さず終了コード0になる。
+    - stdio で initialize → tools/list を送ると、READMEの表と同じ24ツールが返る。`destructiveHint` は update/delete の9ツールに付いている。
+    - エントリポイント `tasksupport-mcp`、既定パス、`TASKSUPPORT_MCP_CONFIG`、`~` の展開、タイムアウト10秒、`follow_redirects=False` も実装と一致する。
+    - `claude mcp add` の構文（`<name> ... -- <command> [args]`、`-e/--env`、`-s/--scope local|user|project`）は、インストール済みの Claude Code 2.1.309 の `claude mcp add --help` と一致する。`claude mcp add` 自体は実行しておらず、利用者の設定も変更していない。実機での登録確認はユーザーの協力のもとで行う。
+  - リンク: `../spec.md`（「決定事項」→「### MCPサーバー」節あり）、`README.md` の `./mcp-server/README.md`、`deploy/README.md` の `../mcp-server/README.md` は、いずれも実在する。READMEのURL・API Keyはプレースホルダーだけ。
+  - 個人用VM・デモ環境には接続していない。push・docker・デプロイも実行していない。
 - 差し戻し回数: 0
