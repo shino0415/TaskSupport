@@ -42,12 +42,27 @@ class ApiClient:
         await self._client.aclose()
 
     async def get(self, path: str) -> Any:
+        return await self.request("GET", path)
+
+    async def post(self, path: str, body: dict[str, Any]) -> Any:
+        return await self.request("POST", path, body)
+
+    async def patch(self, path: str, body: dict[str, Any]) -> Any:
+        return await self.request("PATCH", path, body)
+
+    async def delete(self, path: str) -> None:
+        await self.request("DELETE", path)
+
+    async def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+        """APIを呼び、成功時は応答JSONを返す（204等の本文なしはNone）。"""
         try:
-            response = await self._client.get(path)
+            response = await self._client.request(method, path, json=body)
         except httpx2.TimeoutException:
-            raise ApiError(
-                f"APIが時間内に応答しませんでした（タイムアウト {self._timeout:g}秒）。"
-            ) from None
+            message = f"APIが時間内に応答しませんでした（タイムアウト {self._timeout:g}秒）。"
+            if method != "GET":
+                # 送信済みの書き込みがAPI側で反映されている可能性があるため。
+                message += "変更が反映されたかは読み取り系ツールで確認してください。"
+            raise ApiError(message) from None
         except httpx2.HTTPError as exc:
             raise ApiError(
                 f"APIに接続できませんでした（{type(exc).__name__}）。"
@@ -55,6 +70,8 @@ class ApiClient:
             ) from None
 
         if response.is_success:
+            if response.status_code == 204:
+                return None
             try:
                 return response.json()
             except ValueError:

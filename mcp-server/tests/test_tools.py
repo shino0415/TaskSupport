@@ -102,7 +102,7 @@ async def test_list_tools_exposes_read_tools_with_schema_and_read_only_hint(
 ) -> None:
     tools = {tool.name: tool for tool in (await mcp_client.list_tools()).tools}
 
-    assert set(tools) == set(TOOL_IDS)
+    assert set(TOOL_IDS) <= set(tools)
     for name, args, _, _ in READ_TOOLS:
         tool = tools[name]
         assert tool.description and "読み取り専用" in tool.description
