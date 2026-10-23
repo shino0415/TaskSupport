@@ -330,9 +330,21 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **oxlint新ルール `react/set-state-in-effect` への対応**: 範囲内更新でoxlintを1.89.0に上げると、既定で有効になったこのルールが既存コード11ファイル・18箇所で警告を出す。ルールを無効化したりoxlintを据え置いたりせず、該当箇所をルールに沿う書き方（`key` による再マウントでの初期化、イベント側での状態更新等）に書き換える。既存の画面の挙動と既存テストの意図は変えない（2026-10-22、タスク「依存パッケージの脆弱性修正と範囲内の更新」の要人間判断で選択肢Aを選択）。
 - **トップページの期限切れ判定の基準時刻**: lintの `react/purity` 警告（描画のたびに現在時刻を取る書き方）への対応として、「締切が近い課題」の期限切れ判定は、描画時刻ではなく課題一覧を取得した時刻を基準にする。取得後に期限を過ぎた課題は再読み込みまで期限切れ表示にならないことはユーザー承知の上（2026-10-22、定期的な時刻更新案ではなく現状の実装をユーザーが選択）。
 
+### MCPサーバー（確定: 2026-10-23）
+
+ユーザーから「MCPサーバーを作りたい」「私の指示に従って書き込みをさせたい」と依頼があり、ユーザーと協議して次のとおり確定した。
+
+- **つなぐ先**: 個人用VM（Compute Engine）の実データだけ。公開デモ環境への切り替えは作らない（当初は設定で切り替える案を選んだが、ユーザーが個人用だけに変更）。
+- **提供する操作**: 読み取りに加え、作成・更新・削除まで許す（ユーザーの指示に従ってAIが書き込めるようにする）。削除は既存APIと同じ論理削除。ステータスの逆行は止めず、既存APIの警告をツールの結果に含める。
+- **実行形態**: 手元でMCPクライアントが起動するローカルサーバー（stdio）。インターネットには公開せず、リモート用の認証やデプロイは作らない。
+- **データへのアクセス**: 既存のREST APIを `X-API-Key` 付きで呼ぶ。認証・入力値の上限・論理削除・逆行警告はAPI側のものをそのまま使い、DBやバックエンドのコードは直接使わない。
+- **実装言語と配置**: Pythonで、リポジトリ内の別ディレクトリ `mcp-server/` に独立したuvプロジェクト（自前の `pyproject.toml`・`uv.lock`）として置く。ディレクトリ名を `mcp/` にしないのは、SDKのパッケージ名 `mcp` と衝突するため。バックエンドの依存・Dockerイメージには入れない。ライブラリ（公式SDK `mcp` 等）は最新版を使う。
+- **API Key等の渡し方**: リポジトリ外の設定ファイル（既定は `~/.config/tasksupport-mcp/config.toml`、権限600。環境変数 `TASKSUPPORT_MCP_CONFIG` で場所を変更可）から接続先URLとAPI Keyを読む。MCPクライアントの設定やリポジトリにはAPI Keyを書かない。
+- **ツールの粒度**: 既存のエンドポイントとほぼ1対1のツールだけを提供する。リソース・プロンプトは作らない。企業のPATCHは既存APIに無いので、企業名の変更ツールも作らない。
+
 ## 未決定事項（要ユーザー判断）
 
-（解決済みの項目: 「自動デプロイでのバックエンドとフロントエンドの順序」は2026-10-22に選択肢Aで解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。「依存パッケージ更新の対象範囲」「@types/node のバージョン」「依存パッケージ更新のタスク分割」は2026-10-22に解決し、「## 決定事項」の「依存パッケージの最新版への更新」に反映済み。「CIの既存ジョブのアクションをSHAで固定するときのバージョン」（選択肢B）と「固定したアクションのSHAと公式タグの照合方法」（選択肢A）は2026-10-22に解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み）
+（解決済みの項目: 「自動デプロイでのバックエンドとフロントエンドの順序」は2026-10-22に選択肢Aで解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。「依存パッケージ更新の対象範囲」「@types/node のバージョン」「依存パッケージ更新のタスク分割」は2026-10-22に解決し、「## 決定事項」の「依存パッケージの最新版への更新」に反映済み。「CIの既存ジョブのアクションをSHAで固定するときのバージョン」（選択肢B）と「固定したアクションのSHAと公式タグの照合方法」（選択肢A）は2026-10-22に解決し、「## 決定事項」の「masterへのpush時の自動デプロイ」に反映済み。MCPサーバーの設計（つなぐ先・操作範囲・実行形態・データへのアクセス方法・言語と配置・秘密情報の渡し方・ツールの粒度）は2026-10-23にユーザーと協議して確定し、「## 決定事項」の「MCPサーバー」に反映済み）
 
 ## 実装タスク
 
@@ -2630,4 +2642,97 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - **バックエンド**: `uv run ruff check` は All checks passed。`uv run pytest -v` は 501 passed で、warning は0件。
   - **フロントエンド**（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（19ファイル・251 passed）・`npm run build` はすべて exit 0。
   - **未確認**: まだpushしていないため、GitHub Actions上での実際の実行は確認していない。masterへのpushで自動デプロイが動くため、pushはユーザーの確認を取ってから行い、push後にCIのすべてのジョブが成功するかを確認すること。
+- 差し戻し回数: 0
+
+### タスク: MCPサーバー基盤と読み取り系ツール
+- status: 完了
+- 概要: 「## 決定事項」の「MCPサーバー」に基づき、`mcp-server/` に独立したPythonのuvプロジェクトとしてローカル（stdio）のMCPサーバーを追加し、個人用VMの既存REST APIを `X-API-Key` 付きで呼ぶ読み取り系ツールを提供する。接続先URLとAPI Keyはリポジトリ外の設定ファイルから読む。既存のAPI・画面・バックエンドの依存とDockerイメージは変えない。
+- 受け入れ条件:
+  - [x] MCPクライアントから接続でき、提供するツールの一覧（各ツールの説明と入力項目つき）が取得できる
+  - [x] 授業一覧・授業詳細・授業ごとの課題一覧・課題詳細・締切が近い課題・企業一覧・企業詳細・企業ごとの選考ステップ一覧・直近の選考ステップ・企業ごとの企業タスク一覧を、既存APIとほぼ1対1のツールで取得できる。読み取り系ツールは読み取り専用であることがツールの属性・説明から分かる
+  - [x] 論理削除済みのデータは、既存APIと同じくツールの結果に含まれない
+  - [x] 設定ファイルが無い・必要な項目が欠けている・権限が600より広い場合は、起動時に原因が分かるエラーで止まる。設定ファイルの場所は既定の場所と環境変数の両方で指定できる
+  - [x] 存在しないid・不正な入力・認証失敗・接続先が応答しない（タイムアウト・接続失敗）場合に、MCPサーバーが落ちず、原因（ステータスとAPIのエラー内容）が分かるエラーとしてツールの結果が返る。API Keyはエラーメッセージ・ログに出ない
+  - [x] 個人用VMのURL・API Keyはリポジトリ内のファイル（コード・設定例・ドキュメント）に含まれない（例はプレースホルダー）
+  - [x] 実際のバックエンド・個人用VM・デモ環境に接続しない自動テストで、各ツールの正常系とエラー系、設定ファイルの検査が検証され、lintとともにwarningなしで通る。既存のバックエンドのlint・テスト（warningなし）とフロントエンドのチェックも引き続き通る
+  - [x] 使用するMCP SDK等のライブラリは最新版で、依存はロックファイルで固定されている
+- 実装メモ:
+  - **構成**: `mcp-server/` に独立したuvプロジェクト（`pyproject.toml`・`uv.lock`・`.python-version`（3.12）、srcレイアウト、パッケージ `tasksupport_mcp`、コンソールスクリプト `tasksupport-mcp` でstdio起動）を追加した。ルートの `pyproject.toml`・`uv.lock`・Dockerfile・`backend/` は変更していない（Dockerfileは `backend/app` 等を個別にCOPYするため、イメージに `mcp-server/` は入らない）。READMEは次々タスク（文書化）で作るため未作成。
+    - `config.py`: 設定ファイルの場所の解決（環境変数 `TASKSUPPORT_MCP_CONFIG`、未設定・空なら `~/.config/tasksupport-mcp/config.toml`、`~` 展開あり）と検査。ファイル無し・通常ファイルでない・権限が600を超える（グループ/その他の権限や実行ビットを含む。400は可）・TOMLとして読めない・`base_url`/`api_key` が無い・空・文字列でない・`base_url` が `https://` でない場合に `ConfigError`。メッセージには設定値を含めない。`Config.api_key` は `repr=False`。
+    - `api_client.py`: `httpx2.AsyncClient`（`X-API-Key` ヘッダー、タイムアウト10秒、リダイレクトに追従しない）。タイムアウト・接続失敗（`httpx2.HTTPError`）・2xx以外・2xxだがJSONでない応答を `ApiError`（SDKの `ToolError` のサブクラス）にする。エラー文はステータスとAPIの `detail`（文字列はそのまま、422のリストはJSON文字列化、JSONでない本文は先頭500文字）で、401には「設定ファイルの api_key を確認」の案内を付ける。例外は `from None` で元の例外を切り離す。`__repr__` はbase_urlだけを出す。
+    - `server.py`: SDK 2.x の `mcp.server.mcpserver.MCPServer`（v1のFastMCPの改名後。インストールしたSDKのソースで確認）で読み取り系ツール10個を登録。ツール名はバックエンドのエンドポイント関数名に揃えた（`list_courses`・`get_course`・`list_assignments`・`get_assignment`・`list_upcoming_assignments`・`list_companies`・`get_company`・`list_interview_steps`・`list_upcoming_interview_steps`・`list_company_tasks`）。各ツールに `title`（日本語）、`annotations=ToolAnnotations(read_only_hint=True)`、説明文に呼ぶエンドポイントと「読み取り専用で、データは変更しない。論理削除済みのデータは含まれない。」を付けた。idの引数は `int`（入力スキーマで `integer`、型違いはSDKがAPIを呼ばずにエラー結果を返す）。結果はAPIの応答JSONをそのまま1つのテキスト（`ensure_ascii=False`、インデント2）で返す（`structured_output=False`。SDKの自動構造化では一覧が要素ごとの別ブロックになり、空一覧で中身が空になるため）。`ToolError` を投げるとSDKが `is_error=True` の結果にし、サーバーは落ちない。HTTPクライアントはサーバーのlifespan終了時に閉じる。
+    - `__init__.py` の `main()`: 設定エラー時はstderrに `tasksupport-mcp: <原因>` を出して終了コード1で止まる（stdoutはMCP通信用のため使わない）。
+  - **依存**（すべて2026-10-23時点のPyPI最新）: `mcp` 2.3.0、`httpx2` 2.16.0、dev に `pytest` 9.1.1・`ruff` 0.17.2。`uv.lock` で固定（`uv lock --check` OK）。非同期テストはSDKが依存する anyio のpytestプラグインを使い、追加の依存は入れていない。
+  - **ruff設定**: バックエンドと同じ line-length 100・target py312・`select = ["E", "F", "I", "UP", "B"]`（バックエンドの `ignore = ["B008"]` はFastAPI用のため入れていない）。ルートで `uv run ruff check` すると `mcp-server/` 配下はruffの階層設定で `mcp-server/pyproject.toml` の設定が使われ、こちらも通る。ルートの `uv run pytest` は `testpaths = ["backend/tests"]` のため `mcp-server/tests` を拾わない（収集0件を確認）。
+  - **テスト**（`mcp-server/tests/`、93件。実環境には接続しない。接続先は `https://api.example.invalid`、API Keyはダミー値）: `test_tools.py`＝SDKのインプロセス `Client` と httpx2 の `MockTransport` で、ツール一覧（10個・説明・入力スキーマ・readOnlyHint）、全ツールの正常系（呼ぶパス・GET・`X-API-Key` ヘッダー・応答がそのまま返る）、空一覧、404（idを取る5ツール）、422・401・タイムアウト・接続失敗（全10ツール。エラー結果の文言、API Keyが結果とログ（caplog、DEBUGまで）に出ないこと、エラー後も次の呼び出しが成功しサーバーが落ちないこと）、502（JSONでない本文）、本文なし500、307で追従しないこと、2xxのJSONでない応答、引数の型違いでAPIを呼ばないこと。`test_config.py`＝環境変数・既定パス・`~` 展開、ファイル無し・ディレクトリ、権限640/604/644/660/700/777の拒否と400の受理、項目欠け・空・非文字列、https以外のURL、TOML不正、reprにAPI Keyが出ないこと、`main()` が設定エラーでstderrに原因を出して終了コード1になりAPI Keyを出さないこと。`test_api_client.py`＝repr、タイムアウト秒数の表示、セッション終了時にHTTPクライアントが閉じること。`test_stdio.py`＝コンソールスクリプトをサブプロセスでstdio起動してMCPクライアントからツール一覧を取得できること（stderrにAPI Keyが出ないこと）、権限644の設定で終了コード1・stdout空で止まること。
+  - **判断メモ**: 計画の「HTTPSで呼ぶ」に従い `base_url` は `https://` 以外を起動時エラーにした（個人用VMはCaddyでHTTPS化済み）。権限は「600より広い」を文字どおり解釈し、600に含まれないビット（700の実行ビット等）があれば拒否する。
+  - **セルフチェック**: `cd mcp-server && uv run ruff check`（All checks passed）・`uv run ruff format --check`・`uv run pytest`（93 passed、warningなし。`-W error` でも93 passed）。ルート: `uv run ruff check` All checks passed、`uv run pytest` 501 passed（warningなし、`mcp-server/tests` は収集されない）。フロントエンド（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（19ファイル・251 passed）・`npm run build` すべて成功。
+- セキュリティエバリュエーターのフィードバック: 2026-10-23 合格（Critical/High なし。Medium なし。Low 3件・Info 1件。すぐ直す必要はなく、後続タスクで対応してよい）
+  - **Low-1 設定ファイル検査の TOCTOU・所有者・親ディレクトリ**（`mcp-server/src/tasksupport_mcp/config.py` 36〜59行目）: `path.stat()` で権限を見たあと、別に `path.open()` で開いているため、検査と読み込みの間にファイルを差し替えられる余地がある。また、ファイルの所有者（`st_uid`）と親ディレクトリの権限は確認していない。他のユーザーが書き込める親ディレクトリに置くと、そのユーザーがファイルを差し替えて `base_url` を自分のHTTPSサーバーに向け、API Keyを送らせることができる。単一ユーザーのWSLを前提とすれば悪用の余地は小さい。対応案: 先に開いて `os.fstat(f.fileno())` で検査する。`st_uid == os.getuid()` を確かめる。可能であれば親ディレクトリにグループ・その他の書き込み権限がないことも確かめる。シンボリックリンクは `stat()` がリンク先をたどるので、リンク先の権限・種類は検査されている（問題なし）。
+  - **Low-2 ASCII以外の文字を含む api_key で整形されないトレースバックが出る**（`config.py`・`__init__.py` の `main()`）: `api_key` に日本語などASCII以外の文字があると、`ApiClient` の生成時（`main()` の `try` の外）に `UnicodeEncodeError` が出て、トレースバックとともに異常終了する。実際に試し、トレースバックにAPI Keyが含まれないことは確認した。ただ「原因が分かるエラー」にはならない。対応案: `load_config` で `api_key` が表示可能なASCII文字だけか（改行・制御文字を含まないか）を検査して `ConfigError` にする。
+  - **Low-3 base_url に userinfo・クエリ・フラグメントを書ける**（`config.py` 75〜79行目）: `https://user:pw@host/` のような書き方も受け付ける。その場合、`ApiClient.__repr__` と httpx2 のINFOログ（stderr）に資格情報つきのURLが出る（`repr` に出ることは確認済み）。設定するのは本人なので影響は小さい。対応案: `parsed.username`/`password`/`query`/`fragment` がある場合は `ConfigError` にする。
+  - **Info 実データ由来のプロンプトインジェクション**（`server.py`）: ツールの結果には、APIが返すJSON（`memo`・`platform`等、自由に書けるテキスト）と、JSON以外のエラー本文の先頭500文字がそのまま入るので、モデルに対する指示のような文字列が混ざり得る。今回は読み取り専用のツールだけなので実害はない。次の「書き込み系ツール」では、削除ツールに `destructive_hint=True`、作成・更新ツールに `read_only_hint=False` を付け、書き込み系ツールをMCPクライアントで自動承認しない運用を文書化タスクのREADMEに書くことを推奨する。
+  - **確認済みで問題なしの項目**: API Keyは `Config` の `repr=False`・`ApiClient.__repr__`・エラー文（例外の型名、ステータス、APIの `detail` だけ。`from None` で元の例外を切り離している）に出ない。SDKがToolErrorをログに出す処理（`server.py` の `_handle_call_tool`）や httpcore2 のトレースログにもヘッダーの値は出ない。リダイレクトは `follow_redirects=False` で追わない（3xxは `is_success` にならずエラーになる）。HTTPS以外は起動時に拒否し、TLS検証は既定のまま有効。idの引数は `int` のため、パスを書き換えられる入力は入らない（型違いはSDKが入力の検証で弾く）。stdoutはSDKの `stdio` が専有し、設定エラーはstderrに出す（ロガーの出力先もstderr）。テストは `MockTransport` と `https://api.example.invalid`・ダミーのKeyを使い、`test_stdio` も一時ファイルの設定で、APIに接続しないことを確認した（`uv run --offline --locked pytest` で93 passed）。`mcp-server/` 配下と spec.md の差分に、個人用VMのURL・API Keyは含まれない。`mcp-server/.venv` はルートの `.gitignore` で、`.pytest_cache`/`.ruff_cache` はそれぞれの中の `.gitignore` で除外されている。依存: `uv.lock` のレジストリ由来の37パッケージはすべて `https://pypi.org/simple` から取得し、ハッシュで固定されている。OSV（api.osv.dev の querybatch）で既知の脆弱性は0件。`httpx2`/`httpcore2` は `mcp` 2.3.0 が自ら依存するパッケージで、PyPI上のソースは `github.com/pydantic/httpx2`（作者 Tom Christie）であり、タイポスクワッティングではない。
+  - **再レビュー（差し戻し1回目の修正後）: 2026-10-23 合格**（Critical/High/Medium なし。前回の Low-1〜3 はすべて解消。新しい指摘は Info 1件だけ）
+    - **Low-1 解消**: `config.py` の `_read_config_file` は、`os.open(O_RDONLY|O_NONBLOCK)` で開いた記述子を `os.fstat` で検査し、同じ記述子を `os.fdopen` で読むので、検査と読み込みの間の差し替えは起きない。検査で例外が出たときは `except BaseException` で記述子を閉じている。`O_NONBLOCK` は通常ファイルの読み込みには影響しない。FIFOは開く処理で止まらず「通常のファイルではありません」で拒否されることを実際に試した。シンボリックリンクはリンク先が `fstat` で検査され、`path.parent` とリンク先の実体の親の両方で `0o022` を見ている（正常なリンクは受理されることを確認）。所有者は `st_uid == os.getuid()` で確認している。この所有者確認があるため、リンクやディレクトリを差し替えられても、向けられる先は本人が所有する600のファイルに限られ、他人が中身を書き換えたファイルを読ませることはできない。
+    - **Low-2 解消**: `api_key` は前後の空白を除いたあと 0x20〜0x7E だけかを検査している。`main()` は ASCII 以外の値で `tasksupport-mcp: ...` を出して終了コード1で止まり、トレースバックも値も出ないことを実際に確認した。
+    - **Low-3 解消**: `https://@h`・`https://a:SECRET@h`・`#x`・末尾が `?` だけのURL・`\@` を含むURLを実際に試し、すべて `ConfigError` になった。メッセージにURLの値は出ない（出るのは本人が指定した設定ファイルのパスだけ）。
+    - **エラー文**: 新しく追加された `ConfigError` に出るのは、パス・権限の8進数・`strerror`・TOMLDecodeError の位置情報だけで、`api_key`・`base_url` の値は含まれない。
+    - **Info（対応不要）**: 親ディレクトリは直上（とリンク先の実体の直上）だけを検査しており、さらに上の祖先ディレクトリやリンクの途中の経由先は見ていない。ただ上に書いたとおり、所有者の確認で実害はほぼ無い。また、`/dev/tty` などのデバイスファイルを指定すると `O_NOCTTY` なしで一度開いてから拒否するが、本人が指定するパスなので影響はない。
+    - **uv.lock・依存**: パッケージは38件（レジストリ由来37件と、`tasksupport-mcp` 自身の editable 1件）で、前回のレビューから増減はない。ダウンロードURL 417件はすべて `https://files.pythonhosted.org`、ハッシュ（sha256）も417件ですべて揃っている。`httpx2-jsfetch` は `sys_platform == 'emscripten'` のときだけ使われる httpx2 の依存（作者は Pyodide の Hood Chatham）で、Linux ではインストールされない。uv_build はビルド時だけ使う依存のため lock には入らない。PyPI で最新版が 0.13.5、リポジトリが `github.com/astral-sh/uv` であることを確認した。`pyproject.toml` の制約 `>=0.13.5,<0.14.0` は妥当。`uv lock --check`（オフライン）OK。
+    - **API Key の漏れ**: 前回と同じく、どこにも出ていない。`Config` の repr に api_key は出ない。`mcp-server/src`・`tests`・`pyproject.toml` に書かれたURLは `*.example.invalid` とテスト用のダミー値だけで、spec.md の差分にも個人用VMのURL・Keyは無い。`uv run --offline --locked pytest -W error` は 124 passed、`ruff check` は All checks passed。
+- 性能エバリュエーターのフィードバック: 2026-10-23 不合格（差し戻し1回目。指摘は1件だけで、ほかの受け入れ条件はすべて満たしている）
+  - **要修正: ビルドバックエンド uv_build が最新版を除外している**（`mcp-server/pyproject.toml` の `[build-system]`）: `requires = ["uv_build>=0.12.1,<0.13.0"]` の上限 `<0.13.0` のせいで、PyPIの最新版 0.13.5（2026-10-23時点）が使えない。`uv sync` はこのプロジェクト自体を uv_build でビルドしてインストールするので、uv_build も「使用するライブラリ」に入る。ユーザーの許可なく古い版に固定しているので、受け入れ条件「ライブラリは最新版」を満たさない（実装メモの「すべて最新」は実行時とdevの依存だけを数えていた）。原因は、ローカルの uv が 0.12.1（最新は 0.13.5）で、`uv init` がその版に合わせた制約を作ったためと思われる。対応案: `uv_build>=0.13.5,<0.14.0` に直す。リポジトリの外の作業用コピーで試し、この制約で `uv build`（sdist・wheel）・`uv sync`・`uv run pytest -W error`（93 passed）が通ることを確認済み。直したあと `uv lock` を実行し、`uv lock --check` と `uv sync --locked` が通ることも確かめること。ローカルの uv 本体（0.12.1）を更新するかどうかはリポジトリの外の話なので、必要ならユーザーに確認する。
+  - **確認結果（問題なし）**:
+    - `mcp-server/`: `uv sync --locked`・`uv lock --check` はOK。`uv run ruff check` は All checks passed、`ruff format --check` もOK。`uv run pytest -v` は 93 passed で warning は0件（`-W error` でも 93 passed）。
+    - 依存: `uv.lock` にあるPyPI由来のパッケージは、`mcp` 2.3.0・`httpx2` 2.16.0・`pytest` 9.1.1・`ruff` 0.17.2 を含めてすべて、PyPIの最新版と一致する（全件をPyPI JSON APIで突き合わせた）。最新でないのは上記の uv_build だけ。
+    - 条件1（ツール一覧）: `test_stdio.py` がコンソールスクリプトをサブプロセスとしてstdioで起動し、MCPクライアントからツール一覧を取得している（pass）。`test_tools.py` で10ツールの説明・入力スキーマ（`integer`・required）・readOnlyHint を確認している。
+    - 条件2（1対1のツール）: 10ツールが呼ぶパスは、バックエンドのGETエンドポイント（`/courses`、`/courses/{id}`、`/courses/{id}/assignments`、`/assignments/upcoming`、`/assignments/{id}`、`/companies`、`/companies/{id}`、`/companies/{id}/interview-steps`、`/interview-steps/upcoming`、`/companies/{id}/company-tasks`）と一致する。正常系のテストでパス・GET・ヘッダーを確認している。読み取り専用であることは annotations と説明文で示している。
+    - 条件3（論理削除）: ツールはAPIの応答をそのまま返し、除外はAPI側で行われる（バックエンドのテストで担保されている）。404がそのまま返ることもテストで確認している。
+    - 条件4（設定ファイル）・条件5（エラー系）: ファイル無し・ディレクトリ・権限（640/604/644/660/700/777 は拒否、400 は受理）・項目欠け・空・非文字列・https以外・TOML不正・環境変数と既定パス、および 404・422・401・タイムアウト・接続失敗（全ツール）・502・本文なし500・リダイレクト・JSONでない2xx・型違いが、すべてテストされている。エラーのあとも次の呼び出しが成功すること、API Keyが結果・ログ・stderrに出ないことも確認している。
+    - 条件6: `mcp-server/src`・`tests` に個人用VMのURL・API Keyは無い（接続先は `https://api.example.invalid`）。
+    - リポジトリ直下: `uv run ruff check` は All checks passed（`mcp-server/` も含む）。`uv run pytest` は 501 passed で warning は0件。フロントエンド（Node v24.19.0）: `npm run typecheck`・`npm run lint`・`npm test`（19ファイル・251 passed）・`npm run build` はすべて exit 0。
+    - 影響範囲: git の差分は `spec.md` の変更と未追跡の `mcp-server/` だけ。Dockerfile・ルートの `pyproject.toml`・`uv.lock`・`backend/`・`frontend/` は変わっていない。
+  - **再検証（差し戻し1回目の修正後）: 2026-10-23 合格**（受け入れ条件8項目すべて満たす）
+    - 条件8（前回の指摘）解消: `mcp-server/pyproject.toml` の `[build-system]` は `uv_build>=0.13.5,<0.14.0` で、PyPIの最新版 0.13.5 を含む。`uv.lock` のレジストリ由来パッケージを全件PyPI JSON APIで突き合わせ、最新でないものは0件（`mcp` 2.3.0・`httpx2` 2.16.0・`pytest` 9.1.1・`ruff` 0.17.2 含む）。`uv sync --locked`・`uv lock --check`（38パッケージ）OK。
+    - `mcp-server/`: `uv run ruff check` All checks passed、`ruff format --check` OK、`uv run pytest -v` 124 passed・warning 0件（`-W error` でも 124 passed）。追加の設定検査テスト31件（所有者・親ディレクトリ権限・シンボリックリンク・FIFO・fstat検査・api_keyの文字種・base_urlのuserinfo/クエリ/フラグメント）も pass。条件4（設定ファイルの検査）の裏付けが強化された。
+    - 条件1〜7: 前回確認から挙動の変更なし、該当テストはすべて pass。条件6: `src`・`tests`・`pyproject.toml` のURLは `*.example.invalid` とuserinfo拒否テスト用の値だけ。
+    - リポジトリ直下: `uv run ruff check` All checks passed、`uv run pytest` 501 passed・warning 0件。フロントエンド（Node v24.19.0）: `npm run typecheck`・`npm run lint`（`--deny-warnings`）・`npm test`（19ファイル・251 passed）・`npm run build` すべて exit 0。
+    - 影響範囲: 差分は `spec.md` と未追跡の `mcp-server/` だけ（Dockerfile・ルートの `pyproject.toml`/`uv.lock`・`backend/`・`frontend/` は変更なし）。
+    - 補足（対応不要）: ローカル・CIの uv 本体は 0.12.1（PyPI最新 0.13.5）。リポジトリ外・既存CI設定の話でこのタスクの範囲外のため、更新するかはユーザー判断。
+- 修正メモ（差し戻し1回目への対応、2026-10-23）:
+  - **性能評価の指摘（uv_build）**: `mcp-server/pyproject.toml` の `[build-system]` を `requires = ["uv_build>=0.13.5,<0.14.0"]` に変更（PyPIの最新が 0.13.5 であることを確認）。`uv lock`（38パッケージ）・`uv lock --check`・`uv sync --locked` OK。CIで指定の uv（`UV_VERSION: "0.12.1"`、ローカルと同じ版）で `uv build` を実行し、sdist・wheelとも作成できることを確認（uv 0.12.1 はこの範囲を直接ビルドしないため、PyPIから uv-build 0.13.5 を取得してPEP 517のビルドバックエンドとして使う。`-v` のログで `uv-build==0.13.5` の選択を確認）。なお現在のCIは `mcp-server/` を対象にしていない。
+  - **セキュリティLow-1**: `config.py` を、先に `os.open`（`O_RDONLY | O_NONBLOCK`。FIFOで止まらないため）で開き、`os.fstat` の結果で検査してから同じファイル記述子をTOMLとして読む形に変更（パスを別に `stat` しない）。検査項目に、所有者（`st_uid == os.getuid()`）と、親ディレクトリ（指定したパスの親と、シンボリックリンクをたどった実体の親の両方）にグループ・その他の書き込み権限（`0o022`）が無いことを追加。違反時は原因と対処（`chmod go-w` 等）が分かる `ConfigError`。
+  - **セキュリティLow-2**: `api_key`（前後の空白除去後）が表示可能なASCII（0x20〜0x7E）だけでない場合は `ConfigError`（値はメッセージに出さない）。`main()` で整形されたエラーとして終了コード1で止まる。
+  - **セキュリティLow-3**: `base_url` にユーザー名・パスワード（`@` のみの空のuserinfoも含む）、クエリ（`?`）、フラグメント（`#`）があれば `ConfigError`。
+  - **テスト追加**（`mcp-server/tests/test_config.py`、93件→124件）: 所有者違い（`os.getuid` を差し替え）、親ディレクトリ 770/707/777/1777 の拒否と 700/755/500 の受理、リンク先の親ディレクトリが777の場合の拒否、正常なシンボリックリンクの受理、FIFOで止まらず拒否、検査が `Path.stat` を使わず開いたファイルに対して行われること、ASCII以外・タブ・改行・NUL・DEL・ゼロ幅空白を含む `api_key` の拒否（値がメッセージに出ない）と表示可能ASCII記号の受理、`main()` がASCII以外の `api_key` で終了コード1・stderrに原因（値は出ない）、userinfo 4パターン・クエリ/フラグメント 5パターンの拒否、ポート・パスつきURLの受理。既存のツール・挙動は変更なし。
+  - **セルフチェック**: `cd mcp-server && uv run ruff check`（All checks passed）・`uv run ruff format --check`・`uv run pytest`（124 passed、warningなし。`-W error` でも 124 passed）。ルート: `uv run ruff check` All checks passed、`uv run pytest` 501 passed（warningなし）。フロントエンドは変更なし。
+- 差し戻し回数: 1
+
+### タスク: MCPサーバーの書き込み系ツール
+- status: 未着手
+- 概要: 「MCPサーバー基盤と読み取り系ツール」の完了後に着手し、MCPクライアントから授業・課題・企業・選考ステップ・企業タスクの作成・更新・削除を、既存APIとほぼ1対1のツールで行えるようにする（「## 決定事項」の「MCPサーバー」で削除まで許すと確定済み）。企業の更新は既存APIに無いので作らない。
+- 受け入れ条件:
+  - [ ] 授業（作成・更新・削除）、課題（作成・更新・削除）、企業（作成・削除）、選考ステップ（作成・更新・削除）、企業タスク（作成・更新・削除）がツール経由で行え、結果が既存APIで操作した場合と同じになる
+  - [ ] 課題・企業タスク・選考ステップのステータスを逆行させる更新はブロックされずに成功し、既存APIと同じ警告メッセージがツールの結果に含まれる
+  - [ ] 削除は論理削除で、削除後は読み取り系ツールの結果に現れない
+  - [ ] 更新は指定した項目だけを変更する（指定しない項目は変わらない）
+  - [ ] 入力値の上限・範囲（名前32文字・メモ1000文字・時限1〜6・年度2000〜2100・ステータス等の選択肢）を外れる入力は既存APIと同じく受け付けられず、原因が分かるエラーとしてツールの結果が返る
+  - [ ] 作成・更新はデータを変更する操作、削除は破壊的な操作であることがツールの属性と説明から分かり、読み取り系と区別できる
+  - [ ] 実際のバックエンド・個人用VM・デモ環境に接続しない自動テストで、正常系・逆行警告・入力エラー・存在しないid・部分更新が検証され、lintとともにwarningなしで通る
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
+- 差し戻し回数: 0
+
+### タスク: MCPサーバーのCI組み込みと利用手順の文書化
+- status: 未着手
+- 概要: 「MCPサーバーの書き込み系ツール」の完了後に着手し、MCPサーバーのlint・自動テストを既存のCIに組み込み、設定ファイルの作り方とMCPクライアント（Claude Code等）への登録手順を文書化する。なお、この変更をmasterへpushすると自動デプロイが動くため、pushはユーザーの確認を取ってから行う。
+- 受け入れ条件:
+  - [ ] masterへのpush・プルリクエストで、MCPサーバーのlint・自動テストがロックファイルに基づいてCIで実行され、失敗したらCIが失敗する。MCPサーバーのチェックが失敗した場合は自動デプロイが行われない
+  - [ ] 追加したCIジョブは、既存ジョブと同じく外部アクションをコミットSHAとタグ注記で固定し（既存と同じアクションは同じSHA）、checkoutで認証情報を残さず、OIDCトークンの取得権限を持たない
+  - [ ] 既存のジョブの構成・権限・キャッシュ・デプロイの流れは、MCPのチェックをデプロイの前提に加える以外は変わらず、バックエンド・フロントエンドのDockerイメージ・本番ビルドにMCPサーバー用の依存が入らない
+  - [ ] `mcp-server/README.md` に、MCPサーバーの概要・提供するツール・設定ファイルの作り方（権限600）・MCPクライアントへの登録手順が記載され、既存のREADMEやdeploy配下の文書から辿れる。記載どおりに操作するとMCPクライアントから使える。手順中のURL・API Keyはプレースホルダーで、個人用VMのAPI Keyは記載しない
+  - [ ] ワークフロー定義の静的検査でエラーが無く、MCPサーバー・バックエンドのlint・テスト（warningなし）とフロントエンドのチェックが通る
+- セキュリティエバリュエーターのフィードバック: (未評価)
+- 性能エバリュエーターのフィードバック: (未評価)
 - 差し戻し回数: 0

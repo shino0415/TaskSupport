@@ -1,0 +1,33 @@
+[project]
+name = "tasksupport-mcp"
+version = "0.1.0"
+description = "授業タスク・選考トラッカーAPIを呼ぶローカル（stdio）MCPサーバー"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx2>=2.16.0",
+    "mcp>=2.3.0",
+]
+
+[project.scripts]
+tasksupport-mcp = "tasksupport_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
