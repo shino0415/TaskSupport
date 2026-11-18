@@ -71,6 +71,8 @@ const NO_SELECTION = '' as const
 
 const IN_PROGRESS_STATUS: CompanyStatus = '選考中'
 
+const OFFER_STATUS: CompanyStatus = '内定'
+
 /**
  * 企業の一覧・登録・詳細・削除と、選択した企業配下の選考ステップ・企業タスクの
  * 一覧・追加・編集・削除をまとめた画面。企業詳細（GET /companies/{id}）は選考ステップ・
@@ -298,7 +300,7 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
     setIsUpdatingCompanyStatus(true)
     try {
       const updated = await updateCompany(apiKey, company.id, { status })
-      // 内定・お見送りから選考中へ戻す逆行はブロックされず、更新は成立したうえで警告が返る
+      // 選考中への逆行や辞退から内定へ戻す逆行はブロックされず、更新は成立したうえで警告が返る
       setNotice(
         updated.warning === null
           ? {
@@ -444,12 +446,13 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
   }
 
   const selectedCompany = companies?.find((company) => company.id === selectedCompanyId) ?? null
-  // 選考中以外（内定・お見送り、および未知の値）は選考終了の表に出す
+  // 選考中・内定以外（お見送り・辞退、および未知の値）は「お見送り・辞退」の欄に出す
   const inProgressCompanies = (companies ?? []).filter(
     (company) => company.status === IN_PROGRESS_STATUS,
   )
-  const finishedCompanies = (companies ?? []).filter(
-    (company) => company.status !== IN_PROGRESS_STATUS,
+  const offerCompanies = (companies ?? []).filter((company) => company.status === OFFER_STATUS)
+  const closedCompanies = (companies ?? []).filter(
+    (company) => company.status !== IN_PROGRESS_STATUS && company.status !== OFFER_STATUS,
   )
 
   const renderCompaniesTable = (rows: CompanyListItem[], showNextStep: boolean) => (
@@ -535,6 +538,43 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
     </TableContainer>
   )
 
+  const renderFinishedAccordion = ({
+    idPrefix,
+    title,
+    rows,
+    defaultExpanded,
+  }: {
+    idPrefix: string
+    title: string
+    rows: CompanyListItem[]
+    defaultExpanded: boolean
+  }) => (
+    <Accordion
+      disableGutters
+      variant="outlined"
+      defaultExpanded={defaultExpanded}
+      sx={{ mt: 2 }}
+      slotProps={{ transition: { unmountOnExit: true } }}
+    >
+      <AccordionSummary
+        expandIcon={<Typography aria-hidden="true">▼</Typography>}
+        aria-controls={`${idPrefix}-content`}
+        id={`${idPrefix}-header`}
+      >
+        <Typography component="span">
+          {title}（{rows.length} 件）
+        </Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        {rows.length === 0 ? (
+          <Alert severity="info">{title}の企業は0件です。</Alert>
+        ) : (
+          renderCompaniesTable(rows, false)
+        )}
+      </AccordionDetails>
+    </Accordion>
+  )
+
   return (
     <Paper component="section" aria-label="選考管理" sx={{ p: 2 }}>
       <Stack
@@ -589,29 +629,18 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
               ) : (
                 renderCompaniesTable(inProgressCompanies, true)
               )}
-              <Accordion
-                disableGutters
-                variant="outlined"
-                sx={{ mt: 2 }}
-                slotProps={{ transition: { unmountOnExit: true } }}
-              >
-                <AccordionSummary
-                  expandIcon={<Typography aria-hidden="true">▼</Typography>}
-                  aria-controls="finished-companies-content"
-                  id="finished-companies-header"
-                >
-                  <Typography component="span">
-                    選考終了（内定・お見送り）（{finishedCompanies.length} 件）
-                  </Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  {finishedCompanies.length === 0 ? (
-                    <Alert severity="info">選考終了の企業は0件です。</Alert>
-                  ) : (
-                    renderCompaniesTable(finishedCompanies, false)
-                  )}
-                </AccordionDetails>
-              </Accordion>
+              {renderFinishedAccordion({
+                idPrefix: 'offer-companies',
+                title: '内定',
+                rows: offerCompanies,
+                defaultExpanded: true,
+              })}
+              {renderFinishedAccordion({
+                idPrefix: 'closed-companies',
+                title: 'お見送り・辞退',
+                rows: closedCompanies,
+                defaultExpanded: false,
+              })}
             </>
           )}
         </>

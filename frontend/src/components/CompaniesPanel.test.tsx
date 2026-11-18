@@ -13,6 +13,7 @@ const COMPANY_A: Company = { id: 1, name: '株式会社サンプル', status: '�
 const COMPANY_B: Company = { id: 2, name: '合同会社テスト', status: '選考中', is_deleted: false }
 const COMPANY_OFFER: Company = { id: 3, name: '内定株式会社', status: '内定', is_deleted: false }
 const COMPANY_REJECTED: Company = { id: 4, name: '見送り商事', status: 'お見送り', is_deleted: false }
+const COMPANY_DECLINED: Company = { id: 6, name: '辞退工業', status: '辞退', is_deleted: false }
 
 const STEP_A: InterviewStep = {
   id: 101,
@@ -247,11 +248,13 @@ function setupFakeServer(
       }
       if (method === 'PATCH') {
         const patch = body as Pick<Company, 'status'>
-        // 内定・お見送りから選考中へ戻す変更だけが逆行（内定⇔お見送りは枝分かれ先同士のため無警告）
-        const warning =
-          target.status !== '選考中' && patch.status === '選考中'
-            ? `${target.status} から ${patch.status} への変更です。意図的な変更か確認してください。`
-            : null
+        // 選考中へ戻す変更と辞退から内定へ戻す変更だけが逆行（それ以外の終了状態どうしは無警告）
+        const isBackward =
+          (target.status !== '選考中' && patch.status === '選考中') ||
+          (target.status === '辞退' && patch.status === '内定')
+        const warning = isBackward
+          ? `${target.status} から ${patch.status} への変更です。意図的な変更か確認してください。`
+          : null
         target.status = patch.status
         return Promise.resolve(jsonResponse(200, { ...target, warning }))
       }
@@ -355,21 +358,24 @@ function inProgressTable() {
   return tableWithColumnHeader('次回選考')
 }
 
-/** 選考終了の企業の表（「選考状態」列を持ち「次回選考」列を持たない表）。開いていなければnull。 */
-function queryFinishedTable() {
-  return (
-    screen
-      .queryAllByRole('table')
-      .find(
-        (table) =>
-          within(table).queryByText('選考状態') !== null &&
-          within(table).queryByText('次回選考') === null,
-      ) ?? null
-  )
+/** 「内定（N 件）」の欄の見出しのボタン。 */
+function offerAccordionButton() {
+  return screen.getByRole('button', { name: /^内定（\d+ 件）$/ })
 }
 
-function finishedAccordionButton() {
-  return screen.getByRole('button', { name: /選考終了（内定・お見送り）/ })
+/** 「お見送り・辞退（N 件）」の欄の見出しのボタン。 */
+function closedAccordionButton() {
+  return screen.getByRole('button', { name: /^お見送り・辞退（\d+ 件）$/ })
+}
+
+/** 「内定」の欄の中身（閉じていればnull）。 */
+function queryOfferRegion() {
+  return screen.queryByRole('region', { name: /^内定（\d+ 件）$/ })
+}
+
+/** 「お見送り・辞退」の欄の中身（閉じていればnull）。 */
+function queryClosedRegion() {
+  return screen.queryByRole('region', { name: /^お見送り・辞退（\d+ 件）$/ })
 }
 
 /** 行の中の選考状態のChip（同じ文言が状態変更の選択欄にも出るため、Chipに絞って取り出す）。 */
@@ -1003,8 +1009,11 @@ describe('通信エラー', () => {
     await selectCompanySteps(user, '株式会社サンプル')
 
     // 選考ステップ・企業タスクの両方が同じ500エラーを返すため、両方のアラートを確認する
+    // （最初から開いている「内定」の欄の0件表示のアラートは対象外）
     await waitFor(() => {
-      const alerts = screen.getAllByRole('alert')
+      const alerts = screen
+        .getAllByRole('alert')
+        .filter((alert) => alert.classList.contains('MuiAlert-colorError'))
       expect(alerts).toHaveLength(2)
       alerts.forEach((alert) => expect(alert).toHaveTextContent('500'))
     })
@@ -1184,67 +1193,141 @@ describe('入力値の上限', () => {
   })
 })
 
-describe('選考中・選考終了の表への振り分け', () => {
-  it('選考中の企業は上の表に、内定・お見送りの企業は折りたたまれた選考終了の表に入り、見出しに件数が出る', async () => {
-    setupFakeServer([COMPANY_A, COMPANY_OFFER, COMPANY_REJECTED], [])
+describe('選考中・内定・お見送り・辞退の欄への振り分け', () => {
+  it('選考中は上の表に、内定は「内定」の欄に、お見送りと辞退は「お見送り・辞退」の欄に入り、見出しに件数が出る', async () => {
+    const companyOffer2: Company = { id: 7, name: '第二内定株式会社', status: '内定', is_deleted: false }
+    setupFakeServer(
+      [COMPANY_A, COMPANY_B, COMPANY_OFFER, companyOffer2, COMPANY_REJECTED, COMPANY_DECLINED],
+      [],
+    )
     const user = userEvent.setup()
 
     renderPanel()
-    await screen.findByText('取得件数: 3 件')
+    await screen.findByText('取得件数: 6 件')
 
-    expect(screen.getByText('選考中（1 件）')).toBeInTheDocument()
-    expect(within(inProgressTable()).getByText('株式会社サンプル')).toBeInTheDocument()
-    expect(within(inProgressTable()).queryByText('内定株式会社')).not.toBeInTheDocument()
-    expect(within(inProgressTable()).queryByText('見送り商事')).not.toBeInTheDocument()
+    expect(screen.getByText('選考中（2 件）')).toBeInTheDocument()
+    const inProgress = inProgressTable()
+    expect(within(inProgress).getByText('株式会社サンプル')).toBeInTheDocument()
+    expect(within(inProgress).getByText('合同会社テスト')).toBeInTheDocument()
+    for (const name of ['内定株式会社', '第二内定株式会社', '見送り商事', '辞退工業']) {
+      expect(within(inProgress).queryByText(name)).not.toBeInTheDocument()
+    }
 
-    // ページを開いた時点では閉じている
-    const summary = finishedAccordionButton()
-    expect(summary).toHaveTextContent('選考終了（内定・お見送り）（2 件）')
-    expect(summary).toHaveAttribute('aria-expanded', 'false')
-    expect(queryFinishedTable()).toBeNull()
-    expect(screen.queryByText('内定株式会社')).not.toBeInTheDocument()
+    expect(offerAccordionButton()).toHaveTextContent('内定（2 件）')
+    const offer = queryOfferRegion()!
+    expect(within(offer).getAllByRole('row')).toHaveLength(1 + 2)
+    expect(within(offer).getByText('内定株式会社')).toBeInTheDocument()
+    expect(within(offer).getByText('第二内定株式会社')).toBeInTheDocument()
+    expect(within(offer).queryByText('次回選考')).not.toBeInTheDocument()
 
-    await user.click(summary)
-    expect(finishedAccordionButton()).toHaveAttribute('aria-expanded', 'true')
-    const finished = queryFinishedTable()
-    expect(finished).not.toBeNull()
-    expect(within(finished!).getByText('内定株式会社')).toBeInTheDocument()
-    expect(within(finished!).getByText('見送り商事')).toBeInTheDocument()
-    expect(within(finished!).queryByText('株式会社サンプル')).not.toBeInTheDocument()
-
-    await user.click(finishedAccordionButton())
-    expect(finishedAccordionButton()).toHaveAttribute('aria-expanded', 'false')
-    await waitFor(() => expect(queryFinishedTable()).toBeNull())
+    expect(closedAccordionButton()).toHaveTextContent('お見送り・辞退（2 件）')
+    await user.click(closedAccordionButton())
+    const closed = queryClosedRegion()!
+    expect(within(closed).getAllByRole('row')).toHaveLength(1 + 2)
+    expect(within(closed).getByText('見送り商事')).toBeInTheDocument()
+    expect(within(closed).getByText('辞退工業')).toBeInTheDocument()
+    expect(within(closed).queryByText('内定株式会社')).not.toBeInTheDocument()
   })
 
-  it('選考状態がChipで表示され、内定とお見送りが見分けられる', async () => {
+  it('ページを開いた時点で「内定」の欄は開き「お見送り・辞退」の欄は閉じていて、どちらも操作で開閉できる', async () => {
     setupFakeServer([COMPANY_A, COMPANY_OFFER, COMPANY_REJECTED], [])
     const user = userEvent.setup()
 
     renderPanel()
     await screen.findByText('取得件数: 3 件')
-    await user.click(finishedAccordionButton())
 
-    const finished = queryFinishedTable()!
-    const offerRow = within(finished).getByText('内定株式会社').closest('tr')!
-    const rejectedRow = within(finished).getByText('見送り商事').closest('tr')!
-    const offerChip = statusChipOf(offerRow)
-    const rejectedChip = statusChipOf(rejectedRow)
+    expect(offerAccordionButton()).toHaveAttribute('aria-expanded', 'true')
+    expect(within(queryOfferRegion()!).getByText('内定株式会社')).toBeInTheDocument()
+    expect(closedAccordionButton()).toHaveAttribute('aria-expanded', 'false')
+    expect(queryClosedRegion()).toBeNull()
+    expect(screen.queryByText('見送り商事')).not.toBeInTheDocument()
+
+    await user.click(offerAccordionButton())
+    expect(offerAccordionButton()).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => expect(queryOfferRegion()).toBeNull())
+    await user.click(offerAccordionButton())
+    expect(offerAccordionButton()).toHaveAttribute('aria-expanded', 'true')
+    expect(within(queryOfferRegion()!).getByText('内定株式会社')).toBeInTheDocument()
+
+    await user.click(closedAccordionButton())
+    expect(closedAccordionButton()).toHaveAttribute('aria-expanded', 'true')
+    expect(within(queryClosedRegion()!).getByText('見送り商事')).toBeInTheDocument()
+    await user.click(closedAccordionButton())
+    expect(closedAccordionButton()).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => expect(queryClosedRegion()).toBeNull())
+  })
+
+  it('選考状態がChipで表示され、お見送りと辞退、および辞退と他の状態が見分けられる', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_OFFER, COMPANY_REJECTED, COMPANY_DECLINED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 4 件')
+    await user.click(closedAccordionButton())
+
+    const chipOf = (container: HTMLElement, name: string) =>
+      statusChipOf(within(container).getByText(name).closest('tr')!)
+    const inProgressChip = chipOf(inProgressTable(), '株式会社サンプル')
+    const offerChip = chipOf(queryOfferRegion()!, '内定株式会社')
+    const rejectedChip = chipOf(queryClosedRegion()!, '見送り商事')
+    const declinedChip = chipOf(queryClosedRegion()!, '辞退工業')
+    expect(inProgressChip).toHaveTextContent('選考中')
     expect(offerChip).toHaveTextContent('内定')
     expect(rejectedChip).toHaveTextContent('お見送り')
-    expect(offerChip.className).not.toBe(rejectedChip.className)
+    expect(declinedChip).toHaveTextContent('辞退')
+    const classNames = [inProgressChip, offerChip, rejectedChip, declinedChip].map(
+      (chip) => chip.className,
+    )
+    expect(new Set(classNames).size).toBe(4)
   })
 
-  it('選考中の企業がなく、選考終了の企業もない場合でも表示が破綻しない', async () => {
+  it('未知の選考状態の企業は「お見送り・辞退」の欄に入る', async () => {
+    const companyUnknown = {
+      id: 8,
+      name: '未知状態株式会社',
+      status: '保留',
+      is_deleted: false,
+    } as unknown as Company
+    setupFakeServer([COMPANY_A, companyUnknown], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    expect(offerAccordionButton()).toHaveTextContent('（0 件）')
+    expect(closedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(closedAccordionButton())
+    const row = within(queryClosedRegion()!).getByText('未知状態株式会社').closest('tr')!
+    expect(statusChipOf(row)).toHaveTextContent('保留')
+  })
+
+  it('選考中・内定の企業がない場合でも表示が破綻せず、それぞれ0件と分かる', async () => {
+    setupFakeServer([COMPANY_DECLINED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    expect(screen.getByText('選考中（0 件）')).toBeInTheDocument()
+    expect(screen.getByText('選考中の企業は0件です。')).toBeInTheDocument()
+    expect(offerAccordionButton()).toHaveTextContent('内定（0 件）')
+    expect(within(queryOfferRegion()!).getByText('内定の企業は0件です。')).toBeInTheDocument()
+    expect(within(queryOfferRegion()!).queryByRole('table')).not.toBeInTheDocument()
+    expect(closedAccordionButton()).toHaveTextContent('お見送り・辞退（1 件）')
+    await user.click(closedAccordionButton())
+    expect(within(queryClosedRegion()!).getByText('辞退工業')).toBeInTheDocument()
+  })
+
+  it('お見送り・辞退の企業がない場合でも、その欄を開くと0件と分かる', async () => {
     setupFakeServer([COMPANY_OFFER], [])
     const user = userEvent.setup()
 
     renderPanel()
     await screen.findByText('取得件数: 1 件')
-    expect(screen.getByText('選考中の企業は0件です。')).toBeInTheDocument()
-    expect(finishedAccordionButton()).toHaveTextContent('（1 件）')
-    await user.click(finishedAccordionButton())
-    expect(within(queryFinishedTable()!).getByText('内定株式会社')).toBeInTheDocument()
+    expect(closedAccordionButton()).toHaveTextContent('お見送り・辞退（0 件）')
+    await user.click(closedAccordionButton())
+    expect(
+      within(queryClosedRegion()!).getByText('お見送り・辞退の企業は0件です。'),
+    ).toBeInTheDocument()
+    expect(within(queryClosedRegion()!).queryByRole('table')).not.toBeInTheDocument()
   })
 })
 
@@ -1272,7 +1355,7 @@ describe('次回選考の表示', () => {
 })
 
 describe('企業の選考状態の変更', () => {
-  it('選考中から内定に変えると PATCH /companies/{id} を送り、一覧を取り直して選考終了の表へ移る', async () => {
+  it('選考中から内定に変えると PATCH /companies/{id} を送り、一覧を取り直して「内定」の欄へ移る', async () => {
     const server = setupFakeServer([COMPANY_A, COMPANY_B], [])
     const user = userEvent.setup()
 
@@ -1294,18 +1377,74 @@ describe('企業の選考状態の変更', () => {
     await waitFor(() =>
       expect(within(inProgressTable()).queryByText('合同会社テスト')).not.toBeInTheDocument(),
     )
-    expect(finishedAccordionButton()).toHaveTextContent('（1 件）')
-    await user.click(finishedAccordionButton())
-    expect(within(queryFinishedTable()!).getByText('合同会社テスト')).toBeInTheDocument()
+    expect(offerAccordionButton()).toHaveTextContent('（1 件）')
+    expect(within(queryOfferRegion()!).getByText('合同会社テスト')).toBeInTheDocument()
   })
 
-  it('選考終了から選考中へ戻す逆行は警告を表示しつつ、変更は成立して選考中の表へ移る', async () => {
+  it('選考中から辞退に変えると PATCH を送り、一覧を取り直して「お見送り・辞退」の欄へ移る', async () => {
+    const server = setupFakeServer([COMPANY_A, COMPANY_B], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    await changeCompanyStatus(user, '合同会社テスト', '辞退')
+
+    expect(
+      await screen.findByText('企業「合同会社テスト」の選考状態を「辞退」に変更しました。'),
+    ).toBeInTheDocument()
+    const patch = server.requests.find((r) => r.method === 'PATCH')
+    expect(patch).toMatchObject({ url: '/companies/2', body: { status: '辞退' } })
+    await waitFor(() =>
+      expect(within(inProgressTable()).queryByText('合同会社テスト')).not.toBeInTheDocument(),
+    )
+    expect(closedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(closedAccordionButton())
+    const row = within(queryClosedRegion()!).getByText('合同会社テスト').closest('tr')!
+    expect(statusChipOf(row)).toHaveTextContent('辞退')
+  })
+
+  it('内定から辞退に変えると「内定」の欄から「お見送り・辞退」の欄へ移る', async () => {
     setupFakeServer([COMPANY_A, COMPANY_OFFER], [])
     const user = userEvent.setup()
 
     renderPanel()
     await screen.findByText('取得件数: 2 件')
-    await user.click(finishedAccordionButton())
+    await changeCompanyStatus(user, '内定株式会社', '辞退')
+
+    const alert = await screen.findByText('企業「内定株式会社」の選考状態を「辞退」に変更しました。')
+    expect(alert.closest('.MuiAlert-root')).toHaveClass('MuiAlert-colorSuccess')
+    await waitFor(() => expect(offerAccordionButton()).toHaveTextContent('（0 件）'))
+    expect(within(queryOfferRegion()!).getByText('内定の企業は0件です。')).toBeInTheDocument()
+    expect(closedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(closedAccordionButton())
+    expect(within(queryClosedRegion()!).getByText('内定株式会社')).toBeInTheDocument()
+  })
+
+  it('辞退から内定へ戻す変更で警告が返ると、警告を表示しつつ変更は成立して「内定」の欄へ移る', async () => {
+    setupFakeServer([COMPANY_DECLINED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    await user.click(closedAccordionButton())
+    await changeCompanyStatus(user, '辞退工業', '内定')
+
+    const alert = await screen.findByText(/意図的な変更か確認してください/)
+    expect(alert).toHaveTextContent('辞退 から 内定 への変更です')
+    expect(alert).toHaveTextContent('変更は保存されています')
+    expect(alert.closest('.MuiAlert-root')).toHaveClass('MuiAlert-colorWarning')
+    await waitFor(() =>
+      expect(within(queryOfferRegion()!).getByText('辞退工業')).toBeInTheDocument(),
+    )
+    expect(closedAccordionButton()).toHaveTextContent('（0 件）')
+  })
+
+  it('内定から選考中へ戻す逆行は警告を表示しつつ、変更は成立して選考中の表へ移る', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_OFFER], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
     await changeCompanyStatus(user, '内定株式会社', '選考中')
 
     const alert = await screen.findByText(/意図的な変更か確認してください/)
@@ -1315,7 +1454,25 @@ describe('企業の選考状態の変更', () => {
     await waitFor(() =>
       expect(within(inProgressTable()).getByText('内定株式会社')).toBeInTheDocument(),
     )
-    expect(finishedAccordionButton()).toHaveTextContent('（0 件）')
+    expect(offerAccordionButton()).toHaveTextContent('（0 件）')
+  })
+
+  it('辞退から選考中へ戻す逆行は警告を表示しつつ、変更は成立して選考中の表へ移る', async () => {
+    setupFakeServer([COMPANY_DECLINED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    await user.click(closedAccordionButton())
+    await changeCompanyStatus(user, '辞退工業', '選考中')
+
+    const alert = await screen.findByText(/意図的な変更か確認してください/)
+    expect(alert).toHaveTextContent('辞退 から 選考中 への変更です')
+    expect(alert.closest('.MuiAlert-root')).toHaveClass('MuiAlert-colorWarning')
+    await waitFor(() =>
+      expect(within(inProgressTable()).getByText('辞退工業')).toBeInTheDocument(),
+    )
+    expect(closedAccordionButton()).toHaveTextContent('（0 件）')
   })
 
   it('同じ状態を選び直しても送信しない', async () => {
@@ -1343,10 +1500,16 @@ describe('企業の選考状態の変更', () => {
 
     renderPanel()
     await screen.findByText('取得件数: 1 件')
-    await changeCompanyStatus(user, '株式会社サンプル', 'お見送り')
+    await changeCompanyStatus(user, '株式会社サンプル', '辞退')
 
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('500')
+    // 最初から開いている「内定」の欄の0件表示（info）ではなく、エラーのアラートを待つ
+    await waitFor(() => {
+      const alerts = screen
+        .getAllByRole('alert')
+        .filter((alert) => alert.classList.contains('MuiAlert-colorError'))
+      expect(alerts).toHaveLength(1)
+      expect(alerts[0]).toHaveTextContent('500')
+    })
   })
 
   it('企業詳細で選考状態が分かる', async () => {
@@ -1355,13 +1518,27 @@ describe('企業の選考状態の変更', () => {
 
     renderPanel()
     await screen.findByText('取得件数: 2 件')
-    await user.click(finishedAccordionButton())
+    await user.click(closedAccordionButton())
     await user.click(screen.getByRole('button', { name: '企業「見送り商事」の詳細' }))
 
     const dialog = await screen.findByRole('dialog')
     expect(await within(dialog).findByText('見送り商事')).toBeInTheDocument()
     expect(within(dialog).getByText('選考状態')).toBeInTheDocument()
     expect(within(dialog).getByText('お見送り').closest('.MuiChip-root')).not.toBeNull()
+  })
+
+  it('企業詳細で辞退の状態が分かる', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_DECLINED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    await user.click(closedAccordionButton())
+    await user.click(screen.getByRole('button', { name: '企業「辞退工業」の詳細' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('辞退工業')).toBeInTheDocument()
+    expect(within(dialog).getByText('辞退').closest('.MuiChip-root')).not.toBeNull()
   })
 })
 
@@ -1391,7 +1568,7 @@ describe('選考ステップの変更後の企業一覧の取り直し', () => {
     ).toBe(true)
   })
 
-  it('選考ステップの結果を不通過に更新すると、自動お見送りの結果として選考終了の表へ移る', async () => {
+  it('選考ステップの結果を不通過に更新すると、自動お見送りの結果として「お見送り・辞退」の欄へ移る', async () => {
     setupFakeServer([COMPANY_A, COMPANY_B], [STEP_A])
     const user = userEvent.setup()
 
@@ -1408,10 +1585,9 @@ describe('選考ステップの変更後の企業一覧の取り直し', () => {
     await waitFor(() =>
       expect(within(inProgressTable()).queryByText('株式会社サンプル')).not.toBeInTheDocument(),
     )
-    expect(finishedAccordionButton()).toHaveTextContent('（1 件）')
-    await user.click(finishedAccordionButton())
-    const finished = queryFinishedTable()!
-    const row = within(finished).getByText('株式会社サンプル').closest('tr')!
+    expect(closedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(closedAccordionButton())
+    const row = within(queryClosedRegion()!).getByText('株式会社サンプル').closest('tr')!
     expect(statusChipOf(row)).toHaveTextContent('お見送り')
   })
 
