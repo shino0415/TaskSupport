@@ -15,11 +15,7 @@ from app.schemas import (
     CompanyUpdate,
     NextInterviewStepSummary,
 )
-from app.status_transitions import (
-    COMPANY_STATUS_GRAPH,
-    InterviewStepResult,
-    check_backward_transition,
-)
+from app.status_transitions import InterviewStepResult, check_company_status_transition
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -94,9 +90,7 @@ def update_company(
 
     warning = None
     if "status" in update_data and update_data["status"] != company.status:
-        warning = check_backward_transition(
-            COMPANY_STATUS_GRAPH, company.status, update_data["status"]
-        )
+        warning = check_company_status_transition(company.status, update_data["status"])
 
     for field, value in update_data.items():
         setattr(company, field, value)

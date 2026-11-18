@@ -11,7 +11,9 @@ InterviewStep.result, Company.status）
 - InterviewStep.result は深さ2（未定→通過/不通過で終端）の浅いグラフのため、
   「複数段飛び越え遷移」は隣接遷移と区別がつかず対象外。
 - Company.status は選考中→辞退が直接の辺と内定経由の両方で到達できるため、
-  飛び越え遷移は順当な変更の中で検証する。
+  飛び越え遷移は順当な変更の中で検証する。選考中とインターン参加の間は
+  どちら向きも警告しない例外があるため、APIが使う check_company_status_transition
+  でも判定を検証する。
 """
 
 import pytest
@@ -24,6 +26,7 @@ from app.status_transitions import (
     INTERVIEW_STEP_RESULT_GRAPH,
     CompanyStatus,
     check_backward_transition,
+    check_company_status_transition,
 )
 
 # --- Assignment.status（線形、分岐なし） ---
@@ -133,7 +136,7 @@ def test_result_unrelated_branch_no_warning():
     assert check_backward_transition(INTERVIEW_STEP_RESULT_GRAPH, "不通過", "通過") is None
 
 
-# --- Company.status（選考中から内定/お見送り/辞退へ分岐、内定から辞退へ） ---
+# --- Company.status（インターン参加・選考中から内定/お見送り/辞退へ分岐、内定から辞退へ） ---
 
 
 def test_company_status_graph_covers_all_statuses():
@@ -174,3 +177,65 @@ def test_company_status_declined_to_offer_returns_warning():
 )
 def test_company_status_unrelated_branch_no_warning(from_status, to_status):
     assert check_backward_transition(COMPANY_STATUS_GRAPH, from_status, to_status) is None
+
+
+# --- Company.status の判定（check_company_status_transition、インターン参加の例外を含む） ---
+
+
+def test_company_transition_same_status_no_warning():
+    for status in CompanyStatus:
+        assert check_company_status_transition(status, status) is None
+
+
+@pytest.mark.parametrize(
+    ("from_status", "to_status"), [("選考中", "インターン参加"), ("インターン参加", "選考中")]
+)
+def test_company_transition_between_in_progress_and_internship_no_warning(
+    from_status, to_status
+):
+    assert check_company_status_transition(from_status, to_status) is None
+
+
+@pytest.mark.parametrize("to_status", ["内定", "お見送り", "辞退"])
+def test_company_transition_from_internship_no_warning(to_status):
+    assert check_company_status_transition("インターン参加", to_status) is None
+
+
+@pytest.mark.parametrize("from_status", ["内定", "お見送り", "辞退"])
+def test_company_transition_finished_to_internship_returns_warning(from_status):
+    assert (
+        check_company_status_transition(from_status, "インターン参加")
+        == f"{from_status} から インターン参加 への変更です。意図的な変更か確認してください。"
+    )
+
+
+@pytest.mark.parametrize(
+    ("from_status", "to_status", "expected_warning"),
+    [
+        ("選考中", "内定", False),
+        ("選考中", "お見送り", False),
+        ("選考中", "辞退", False),
+        ("内定", "辞退", False),
+        ("内定", "お見送り", False),
+        ("お見送り", "内定", False),
+        ("お見送り", "辞退", False),
+        ("辞退", "お見送り", False),
+        ("内定", "選考中", True),
+        ("お見送り", "選考中", True),
+        ("辞退", "選考中", True),
+        ("辞退", "内定", True),
+    ],
+)
+def test_company_transition_existing_rules_unchanged(from_status, to_status, expected_warning):
+    warning = check_company_status_transition(from_status, to_status)
+    if expected_warning:
+        assert warning == (
+            f"{from_status} から {to_status} への変更です。意図的な変更か確認してください。"
+        )
+    else:
+        assert warning is None
+
+
+def test_internship_exception_is_not_part_of_the_shared_graph_check():
+    # 例外は企業の選考状態の判定に限るため、共通関数とグラフそのものは従来の判定のまま
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, "選考中", "インターン参加") is not None

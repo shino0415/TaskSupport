@@ -188,6 +188,56 @@ def test_reverting_rejected_result_does_not_restore_company(client, to_result):
     assert company_status(client, company_id) == "お見送り"
 
 
+# --- インターン参加の企業 ---
+
+
+def test_create_rejected_step_marks_internship_company_as_rejected(client):
+    company_id = create_company(client, status="インターン参加")
+
+    response = post_step(client, company_id, result="不通過")
+
+    assert response.status_code == 201
+    assert company_status(client, company_id) == "お見送り"
+
+
+@pytest.mark.parametrize("result", ["未定", "通過", None])
+def test_create_non_rejected_step_keeps_internship_company(client, result):
+    company_id = create_company(client, status="インターン参加")
+    overrides = {} if result is None else {"result": result}
+
+    response = post_step(client, company_id, **overrides)
+
+    assert response.status_code == 201
+    assert company_status(client, company_id) == "インターン参加"
+
+
+@pytest.mark.parametrize("from_result", ["未定", "通過"])
+def test_update_result_to_rejected_marks_internship_company_as_rejected(client, from_result):
+    company_id = create_company(client, status="インターン参加")
+    step_id = post_step(client, company_id, result=from_result).json()["id"]
+
+    response = patch_step(client, step_id, {"result": "不通過"})
+
+    assert response.status_code == 200
+    assert response.json()["result"] == "不通過"
+    assert company_status(client, company_id) == "お見送り"
+
+
+def test_update_already_rejected_step_keeps_internship_company(client):
+    company_id = create_company(client)
+    step_id = post_step(client, company_id, result="不通過").json()["id"]
+    restore_response = client.patch(
+        f"/companies/{company_id}", json={"status": "インターン参加"}, headers=AUTH_HEADERS
+    )
+    assert restore_response.status_code == 200
+
+    response = patch_step(client, step_id, {"result": "不通過", "memo": "メモ修正"})
+
+    assert response.status_code == 200
+    assert response.json()["memo"] == "メモ修正"
+    assert company_status(client, company_id) == "インターン参加"
+
+
 def test_auto_rejection_affects_only_the_step_company(client):
     company_id = create_company(client)
     other_company_id = create_company(client)

@@ -44,6 +44,7 @@ class InterviewStepResult(StrEnum):
 
 class CompanyStatus(StrEnum):
     選考中 = "選考中"
+    インターン参加 = "インターン参加"
     内定 = "内定"
     お見送り = "お見送り"
     辞退 = "辞退"
@@ -77,6 +78,12 @@ INTERVIEW_STEP_RESULT_GRAPH: dict[InterviewStepResult, list[InterviewStepResult]
 }
 
 COMPANY_STATUS_GRAPH: dict[CompanyStatus, list[CompanyStatus]] = {
+    CompanyStatus.インターン参加: [
+        CompanyStatus.選考中,
+        CompanyStatus.内定,
+        CompanyStatus.お見送り,
+        CompanyStatus.辞退,
+    ],
     CompanyStatus.選考中: [CompanyStatus.内定, CompanyStatus.お見送り, CompanyStatus.辞退],
     CompanyStatus.内定: [CompanyStatus.辞退],
     CompanyStatus.お見送り: [],
@@ -101,6 +108,19 @@ def check_backward_transition[StatusT: str](
     if _is_reachable(forward_edges, to_status, from_status):
         return f"{from_status} から {to_status} への変更です。意図的な変更か確認してください。"
     return None
+
+
+# 選考中→インターン参加は、グラフ上ではインターン参加→選考中の辺の逆向きとして
+# 逆行と判定されてしまう。どちら向きも警告しない決定のため、この組み合わせだけ
+# グラフの判定から外す（他のグラフの判定には影響させない）。
+_COMPANY_STATUS_NO_WARNING_PAIR = frozenset({CompanyStatus.選考中, CompanyStatus.インターン参加})
+
+
+def check_company_status_transition(from_status: str, to_status: str) -> str | None:
+    """企業の選考状態の変更について、逆行時のみ警告メッセージを返す。"""
+    if {from_status, to_status} == _COMPANY_STATUS_NO_WARNING_PAIR:
+        return None
+    return check_backward_transition(COMPANY_STATUS_GRAPH, from_status, to_status)
 
 
 def _is_reachable[StatusT: str](

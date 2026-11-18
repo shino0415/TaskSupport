@@ -61,7 +61,7 @@ def _get_active_interview_step_or_404(db: Session, interview_step_id: int) -> mo
 def _reject_company_if_in_progress(company: models.Company) -> None:
     # 内定・お見送り・辞退の企業は上書きしない。commitは呼び出し元で選考ステップの
     # 変更と一緒に行い、どちらか一方だけが反映されないようにする。
-    if company.status == CompanyStatus.選考中:
+    if company.status in (CompanyStatus.選考中, CompanyStatus.インターン参加):
         company.status = CompanyStatus.お見送り
 
 

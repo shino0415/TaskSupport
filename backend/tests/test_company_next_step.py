@@ -227,3 +227,22 @@ def test_query_count_does_not_grow_with_number_of_companies(client, engine):
 
     assert queries_with_many_companies == queries_with_one_company
     assert 0 < queries_with_one_company <= 2
+
+
+def test_internship_company_has_next_step_with_same_rule(client):
+    company_id = create_company(client)
+    response = client.patch(
+        f"/companies/{company_id}", json={"status": "インターン参加"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    create_step(client, company_id, type="最終面接", date="2026-12-10")
+    earliest_id = create_step(client, company_id, type="インターン面談", date="2026-11-25")
+    create_step(client, company_id, type="日付未定の面接")
+
+    [company] = [c for c in list_companies(client) if c["id"] == company_id]
+    assert company["status"] == "インターン参加"
+    assert company["next_step"] == {
+        "id": earliest_id,
+        "type": "インターン面談",
+        "date": "2026-11-25",
+    }

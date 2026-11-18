@@ -267,6 +267,60 @@ def test_list_and_detail_return_declined_status(client):
     assert get_company_body(client, company_id)["status"] == "辞退"
 
 
+@pytest.mark.parametrize(
+    ("from_status", "to_status"), [("選考中", "インターン参加"), ("インターン参加", "選考中")]
+)
+def test_patch_company_between_in_progress_and_internship_has_no_warning(
+    client, from_status, to_status
+):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": from_status})
+
+    response = patch_company(client, company_id, {"status": to_status})
+    assert response.status_code == 200
+    assert response.json()["id"] == company_id
+    assert response.json()["status"] == to_status
+    assert response.json()["warning"] is None
+    assert get_company_body(client, company_id)["status"] == to_status
+
+
+@pytest.mark.parametrize("to_status", ["内定", "お見送り", "辞退"])
+def test_patch_company_internship_to_other_status_has_no_warning(client, to_status):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": "インターン参加"})
+
+    response = patch_company(client, company_id, {"status": to_status})
+    assert response.status_code == 200
+    assert response.json()["status"] == to_status
+    assert response.json()["warning"] is None
+
+
+@pytest.mark.parametrize("from_status", ["内定", "お見送り", "辞退"])
+def test_patch_company_finished_to_internship_returns_warning_without_blocking(
+    client, from_status
+):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": from_status})
+
+    response = patch_company(client, company_id, {"status": "インターン参加"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "インターン参加"
+    assert (
+        response.json()["warning"]
+        == f"{from_status} から インターン参加 への変更です。意図的な変更か確認してください。"
+    )
+    assert get_company_body(client, company_id)["status"] == "インターン参加"
+
+
+def test_list_and_detail_return_internship_status(client):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": "インターン参加"})
+
+    listed = client.get("/companies", headers=AUTH_HEADERS).json()
+    assert [c["status"] for c in listed if c["id"] == company_id] == ["インターン参加"]
+    assert get_company_body(client, company_id)["status"] == "インターン参加"
+
+
 def test_patch_company_same_status_has_no_warning(client):
     company_id = create_company(client)
     response = patch_company(client, company_id, {"status": "選考中"})
@@ -274,7 +328,7 @@ def test_patch_company_same_status_has_no_warning(client):
     assert response.json()["warning"] is None
 
 
-@pytest.mark.parametrize("current_status", ["内定", "辞退"])
+@pytest.mark.parametrize("current_status", ["内定", "辞退", "インターン参加"])
 @pytest.mark.parametrize("bad_status", ["内々定", "", "不通過", "内定辞退", None, 1])
 def test_patch_company_rejects_invalid_or_null_status(client, bad_status, current_status):
     company_id = create_company(client)
