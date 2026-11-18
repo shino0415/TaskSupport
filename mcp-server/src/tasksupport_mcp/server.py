@@ -37,7 +37,7 @@ AssignmentStatus = Literal["未着手", "取組中", "未提出", "提出済み"
 CompanyTaskStatus = Literal["未着手", "処理中", "完了"]
 PrepStatus = Literal["準備中", "準備万端", "完了"]
 StepResult = Literal["未定", "通過", "不通過"]
-CompanyStatus = Literal["選考中", "内定", "お見送り", "辞退"]
+CompanyStatus = Literal["選考中", "インターン参加", "内定", "お見送り", "辞退"]
 
 NAME_DESC = "名前（必須。32文字以内、空白のみ不可）"
 LOOSE_NAME_DESC = "名前（必須。32文字以内）"
@@ -47,16 +47,20 @@ DEADLINE_DESC = (
     "タイムゾーン付き（Z・+09:00等）はAPIが422で拒否する"
 )
 DATE_DESC = "予定日（例: 2026-11-02）"
-COMPANY_STATUS_NOTE = "企業の status は選考状態で、選考中・内定・お見送り・辞退のいずれか。"
+COMPANY_STATUS_NOTE = (
+    "企業の status は選考状態で、選考中・インターン参加・内定・お見送り・辞退のいずれか。"
+)
 COMPANY_STATUS_WARNING_NOTE = (
-    "内定・お見送り・辞退から選考中に戻す変更と、辞退から内定に戻す変更は"
+    "内定・お見送り・辞退から選考中またはインターン参加に戻す変更と、辞退から内定に戻す変更は"
     "ブロックされずに成功し、その場合は結果の warning に警告文が入る。"
-    "それ以外の変更（選考中から内定・お見送り・辞退、内定から辞退、"
+    "それ以外の変更（選考中とインターン参加の間（どちら向きも）、"
+    "選考中・インターン参加から内定・お見送り・辞退、内定から辞退、"
     "お見送りと内定・辞退の間）では warning は null。"
 )
 AUTO_REJECTION_NOTE = (
     "結果を不通過にすると（作成時、または不通過以外から不通過への更新時）、"
-    "企業が選考中なら自動でお見送りになる（内定・お見送り・辞退の企業は変わらない）。"
+    "企業が選考中またはインターン参加なら自動でお見送りになる"
+    "（内定・お見送り・辞退の企業は変わらない）。"
 )
 
 # --- 更新内容（changes） ---
@@ -468,7 +472,7 @@ def build_server(api: ApiClient) -> MCPServer:
         "update_company",
         "企業の更新",
         "指定したidの企業を部分更新し、更新後の企業を返す（PATCH /companies/{company_id}）。"
-        "変更できるのは選考状態（status: 選考中・内定・お見送り・辞退）だけで、"
+        "変更できるのは選考状態（status: 選考中・インターン参加・内定・お見送り・辞退）だけで、"
         "企業名は変更できない。" + _UPDATE_NOTE + COMPANY_STATUS_WARNING_NOTE,
     )
     async def update_company(

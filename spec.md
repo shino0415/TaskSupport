@@ -3296,7 +3296,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: MCPサーバー・デモデータの企業選考状態「インターン参加」への対応
-- status: 未着手
+- status: 完了
 - 概要: 「企業の選考状態への「インターン参加」の追加（バックエンド）」の完了後に着手し、MCPサーバーの選考状態の選択肢と説明、MCPサーバーのREADMEをインターン参加に対応させ、デモデータに次回選考のあるインターン参加の企業を加える（2026-11-18決定）。
 - 受け入れ条件:
   - [ ] MCPサーバーの企業を更新するツールで状態をインターン参加に変更でき、結果が既存APIで操作した場合と同じになる。選択肢外の値は従来どおりAPIを呼ばずに拒否される
@@ -3305,6 +3305,28 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] デモデータの投入後に、選考中・インターン参加・内定・お見送り・辞退の企業がそれぞれ1社以上あり、インターン参加の企業のうち1社以上は企業一覧で次回選考が付く。自動お見送りの規則と矛盾しない（不通過の選考ステップを持つ企業はお見送りの企業に限る等、既存のデモデータの整合性は保たれる）
   - [ ] デモデータの自動リセットで、インターン参加に変更された企業やインターン参加から変更された企業も投入時の状態に戻る。リセットの件数の検証も新しいデモデータに合っている
   - [ ] 実際のバックエンド・個人用VM・デモ環境に接続しない自動テストで上記が検証され、MCPサーバー・バックエンドのlint・テスト（warningなし）が通る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- 実装メモ:
+  - `mcp-server/src/tasksupport_mcp/server.py`: `CompanyStatus` の選択肢を 選考中／インターン参加／内定／お見送り／辞退 にした（企業の更新の `changes.status` もこれを使うため、インターン参加を送れて、選択肢外の値は従来どおりAPIを呼ばずに拒否される）。`COMPANY_STATUS_NOTE`（企業一覧・詳細・作成・更新の説明）と `update_company` の「変更できるのは選考状態（status: …）だけ」にインターン参加を加えた。`COMPANY_STATUS_WARNING_NOTE` を「内定・お見送り・辞退から選考中またはインターン参加に戻す変更と、辞退から内定に戻す変更は警告付きで成功、それ以外（選考中とインターン参加の間（どちら向きも）、選考中・インターン参加から内定・お見送り・辞退、内定から辞退、お見送りと内定・辞退の間）は warning が null」にした。`AUTO_REJECTION_NOTE`（選考ステップの作成・更新の説明）の対象を「選考中またはインターン参加」にした
+  - `mcp-server/README.md`: 選考状態の一覧、警告が出る変更・出ない変更の範囲、`update_company` で変えられる状態、自動お見送りの対象を上と同じ内容にした（不通過を取り消したときの記述は「元の状態には戻らない」にした）
+  - `backend/app/seed_demo_data.py`: インターン参加の企業「模擬クラウドサービス株式会社」を追加（選考ステップは サマーインターン＝通過（9日前）と 一次面接＝未定（6日後）の2件で、企業一覧で次回選考が付く。不通過のステップは持たないため自動お見送りの規則と矛盾しない）。件数は企業7→8、選考ステップ11→13。既存の企業の並びは変えていない
+  - テスト: `backend/tests/test_seed_demo_data.py` の一時除外 `SEEDED_COMPANY_STATUSES` を削除し、`set(CompanyStatus)`（API経由の一覧では `CompanyStatus` の全値）との比較に戻した。件数と荒らし後の企業名の集合を更新し、API経由の一覧でインターン参加の企業に `next_step` が付くことを追加。`backend/tests/test_demo_reset.py` の件数を更新し、自動リセットのテストにインターン参加への変更（選考中→インターン参加、内定→インターン参加（逆行の警告付きで成功））とインターン参加からの変更（インターン参加→選考中）を加え、リセット後に投入時の状態へ戻ることを確認した。`mcp-server/tests` は説明文のアサーションを新しい文言にし、`changes.status` の選択肢にインターン参加を加え、インターン参加への更新（警告なし・警告付き）がAPIの応答をそのまま返すテストと、選択肢外の値「インターン」をAPIを呼ばずに拒否するテストを追加した。いずれも実際のバックエンド・VM・デモ環境には接続しない（バックエンドは一時ファイルDB、MCPはフェイクAPI）
+  - セルフチェック: ルート `uv run ruff check` All checks passed、`uv run pytest` 646 passed（warningなし）。`mcp-server`（`VIRTUAL_ENV` を外して実行）`uv run ruff check` All checks passed、`uv run pytest` 303 passed（warningなし）
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Low いずれも指摘なし）。未commitの差分（mcp-server/src・tests・README、backend/app/seed_demo_data.py、backend/tests の2ファイル）を確認した
+  - mass assignment（update_company が status 以外を送らない）: 変更は `CompanyStatus` の Literal にインターン参加を加えただけ。`CompanyChanges` は `status: CompanyStatus | None` の1フィールドのままで、ボディは `_changed()`（`model_dump(exclude_unset=True)`）により `status` しか入らない。`name`・`id`・`is_deleted` などの未知のキーは `_Changes` の wrap validator でキー名だけ控えられ、送信されない（`test_update_company_ignores_name_like_api` と共通テストは変更されておらず残っている）。追加テスト `test_update_company_to_internship_returns_api_response_as_is` でも送信ボディが `{"status": "インターン参加"}` と一致する。選択肢外の値「インターン」はAPIを呼ばずに拒否されることもテストされている。API側の `CompanyUpdate` も status だけを持つ（前のタスクで確認済み） → 問題なし
+  - API Key が結果やログに出ないこと: `api_client.py`・`config.py`・`__init__.py` は今回変更されていない。API Key は `X-API-Key` ヘッダーにだけ使われる。`Config.api_key` は `repr=False` で、`ApiClient.__repr__` は base_url だけを出す。リダイレクトには追従しない。エラーの文言（`_format_error`）は応答の detail とHTTPステータスだけを使い、ヘッダーを含まない。追加・変更した説明文と結果の組み立てにも API Key は出てこない → 問題なし
+  - 文書の秘密情報: README の差分は選考状態の文言だけ。API Key・URL・ホスト名・個人情報は含まない。デモデータの追加分（企業「模擬クラウドサービス株式会社」、種別とメモ）は架空のもので、実在の人物・企業や秘密情報は含まない。テストの `test-secret-key` は従来からあるテスト用のダミー値で、実際の鍵ではない。新しい追跡対象外のファイル（.env など）も無い → 問題なし
+  - 論理削除・インジェクション・CORS・エラーハンドリング: 今回の差分はAPIのエンドポイント・クエリ・CORS・例外処理に触れていない。デモデータは ORM（`models.Company`/`models.InterviewStep`）で投入しており、生SQLや物理削除は増えていない → 問題なし
+- 性能エバリュエーターのフィードバック: 合格（2026-11-18）
+  - backend（ルート）: `uv run pytest` 646 passed、warning 0件（`-W default` でも0件）。`uv run ruff check` All checks passed
+  - mcp-server（VIRTUAL_ENVを外して実行）: `uv run pytest` 303 passed、warning 0件（`-W default` でも0件）。`uv run ruff check` All checks passed
+  - インターン参加への変更と選択肢外の拒否: `test_update_company_to_internship_returns_api_response_as_is[from_in_progress / from_offer]`（PATCHの本文が `{"status": "インターン参加"}`、warning が null の応答と警告付きの応答がそのまま返る）。`UPDATE_FIELDS` の選択肢にインターン参加を追加。「インターン」はAPIを呼ばずに拒否される（`test_update_out_of_range_values_...` のパラメータに追加） → 合格
+  - ツール説明（選択肢）: `list_companies`・`get_company`・`create_company`・`update_company` の説明に「選考中・インターン参加・内定・お見送り・辞退」があることを `test_company_read_tools_describe_status_choices_and_next_step` で確認 → 合格
+  - ツール説明（警告の範囲）: `COMPANY_STATUS_WARNING_NOTE` の内容（内定・お見送り・辞退→選考中・インターン参加と辞退→内定が警告。選考中⇔インターン参加（どちら向きも）、選考中・インターン参加→内定・お見送り・辞退、内定→辞退、お見送りと内定・辞退の間は null）は「## ステータス遷移の警告ロジック」の `Company.status`（グラフ・153行目の戻す変更の警告・154行目の例外）と一致する。`test_update_company_description_says_only_status_can_be_changed` で文言を検証 → 合格
+  - 【判定】警告の範囲の説明を `update_company` だけに置いている点: 受け入れ条件は「企業の読み取り・作成・更新のツールの説明から…が分かる」で、ツールごとに全部を書くことまでは求めていないと読んだ。警告が返るのは状態を変えられる `update_company` だけで、読み取りは警告を返さず、作成は状態を指定できない（常に選考中）。このため、警告の範囲を読み取り・作成の説明に入れても意味がなく、かえって誤解を招く。MCPクライアントは全ツールの説明をまとめて受け取るので、ツール群の説明から範囲は分かる。前タスク「辞退への対応」も同じ文言の受け入れ条件で同じ置き方をして合格にしている。以上から、この置き方で足りると判定した
+  - ツール説明（自動お見送り）: `create_interview_step`・`update_interview_step` の説明に「企業が選考中またはインターン参加なら自動でお見送りになる」と「内定・お見送り・辞退の企業は変わらない」があることを `test_interview_step_tools_describe_auto_rejection` で確認。spec 155行目の対象（選考中・インターン参加）と一致 → 合格
+  - README: 選考状態の一覧、警告が出る変更・出ない変更（spec と一致）、`update_company` で変えられる状態、自動お見送りの対象（選考中またはインターン参加。不通過を取り消しても元の状態に戻らない）がインターン参加を含む形になっている → 合格
+  - デモデータ: インターン参加の企業「模擬クラウドサービス株式会社」（通過のサマーインターン＋未定の一次面接（6日後））を追加。前タスクで記録した一時除外 `SEEDED_COMPANY_STATUSES` は削除され、`set(CompanyStatus)` との比較に戻っている（`test_seed_companies_cover_all_statuses_consistent_with_auto_rejection`。API経由の一覧でも `CompanyStatus` の全値が1件以上）。API経由の一覧でインターン参加の企業に `next_step` が付くことも同じテスト群で確認。不通過のステップがあるのはお見送りの企業だけ、という整合性のチェックも全企業に通る。荒らし後の再投入テストの企業名の集合も更新済み → 合格
+  - 自動リセット: `test_run_reset_once_restores_company_statuses_changed_via_api` で、選考中→インターン参加、お見送り→内定→インターン参加（逆行の警告付きで200）、インターン参加→選考中をAPIで変更し、変更を確認した後のリセットで全企業が投入時の状態に戻る（`statuses() == seeded`）。リセットの件数（企業8・選考ステップ13）も `test_run_reset_once_reseeds_the_database_and_returns_counts` と `EXPECTED_COUNTS` で更新済み → 合格
+  - 外部接続なし: MCPのテストは FakeApi・TEST_BASE_URL、バックエンドのテストは tmp_path のSQLiteを使い、実環境に接続しない → 合格
+  - バグ・テスト不足: なし
 - 差し戻し回数: 0

@@ -26,8 +26,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 EXPECTED_COUNTS = {
     "course": 4,
     "assignment": 7,
-    "company": 7,
-    "interview_step": 11,
+    "company": 8,
+    "interview_step": 13,
     "company_task": 4,
 }
 
@@ -171,10 +171,6 @@ def test_seed_produces_assignments_visible_via_upcoming_endpoint(tmp_path, monke
 
 # --- 企業の選考状態のばらつき（自動お見送りの規則と矛盾しない） ---
 
-# インターン参加の企業はタスク「MCPサーバー・デモデータの企業選考状態「インターン参加」への対応」
-# でデモデータに加える。そのタスクでこの除外をやめ、set(CompanyStatus)との比較に戻す
-SEEDED_COMPANY_STATUSES = set(CompanyStatus) - {CompanyStatus.インターン参加}
-
 
 def test_seed_companies_cover_all_statuses_consistent_with_auto_rejection(tmp_path):
     session, _ = make_session(tmp_path, "seed_company_status.db")
@@ -182,7 +178,7 @@ def test_seed_companies_cover_all_statuses_consistent_with_auto_rejection(tmp_pa
     session.commit()
 
     companies = session.query(models.Company).all()
-    assert {c.status for c in companies} == SEEDED_COMPANY_STATUSES
+    assert {c.status for c in companies} == set(CompanyStatus)
 
     for company in companies:
         results = {
@@ -227,7 +223,7 @@ def test_seed_companies_list_shows_in_progress_with_and_without_next_step(tmp_pa
     assert response.status_code == 200
     body = response.json()
     statuses = [item["status"] for item in body]
-    assert all(statuses.count(s) >= 1 for s in SEEDED_COMPANY_STATUSES)
+    assert all(statuses.count(s) >= 1 for s in CompanyStatus)
 
     in_progress = [item for item in body if item["status"] == CompanyStatus.選考中]
     assert any(item["next_step"] is not None for item in in_progress)
@@ -236,6 +232,9 @@ def test_seed_companies_list_shows_in_progress_with_and_without_next_step(tmp_pa
     next_steps = [item["next_step"] for item in in_progress if item["next_step"] is not None]
     assert any(step["date"] is not None for step in next_steps)
     assert any(step["date"] is None for step in next_steps)
+
+    internship = [item for item in body if item["status"] == CompanyStatus.インターン参加]
+    assert any(item["next_step"] is not None for item in internship)
 
 
 # --- 実在の人物・企業を想起させる個人情報が含まれない（簡易チェック） ---
@@ -370,6 +369,7 @@ def test_seed_reruns_to_same_state_even_after_vandalism(tmp_path):
         "例示ネットワークス株式会社",
         "仮想メディア株式会社",
         "試作エンジニアリング株式会社",
+        "模擬クラウドサービス株式会社",
     }
     assert "改ざんされた選考種別" not in {s.type for s in session.query(models.InterviewStep)}
     assert {c.name: c.status for c in session.query(models.Company)} == original_statuses

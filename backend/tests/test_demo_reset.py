@@ -65,15 +65,15 @@ def test_run_reset_once_reseeds_the_database_and_returns_counts(tmp_path):
     assert counts == {
         "course": 4,
         "assignment": 7,
-        "company": 7,
-        "interview_step": 11,
+        "company": 8,
+        "interview_step": 13,
         "company_task": 4,
     }
 
     from app import models
 
     db = session_factory()
-    assert db.query(models.Company).count() == 7
+    assert db.query(models.Company).count() == 8
     db.close()
 
 
@@ -113,6 +113,7 @@ def test_run_reset_once_restores_company_statuses_changed_via_api(tmp_path, monk
     seeded = statuses()
     assert seeded["見本ソリューションズ株式会社"] == "選考中"
     assert seeded["試作エンジニアリング株式会社"] == "辞退"
+    assert seeded["模擬クラウドサービス株式会社"] == "インターン参加"
 
     monkeypatch.setenv(API_KEY_ENV_VAR, "test-secret-key")
     headers = {"X-API-Key": "test-secret-key"}
@@ -136,6 +137,11 @@ def test_run_reset_once_restores_company_statuses_changed_via_api(tmp_path, monk
                 # 辞退への変更と、辞退からの変更（辞退→内定は逆行の警告付きで成功する）
                 ("見本ソリューションズ株式会社", "辞退"),
                 ("試作エンジニアリング株式会社", "内定"),
+                # インターン参加への変更（終了した状態からは逆行の警告付きで成功する）と、
+                # インターン参加からの変更
+                ("デモ商事合同会社", "インターン参加"),
+                ("仮想メディア株式会社", "インターン参加"),
+                ("模擬クラウドサービス株式会社", "選考中"),
             ]:
                 response = client.patch(
                     f"/companies/{companies[name]['id']}",
@@ -159,6 +165,9 @@ def test_run_reset_once_restores_company_statuses_changed_via_api(tmp_path, monk
     assert changed["サンプルテクノロジーズ株式会社"] == "お見送り"
     assert changed["見本ソリューションズ株式会社"] == "辞退"
     assert changed["試作エンジニアリング株式会社"] == "内定"
+    assert changed["デモ商事合同会社"] == "インターン参加"
+    assert changed["仮想メディア株式会社"] == "インターン参加"
+    assert changed["模擬クラウドサービス株式会社"] == "選考中"
     assert changed != seeded
 
     demo_reset.run_reset_once(session_factory=session_factory)

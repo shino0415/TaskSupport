@@ -166,6 +166,8 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
         models.Company(name="例示ネットワークス株式会社", status=CompanyStatus.内定),
         models.Company(name="仮想メディア株式会社", status=CompanyStatus.お見送り),
         models.Company(name="試作エンジニアリング株式会社", status=CompanyStatus.辞退),
+        # インターン参加後、本選考の面接が控えていて次回選考が付く企業
+        models.Company(name="模擬クラウドサービス株式会社", status=CompanyStatus.インターン参加),
     ]
     db.add_all(companies)
     db.flush()
@@ -258,6 +260,22 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
             prep_status=InterviewStepPrepStatus.完了,
             result=InterviewStepResult.通過,
             memo="他社の内定承諾のため選考を辞退",
+        ),
+        models.InterviewStep(
+            company_id=companies[7].id,
+            type="サマーインターン",
+            date=today - timedelta(days=9),
+            prep_status=InterviewStepPrepStatus.完了,
+            result=InterviewStepResult.通過,
+            memo="インターン参加者向けの早期選考に案内された",
+        ),
+        models.InterviewStep(
+            company_id=companies[7].id,
+            type="一次面接",
+            date=today + timedelta(days=6),
+            prep_status=InterviewStepPrepStatus.準備中,
+            result=InterviewStepResult.未定,
+            memo=None,
         ),
     ]
     db.add_all(interview_steps)
