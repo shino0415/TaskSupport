@@ -80,10 +80,39 @@ export const TASK_STATUSES = ['未着手', '処理中', '完了'] as const
 
 export type TaskStatus = (typeof TASK_STATUSES)[number]
 
+/** Company.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
+export const COMPANY_STATUSES = ['選考中', '内定', 'お見送り'] as const
+
+export type CompanyStatus = (typeof COMPANY_STATUSES)[number]
+
 export type Company = {
   id: number
   name: string
+  // 表示は取得した値をそのまま扱う（APIのレスポンスはstrのため、未知の値でも壊れないようにする）
+  status: string
   is_deleted: boolean
+}
+
+/** 企業一覧に付く、次回の選考ステップの要約（結果が未定で予定日が最も早いもの）。 */
+export type NextInterviewStepSummary = {
+  id: number
+  type: string
+  date: string | null
+}
+
+/** GET /companies の各要素。企業詳細（GET /companies/{id}）には next_step は含まれない。 */
+export type CompanyListItem = Company & {
+  next_step: NextInterviewStepSummary | null
+}
+
+/** 企業の更新で送信する内容。変更できるのは選考状態だけ。 */
+export type CompanyUpdateInput = {
+  status: CompanyStatus
+}
+
+/** PATCH /companies/{id} のレスポンス。逆行遷移時のみwarningが入る。 */
+export type CompanyPatchResponse = Company & {
+  warning: string | null
 }
 
 /** 企業の登録で送信する内容。 */

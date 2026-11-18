@@ -3007,7 +3007,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 企業一覧の選考中・選考終了の分割と次回選考・選考状態の表示
-- status: 未着手
+- status: 完了
 - 概要: バックエンドの3タスク（選考状態と企業更新、自動お見送り、次回選考の要約）の完了後に着手し、選考ページの企業一覧を「選考中」の表と、その下の折りたたみ式の「選考終了（内定・お見送り）」の表に分け、次回選考と選考状態の表示・変更を画面から行えるようにする。
 - 受け入れ条件:
   - [ ] 選考中の企業は上の表に、内定・お見送りの企業は下の選考終了の表に表示される
@@ -3020,8 +3020,32 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] 既存の企業の作成・削除・詳細表示・ディープリンク・選考ステップ・企業タスクの操作は引き続き動く
   - [ ] 2つの表への振り分け、折りたたみの開閉、次回選考の3通りの表示、状態の変更による表の移動、ステップ変更後の一覧の取り直しがテストで検証され、型チェック・lint（warningなし）・テスト・本番ビルドが通る
 - 実装メモ:
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - 型: `frontend/src/api/types.ts` に `COMPANY_STATUSES`（選考中/内定/お見送り）、`Company.status`、`NextInterviewStepSummary`、`CompanyListItem`（`Company` ＋ `next_step`。一覧専用で詳細の型には付けない）、`CompanyUpdateInput`（`status` だけ）、`CompanyPatchResponse`（＋ `warning`）を追加。`api/companies.ts` の `fetchCompanies` は `CompanyListItem[]` を返し、`updateCompany`（`PATCH /companies/{id}`）を追加
+  - 次回選考の表示は `frontend/src/companyNextStep.ts` の `formatNextStep`。`種別（M/D）`（月日の先頭の0は付けない。既存の提出期限の表示 `formatDeadline` に合わせた）、予定日なしは `種別（日付未定）`、該当なしは `—`。タイムゾーンのずれを避けるためDateを介さず文字列から組み立てる
+  - 画面（`CompaniesPanel.tsx`）: 「選考中（N 件）」の表（ID・企業名・次回選考・選考状態・操作）と、その下にMUIの `Accordion`（初期は閉じる、`unmountOnExit` で閉じている間は表を描画しない、見出し「選考終了（内定・お見送り）（N 件）」）の表（次回選考の列なし）。選考中以外の値（内定・お見送り・未知の値）は選考終了の表に入れる。「取得件数: N 件」と0件時の表示は従来どおり残した
+  - 選考状態は `CompanyStatusChip`（新規 `components/CompanyStatusChip.tsx`。選考中=primary、内定=success、お見送り=outlined）で両方の表と企業詳細ダイアログに表示する
+  - 状態の変更は各行の操作列に置いた `Select`（aria-label「企業「X」の選考状態を変更」）で行い、同じ値を選び直したときは送信しない。成功時は通知（逆行で `warning` が返れば既存の選考ステップ・企業タスクの更新と同じく severity=warning の通知に「（変更は保存されています）」＋警告文）を出して企業一覧を取り直す。失敗時は既存の企業削除の失敗と同じく企業一覧の位置にエラーを表示する。送信中は全行の選択欄を無効にする
+  - 選考ステップの追加・更新・削除の後は、選考ステップ一覧と企業一覧を並行して取り直す（次回選考と自動お見送りの反映）
+  - 既存テストの変更: 企業の固定データに `status` を追加（App・OverviewPanel・CompaniesPanel・api/companies のテスト）、一覧を直接返すスタブに `next_step: null` を追加。CompaniesPanel のテスト用の簡易サーバーに、一覧の `next_step` の算出（upcomingと同じ並び）、`PATCH /companies/{id}`（内定・お見送り→選考中のみ警告）、選考ステップの作成・更新時の自動お見送りを追加
+  - 新規テスト: `formatNextStep` の単体テスト（3通り＋想定外の形式）、`updateCompany` のAPI呼び出し、2つの表への振り分けと折りたたみの初期状態・開閉・件数、Chipでの内定/お見送りの区別、次回選考の3通りの表示、状態変更（順当で選考終了の表へ移動・逆行で警告つきで選考中の表へ移動・同じ値で送信しない・失敗時のエラー）、企業詳細での選考状態、選考ステップの追加・不通過への更新（自動お見送りで移動）・削除の後の企業一覧の取り直し
+  - 判断を要した細部（spec上の解釈）: (1) 「予定日が無ければ「日付未定」」は `種別（日付未定）` と種別を残す形に解釈した（`日付未定` だけを出す解釈もありうる）。(2) 状態を変更する操作の置き場所・形は指定が無いため、各行の操作列のSelectにした
+  - セルフチェック: `npm run typecheck`・`npm run lint`（--deny-warnings）違反なし、`npm test` 268 passed（警告出力なし）、`npm run build` 成功
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Lowいずれも指摘なし）
+  - XSS・危険なHTML挿入: 企業名・選考状態・次回選考の種別・PATCHの `warning` は、いずれもJSXのテキストノード（`TableCell`・`Chip` の `label`・`Alert` 内の `notice.message`）か `aria-label` 属性として描画され、Reactのエスケープが効く。`dangerouslySetInnerHTML`・`innerHTML`・`eval` は `frontend/src` の実装コードに無い。`formatNextStep` は文字列連結だけでHTMLを組み立てない。`CompanyStatusChip` の `COLORS[status]` は未知の値なら `'default'` になり、`color` に渡る値は固定の3種類に限られる
+  - PATCHの送信項目: `CompanyUpdateInput` は `{ status: CompanyStatus }` のみ。画面の `handleChangeCompanyStatus` は `updateCompany(apiKey, company.id, { status })` でリテラルのオブジェクトを渡し、`id`・`is_deleted`・`name` 等を含まない（`api/companies.test.ts` で送信ボディが `{ status: '選考中' }` と一致することも確認されている）。パスの `companyId` は一覧で受け取った数値で、利用者の自由入力は入らない。値は `COMPANY_STATUSES` のMenuItemからしか選べない
+  - API Keyの扱い: 新規の呼び出しも既存の `apiRequest` を通り、`X-API-Key` ヘッダーでだけ送る（URL・ボディ・ログには載らない。credentialsも送らない）。保管方法（sessionStorage）は変更なし。`console.*` の追加なし。テストのキーはダミー値（`my-key`）だけ
+  - エラー表示: 失敗は既存の `toDisplayMessage` を通して企業一覧の位置に出す。中身はApiErrorの固定文言かAPIの `detail` で、スタックトレースや内部情報を新たに出す経路は無い
+  - 削除済みデータ: フロントは `GET /companies` の結果をそのまま振り分けるだけで、削除済みを取りに行く処理の追加は無い
+- 性能エバリュエーターのフィードバック: 合格（2026-11-18）。差し戻し対象の指摘なし。
+  - 実行結果（frontend/、Node v24.19.0）: `npm run typecheck` 違反なし、`npm run lint`（oxlint --deny-warnings）違反なし、`npm test` 20ファイル268件pass（ログにwarning・act警告・stderr出力なし）、`npm run build` 成功。ルート: `uv run pytest` 570 passed、warning 0件（`-W default` でも0件）、`uv run ruff check` 違反なし。バックエンドは無変更で回帰なし
+  - 2つの表への振り分け・折りたたみ: 「選考中の企業は上の表に…見出しに件数が出る」で、選考中は上の表だけ、内定・お見送りは下の表だけに入ること、初期は `aria-expanded=false` で表が描画されないこと、クリックで開き再クリックで閉じること、見出しの件数（選考中（1 件）／選考終了（2 件））を確認
+  - Chip: 「選考状態がChipで表示され、内定とお見送りが見分けられる」でラベルとクラスの違いを確認
+  - 次回選考の3通り: 「次回のステップがあれば…」で `一次面接（3/1）`・`最終面接（日付未定）`・`—` を行ごとに確認。`companyNextStep.test.ts` で月日の先頭0なし・日付未定・該当なし・想定外形式も確認
+  - 状態の変更: 順当な変更でPATCHのURL・ボディ、企業一覧の取り直し（GET回数+1）、選考終了の表への移動を確認。逆行で severity=warning の通知に警告文と「変更は保存されています」が出て選考中の表へ移ること、同じ値で送信しないこと、失敗時のエラー表示もそれぞれテストあり
+  - 企業詳細の選考状態: 「企業詳細で選考状態が分かる」で確認
+  - ステップ変更後の取り直し: 追加（次回選考に反映）、不通過への更新（自動お見送りで選考終了の表へ移動）、削除（次回選考が消える）の3件で確認
+  - 既存機能: 既存の作成・削除・詳細・ディープリンク・選考ステップ・企業タスクのテストは、固定データへの `status`／`next_step` 追加以外は変更なしで全件pass
+  - 参考（差し戻し対象外）: テスト名「選考中の企業がなく、選考終了の企業もない場合でも表示が破綻しない」は、実際には内定の企業が1件ある状態（選考中0件・選考終了1件）を検証しており、名前と中身が合っていない。次に触るときに名前を直すとよい
 - 差し戻し回数: 0
 
 ### タスク: MCPサーバーとデモデータの企業選考状態への対応

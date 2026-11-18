@@ -10,8 +10,8 @@ import { OverviewPanel } from './OverviewPanel'
 const BASE_URL = 'http://api.test.local:8000'
 const API_KEY = 'valid-key'
 
-const COMPANY_A: Company = { id: 1, name: '株式会社サンプル', is_deleted: false }
-const COMPANY_B: Company = { id: 2, name: '合同会社テスト', is_deleted: false }
+const COMPANY_A: Company = { id: 1, name: '株式会社サンプル', status: '選考中', is_deleted: false }
+const COMPANY_B: Company = { id: 2, name: '合同会社テスト', status: '選考中', is_deleted: false }
 
 const STEP_A: InterviewStep = {
   id: 101,

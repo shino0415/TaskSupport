@@ -21,7 +21,7 @@ const SAMPLE_COURSE: Course = {
   is_deleted: false,
 }
 
-const SAMPLE_COMPANY: Company = { id: 1, name: '株式会社サンプル', is_deleted: false }
+const SAMPLE_COMPANY: Company = { id: 1, name: '株式会社サンプル', status: '選考中', is_deleted: false }
 
 const SAMPLE_STEP: InterviewStep = {
   id: 101,
@@ -258,7 +258,7 @@ function stubRoutingFetch() {
       return Promise.resolve(jsonResponse(200, [SAMPLE_COURSE]))
     }
     if (pathname === '/companies') {
-      return Promise.resolve(jsonResponse(200, [SAMPLE_COMPANY]))
+      return Promise.resolve(jsonResponse(200, [{ ...SAMPLE_COMPANY, next_step: null }]))
     }
     if (pathname === `/companies/${String(SAMPLE_COMPANY.id)}`) {
       return Promise.resolve(jsonResponse(200, SAMPLE_COMPANY))

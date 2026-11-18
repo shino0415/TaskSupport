@@ -14,6 +14,7 @@ import { fetchCompany } from '../api/companies'
 import { toDisplayMessage } from '../api/errors'
 import type { Company } from '../api/types'
 import { useDepsChanged } from '../useDepsChanged'
+import { CompanyStatusChip } from './CompanyStatusChip'
 
 type Props = {
   open: boolean
@@ -72,11 +73,23 @@ export function CompanyDetailDialog({ open, companyId, apiKey, onClose }: Props)
         )}
         {!isLoading && errorMessage !== null && <Alert severity="error">{errorMessage}</Alert>}
         {!isLoading && errorMessage === null && company !== null && (
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <Typography variant="body2" color="text.secondary" sx={{ minWidth: 140 }}>
-              企業名
-            </Typography>
-            <Typography variant="body1">{company.name}</Typography>
+          <Stack spacing={1.5}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Typography variant="body2" color="text.secondary" sx={{ minWidth: 140 }}>
+                企業名
+              </Typography>
+              <Typography variant="body1">{company.name}</Typography>
+            </Stack>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              sx={{ alignItems: { sm: 'center' } }}
+            >
+              <Typography variant="body2" color="text.secondary" sx={{ minWidth: 140 }}>
+                選考状態
+              </Typography>
+              <CompanyStatusChip status={company.status} />
+            </Stack>
           </Stack>
         )}
       </DialogContent>

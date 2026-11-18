@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import Accordion from '@mui/material/Accordion'
+import AccordionDetails from '@mui/material/AccordionDetails'
+import AccordionSummary from '@mui/material/AccordionSummary'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
@@ -8,7 +11,9 @@ import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
 import DialogContentText from '@mui/material/DialogContentText'
 import DialogTitle from '@mui/material/DialogTitle'
+import MenuItem from '@mui/material/MenuItem'
 import Paper from '@mui/material/Paper'
+import Select from '@mui/material/Select'
 import Stack from '@mui/material/Stack'
 import Table from '@mui/material/Table'
 import TableBody from '@mui/material/TableBody'
@@ -18,7 +23,7 @@ import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import Typography from '@mui/material/Typography'
 
-import { createCompany, deleteCompany, fetchCompanies } from '../api/companies'
+import { createCompany, deleteCompany, fetchCompanies, updateCompany } from '../api/companies'
 import {
   createCompanyTask,
   deleteCompanyTask,
@@ -32,17 +37,22 @@ import {
   fetchInterviewSteps,
   updateInterviewStep,
 } from '../api/interviewSteps'
+import { COMPANY_STATUSES } from '../api/types'
 import type {
   Company,
   CompanyInput,
+  CompanyListItem,
+  CompanyStatus,
   CompanyTask,
   CompanyTaskInput,
   InterviewStep,
   InterviewStepInput,
 } from '../api/types'
+import { formatNextStep } from '../companyNextStep'
 import { useDepsChanged } from '../useDepsChanged'
 import { CompanyDetailDialog } from './CompanyDetailDialog'
 import { CompanyFormDialog } from './CompanyFormDialog'
+import { CompanyStatusChip } from './CompanyStatusChip'
 import { CompanyTaskFormDialog } from './CompanyTaskFormDialog'
 import { InterviewStepFormDialog } from './InterviewStepFormDialog'
 
@@ -59,6 +69,8 @@ type Notice = {
 
 const NO_SELECTION = '' as const
 
+const IN_PROGRESS_STATUS: CompanyStatus = '選考中'
+
 /**
  * 企業の一覧・登録・詳細・削除と、選択した企業配下の選考ステップ・企業タスクの
  * 一覧・追加・編集・削除をまとめた画面。企業詳細（GET /companies/{id}）は選考ステップ・
@@ -66,7 +78,7 @@ const NO_SELECTION = '' as const
  * GET /companies/{id}/company-tasks で取得して表示する。
  */
 export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props) {
-  const [companies, setCompanies] = useState<Company[] | null>(null)
+  const [companies, setCompanies] = useState<CompanyListItem[] | null>(null)
   const [companiesErrorMessage, setCompaniesErrorMessage] = useState<string | null>(null)
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -74,6 +86,7 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
   const [isCompanyFormOpen, setIsCompanyFormOpen] = useState(false)
   const [companyFormErrorMessage, setCompanyFormErrorMessage] = useState<string | null>(null)
   const [isSubmittingCompany, setIsSubmittingCompany] = useState(false)
+  const [isUpdatingCompanyStatus, setIsUpdatingCompanyStatus] = useState(false)
 
   const [detailCompanyId, setDetailCompanyId] = useState<number | null>(null)
   const [deleteCompanyTarget, setDeleteCompanyTarget] = useState<Company | null>(null)
@@ -281,6 +294,35 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
     }
   }
 
+  const handleChangeCompanyStatus = async (company: Company, status: CompanyStatus) => {
+    setIsUpdatingCompanyStatus(true)
+    try {
+      const updated = await updateCompany(apiKey, company.id, { status })
+      // 内定・お見送りから選考中へ戻す逆行はブロックされず、更新は成立したうえで警告が返る
+      setNotice(
+        updated.warning === null
+          ? {
+              severity: 'success',
+              message: `企業「${company.name}」の選考状態を「${status}」に変更しました。`,
+            }
+          : {
+              severity: 'warning',
+              message: `企業「${company.name}」の選考状態を「${status}」に変更しました（変更は保存されています）。${updated.warning}`,
+            },
+      )
+      await reloadCompanies()
+    } catch (error) {
+      setCompaniesErrorMessage(toDisplayMessage(error))
+    } finally {
+      setIsUpdatingCompanyStatus(false)
+    }
+  }
+
+  // 選考ステップの変更で企業の次回選考や選考状態（自動お見送り）が変わるため、企業一覧も取り直す
+  const reloadStepsAndCompanies = async () => {
+    await Promise.all([reloadSteps(), reloadCompanies()])
+  }
+
   const openCreateStepForm = () => {
     setEditingStep(null)
     setStepFormErrorMessage(null)
@@ -317,7 +359,7 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
         )
       }
       setIsStepFormOpen(false)
-      await reloadSteps()
+      await reloadStepsAndCompanies()
     } catch (error) {
       setStepFormErrorMessage(toDisplayMessage(error))
     } finally {
@@ -331,7 +373,7 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
       await deleteInterviewStep(apiKey, step.id)
       setDeleteStepTarget(null)
       setNotice({ severity: 'success', message: `選考ステップ「${step.type}」を削除しました。` })
-      await reloadSteps()
+      await reloadStepsAndCompanies()
     } catch (error) {
       setDeleteStepTarget(null)
       setStepsErrorMessage(toDisplayMessage(error))
@@ -402,6 +444,96 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
   }
 
   const selectedCompany = companies?.find((company) => company.id === selectedCompanyId) ?? null
+  // 選考中以外（内定・お見送り、および未知の値）は選考終了の表に出す
+  const inProgressCompanies = (companies ?? []).filter(
+    (company) => company.status === IN_PROGRESS_STATUS,
+  )
+  const finishedCompanies = (companies ?? []).filter(
+    (company) => company.status !== IN_PROGRESS_STATUS,
+  )
+
+  const renderCompaniesTable = (rows: CompanyListItem[], showNextStep: boolean) => (
+    <TableContainer>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>ID</TableCell>
+            <TableCell>企業名</TableCell>
+            {showNextStep && <TableCell>次回選考</TableCell>}
+            <TableCell>選考状態</TableCell>
+            <TableCell>操作</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((company) => (
+            <TableRow key={company.id} selected={company.id === selectedCompanyId}>
+              <TableCell>{company.id}</TableCell>
+              <TableCell>{company.name}</TableCell>
+              {showNextStep && <TableCell>{formatNextStep(company.next_step)}</TableCell>}
+              <TableCell>
+                <CompanyStatusChip status={company.status} />
+              </TableCell>
+              <TableCell>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <Select
+                    size="small"
+                    value={
+                      (COMPANY_STATUSES as readonly string[]).includes(company.status)
+                        ? company.status
+                        : ''
+                    }
+                    disabled={isUpdatingCompanyStatus}
+                    onChange={(event) => {
+                      const status = event.target.value as CompanyStatus
+                      if (status !== company.status) {
+                        void handleChangeCompanyStatus(company, status)
+                      }
+                    }}
+                    inputProps={{ 'aria-label': `企業「${company.name}」の選考状態を変更` }}
+                    sx={{ minWidth: 120 }}
+                  >
+                    {COMPANY_STATUSES.map((status) => (
+                      <MenuItem key={status} value={status}>
+                        {status}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <Button
+                    size="small"
+                    aria-label={`企業「${company.name}」の詳細`}
+                    onClick={() => {
+                      setNotice(null)
+                      setDetailCompanyId(company.id)
+                    }}
+                  >
+                    詳細
+                  </Button>
+                  <Button
+                    size="small"
+                    aria-label={`企業「${company.name}」の選考ステップを表示`}
+                    onClick={() => {
+                      setNotice(null)
+                      setSelectedCompanyId(company.id)
+                    }}
+                  >
+                    選考ステップ
+                  </Button>
+                  <Button
+                    size="small"
+                    color="error"
+                    aria-label={`企業「${company.name}」を削除`}
+                    onClick={() => setDeleteCompanyTarget(company)}
+                  >
+                    削除
+                  </Button>
+                </Stack>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  )
 
   return (
     <Paper component="section" aria-label="選考管理" sx={{ p: 2 }}>
@@ -448,57 +580,39 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
           {companies.length === 0 ? (
             <Alert severity="info">企業は0件です。</Alert>
           ) : (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>ID</TableCell>
-                    <TableCell>企業名</TableCell>
-                    <TableCell>操作</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {companies.map((company) => (
-                    <TableRow key={company.id} selected={company.id === selectedCompanyId}>
-                      <TableCell>{company.id}</TableCell>
-                      <TableCell>{company.name}</TableCell>
-                      <TableCell>
-                        <Stack direction="row" spacing={1}>
-                          <Button
-                            size="small"
-                            aria-label={`企業「${company.name}」の詳細`}
-                            onClick={() => {
-                              setNotice(null)
-                              setDetailCompanyId(company.id)
-                            }}
-                          >
-                            詳細
-                          </Button>
-                          <Button
-                            size="small"
-                            aria-label={`企業「${company.name}」の選考ステップを表示`}
-                            onClick={() => {
-                              setNotice(null)
-                              setSelectedCompanyId(company.id)
-                            }}
-                          >
-                            選考ステップ
-                          </Button>
-                          <Button
-                            size="small"
-                            color="error"
-                            aria-label={`企業「${company.name}」を削除`}
-                            onClick={() => setDeleteCompanyTarget(company)}
-                          >
-                            削除
-                          </Button>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            <>
+              <Typography variant="subtitle1" component="h3" sx={{ mb: 1 }}>
+                選考中（{inProgressCompanies.length} 件）
+              </Typography>
+              {inProgressCompanies.length === 0 ? (
+                <Alert severity="info">選考中の企業は0件です。</Alert>
+              ) : (
+                renderCompaniesTable(inProgressCompanies, true)
+              )}
+              <Accordion
+                disableGutters
+                variant="outlined"
+                sx={{ mt: 2 }}
+                slotProps={{ transition: { unmountOnExit: true } }}
+              >
+                <AccordionSummary
+                  expandIcon={<Typography aria-hidden="true">▼</Typography>}
+                  aria-controls="finished-companies-content"
+                  id="finished-companies-header"
+                >
+                  <Typography component="span">
+                    選考終了（内定・お見送り）（{finishedCompanies.length} 件）
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  {finishedCompanies.length === 0 ? (
+                    <Alert severity="info">選考終了の企業は0件です。</Alert>
+                  ) : (
+                    renderCompaniesTable(finishedCompanies, false)
+                  )}
+                </AccordionDetails>
+              </Accordion>
+            </>
           )}
         </>
       )}

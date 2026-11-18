@@ -9,8 +9,10 @@ import { CompaniesPanel } from './CompaniesPanel'
 const BASE_URL = 'http://api.test.local:8000'
 const API_KEY = 'valid-key'
 
-const COMPANY_A: Company = { id: 1, name: '株式会社サンプル', is_deleted: false }
-const COMPANY_B: Company = { id: 2, name: '合同会社テスト', is_deleted: false }
+const COMPANY_A: Company = { id: 1, name: '株式会社サンプル', status: '選考中', is_deleted: false }
+const COMPANY_B: Company = { id: 2, name: '合同会社テスト', status: '選考中', is_deleted: false }
+const COMPANY_OFFER: Company = { id: 3, name: '内定株式会社', status: '内定', is_deleted: false }
+const COMPANY_REJECTED: Company = { id: 4, name: '見送り商事', status: 'お見送り', is_deleted: false }
 
 const STEP_A: InterviewStep = {
   id: 101,
@@ -110,6 +112,34 @@ function setupFakeServer(
     return messages.length === 0 ? null : messages.join(' / ')
   }
 
+  /** バックエンドの next_step と同じ規則（結果が未定・未削除のうち予定日が最も早いもの、予定日なしは最後）。 */
+  function nextStepOf(companyId: number) {
+    const candidates = server.steps
+      .filter((s) => s.company_id === companyId && !s.is_deleted && s.result === '未定')
+      .sort((a, b) => {
+        if (a.date === b.date) {
+          return a.id - b.id
+        }
+        if (a.date === null) {
+          return 1
+        }
+        if (b.date === null) {
+          return -1
+        }
+        return a.date < b.date ? -1 : 1
+      })
+    const next = candidates[0]
+    return next === undefined ? null : { id: next.id, type: next.type, date: next.date }
+  }
+
+  /** 選考ステップの結果が不通過になったら、選考中の企業に限りお見送りにする（自動お見送りを模す）。 */
+  function applyAutoRejection(companyId: number) {
+    const company = server.companies.find((c) => c.id === companyId)
+    if (company !== undefined && company.status === '選考中') {
+      company.status = 'お見送り'
+    }
+  }
+
   function companyTaskWarning(before: CompanyTask, patch: Partial<CompanyTask>): string | null {
     if (patch.status === undefined || patch.status === before.status) {
       return null
@@ -129,10 +159,22 @@ function setupFakeServer(
     server.requests.push({ method, url: `${url.pathname}${url.search}`, body })
 
     if (url.pathname === '/companies' && method === 'GET') {
-      return Promise.resolve(jsonResponse(200, server.companies.filter((c) => !c.is_deleted)))
+      return Promise.resolve(
+        jsonResponse(
+          200,
+          server.companies
+            .filter((c) => !c.is_deleted)
+            .map((c) => ({ ...c, next_step: nextStepOf(c.id) })),
+        ),
+      )
     }
     if (url.pathname === '/companies' && method === 'POST') {
-      const created = { ...(body as Omit<Company, 'id' | 'is_deleted'>), id: nextCompanyId, is_deleted: false }
+      const created: Company = {
+        ...(body as Pick<Company, 'name'>),
+        id: nextCompanyId,
+        status: '選考中',
+        is_deleted: false,
+      }
       nextCompanyId += 1
       server.companies.push(created)
       return Promise.resolve(jsonResponse(201, created))
@@ -159,6 +201,9 @@ function setupFakeServer(
         }
         nextStepId += 1
         server.steps.push(created)
+        if (created.result === '不通過') {
+          applyAutoRejection(companyId)
+        }
         return Promise.resolve(jsonResponse(201, created))
       }
     }
@@ -200,6 +245,16 @@ function setupFakeServer(
       if (method === 'GET') {
         return Promise.resolve(jsonResponse(200, target))
       }
+      if (method === 'PATCH') {
+        const patch = body as Pick<Company, 'status'>
+        // 内定・お見送りから選考中へ戻す変更だけが逆行（内定⇔お見送りは枝分かれ先同士のため無警告）
+        const warning =
+          target.status !== '選考中' && patch.status === '選考中'
+            ? `${target.status} から ${patch.status} への変更です。意図的な変更か確認してください。`
+            : null
+        target.status = patch.status
+        return Promise.resolve(jsonResponse(200, { ...target, warning }))
+      }
       if (method === 'DELETE') {
         target.is_deleted = true
         return Promise.resolve(new Response(null, { status: 204 }))
@@ -216,7 +271,11 @@ function setupFakeServer(
       if (method === 'PATCH') {
         const patch = body as Partial<InterviewStep>
         const warning = stepWarning(target, patch)
+        const becameRejected = target.result !== '不通過' && patch.result === '不通過'
         Object.assign(target, patch)
+        if (becameRejected) {
+          applyAutoRejection(target.company_id)
+        }
         return Promise.resolve(jsonResponse(200, { ...target, warning }))
       }
       if (method === 'DELETE') {
@@ -289,6 +348,46 @@ function stepsTable() {
 /** 企業タスク一覧の表（「タスク名」列を持つのはこの表のみ）。 */
 function companyTasksTable() {
   return tableWithColumnHeader('タスク名')
+}
+
+/** 選考中の企業の表（「次回選考」列を持つのはこの表のみ）。 */
+function inProgressTable() {
+  return tableWithColumnHeader('次回選考')
+}
+
+/** 選考終了の企業の表（「選考状態」列を持ち「次回選考」列を持たない表）。開いていなければnull。 */
+function queryFinishedTable() {
+  return (
+    screen
+      .queryAllByRole('table')
+      .find(
+        (table) =>
+          within(table).queryByText('選考状態') !== null &&
+          within(table).queryByText('次回選考') === null,
+      ) ?? null
+  )
+}
+
+function finishedAccordionButton() {
+  return screen.getByRole('button', { name: /選考終了（内定・お見送り）/ })
+}
+
+/** 行の中の選考状態のChip（同じ文言が状態変更の選択欄にも出るため、Chipに絞って取り出す）。 */
+function statusChipOf(row: HTMLElement) {
+  const chip = row.querySelector<HTMLElement>('.MuiChip-root')
+  if (chip === null) {
+    throw new Error('選考状態のChipが見つかりません')
+  }
+  return chip
+}
+
+async function changeCompanyStatus(
+  user: ReturnType<typeof userEvent.setup>,
+  companyName: string,
+  status: string,
+) {
+  await user.click(screen.getByRole('combobox', { name: `企業「${companyName}」の選考状態を変更` }))
+  await user.click(await screen.findByRole('option', { name: status }))
 }
 
 beforeEach(() => {
@@ -390,7 +489,7 @@ describe('企業詳細', () => {
       vi.fn((input: RequestInfo | URL) =>
         Promise.resolve(
           new URL(String(input)).pathname === '/companies'
-            ? jsonResponse(200, [COMPANY_B])
+            ? jsonResponse(200, [{ ...COMPANY_B, next_step: null }])
             : jsonResponse(404, { detail: 'Company not found' }),
         ),
       ),
@@ -893,7 +992,7 @@ describe('通信エラー', () => {
       vi.fn((input: RequestInfo | URL) => {
         const pathname = new URL(String(input)).pathname
         if (pathname === '/companies') {
-          return Promise.resolve(jsonResponse(200, [COMPANY_A]))
+          return Promise.resolve(jsonResponse(200, [{ ...COMPANY_A, next_step: null }]))
         }
         return Promise.resolve(jsonResponse(500, { detail: 'Internal Server Error' }))
       }),
@@ -918,7 +1017,7 @@ describe('通信エラー', () => {
       vi.fn((input: RequestInfo | URL) => {
         const url = new URL(String(input))
         if (url.pathname === '/companies') {
-          return Promise.resolve(jsonResponse(200, [COMPANY_A]))
+          return Promise.resolve(jsonResponse(200, [{ ...COMPANY_A, next_step: null }]))
         }
         if (url.pathname === '/companies/1/interview-steps') {
           return Promise.resolve(jsonResponse(200, []))
@@ -1082,5 +1181,256 @@ describe('入力値の上限', () => {
 
     expect(await screen.findByText('メモは1000文字以内で入力してください。')).toBeInTheDocument()
     expect(server.requests.some((request) => request.method === 'PATCH')).toBe(false)
+  })
+})
+
+describe('選考中・選考終了の表への振り分け', () => {
+  it('選考中の企業は上の表に、内定・お見送りの企業は折りたたまれた選考終了の表に入り、見出しに件数が出る', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_OFFER, COMPANY_REJECTED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 3 件')
+
+    expect(screen.getByText('選考中（1 件）')).toBeInTheDocument()
+    expect(within(inProgressTable()).getByText('株式会社サンプル')).toBeInTheDocument()
+    expect(within(inProgressTable()).queryByText('内定株式会社')).not.toBeInTheDocument()
+    expect(within(inProgressTable()).queryByText('見送り商事')).not.toBeInTheDocument()
+
+    // ページを開いた時点では閉じている
+    const summary = finishedAccordionButton()
+    expect(summary).toHaveTextContent('選考終了（内定・お見送り）（2 件）')
+    expect(summary).toHaveAttribute('aria-expanded', 'false')
+    expect(queryFinishedTable()).toBeNull()
+    expect(screen.queryByText('内定株式会社')).not.toBeInTheDocument()
+
+    await user.click(summary)
+    expect(finishedAccordionButton()).toHaveAttribute('aria-expanded', 'true')
+    const finished = queryFinishedTable()
+    expect(finished).not.toBeNull()
+    expect(within(finished!).getByText('内定株式会社')).toBeInTheDocument()
+    expect(within(finished!).getByText('見送り商事')).toBeInTheDocument()
+    expect(within(finished!).queryByText('株式会社サンプル')).not.toBeInTheDocument()
+
+    await user.click(finishedAccordionButton())
+    expect(finishedAccordionButton()).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => expect(queryFinishedTable()).toBeNull())
+  })
+
+  it('選考状態がChipで表示され、内定とお見送りが見分けられる', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_OFFER, COMPANY_REJECTED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 3 件')
+    await user.click(finishedAccordionButton())
+
+    const finished = queryFinishedTable()!
+    const offerRow = within(finished).getByText('内定株式会社').closest('tr')!
+    const rejectedRow = within(finished).getByText('見送り商事').closest('tr')!
+    const offerChip = statusChipOf(offerRow)
+    const rejectedChip = statusChipOf(rejectedRow)
+    expect(offerChip).toHaveTextContent('内定')
+    expect(rejectedChip).toHaveTextContent('お見送り')
+    expect(offerChip.className).not.toBe(rejectedChip.className)
+  })
+
+  it('選考中の企業がなく、選考終了の企業もない場合でも表示が破綻しない', async () => {
+    setupFakeServer([COMPANY_OFFER], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    expect(screen.getByText('選考中の企業は0件です。')).toBeInTheDocument()
+    expect(finishedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(finishedAccordionButton())
+    expect(within(queryFinishedTable()!).getByText('内定株式会社')).toBeInTheDocument()
+  })
+})
+
+describe('次回選考の表示', () => {
+  it('次回のステップがあれば「種別（M/D）」、予定日が無ければ日付未定、ステップが無ければ「—」', async () => {
+    const companyC: Company = { id: 5, name: '株式会社ステップなし', status: '選考中', is_deleted: false }
+    const undatedStep: InterviewStep = {
+      ...STEP_A,
+      id: 103,
+      company_id: 2,
+      type: '最終面接',
+      date: null,
+    }
+    setupFakeServer([COMPANY_A, COMPANY_B, companyC], [STEP_A, STEP_B, undatedStep])
+
+    renderPanel()
+    await screen.findByText('取得件数: 3 件')
+
+    const table = inProgressTable()
+    const rowOf = (name: string) => within(table).getByText(name).closest('tr')!
+    expect(within(rowOf('株式会社サンプル')).getByText('一次面接（3/1）')).toBeInTheDocument()
+    expect(within(rowOf('合同会社テスト')).getByText('最終面接（日付未定）')).toBeInTheDocument()
+    expect(within(rowOf('株式会社ステップなし')).getByText('—')).toBeInTheDocument()
+  })
+})
+
+describe('企業の選考状態の変更', () => {
+  it('選考中から内定に変えると PATCH /companies/{id} を送り、一覧を取り直して選考終了の表へ移る', async () => {
+    const server = setupFakeServer([COMPANY_A, COMPANY_B], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    const listRequestsBefore = server.requests.filter(
+      (r) => r.method === 'GET' && r.url === '/companies',
+    ).length
+    await changeCompanyStatus(user, '合同会社テスト', '内定')
+
+    expect(
+      await screen.findByText('企業「合同会社テスト」の選考状態を「内定」に変更しました。'),
+    ).toBeInTheDocument()
+    const patch = server.requests.find((r) => r.method === 'PATCH')
+    expect(patch).toMatchObject({ url: '/companies/2', body: { status: '内定' } })
+    expect(
+      server.requests.filter((r) => r.method === 'GET' && r.url === '/companies').length,
+    ).toBe(listRequestsBefore + 1)
+    await waitFor(() =>
+      expect(within(inProgressTable()).queryByText('合同会社テスト')).not.toBeInTheDocument(),
+    )
+    expect(finishedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(finishedAccordionButton())
+    expect(within(queryFinishedTable()!).getByText('合同会社テスト')).toBeInTheDocument()
+  })
+
+  it('選考終了から選考中へ戻す逆行は警告を表示しつつ、変更は成立して選考中の表へ移る', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_OFFER], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    await user.click(finishedAccordionButton())
+    await changeCompanyStatus(user, '内定株式会社', '選考中')
+
+    const alert = await screen.findByText(/意図的な変更か確認してください/)
+    expect(alert).toHaveTextContent('内定 から 選考中 への変更です')
+    expect(alert).toHaveTextContent('変更は保存されています')
+    expect(alert.closest('.MuiAlert-root')).toHaveClass('MuiAlert-colorWarning')
+    await waitFor(() =>
+      expect(within(inProgressTable()).getByText('内定株式会社')).toBeInTheDocument(),
+    )
+    expect(finishedAccordionButton()).toHaveTextContent('（0 件）')
+  })
+
+  it('同じ状態を選び直しても送信しない', async () => {
+    const server = setupFakeServer([COMPANY_A], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    await changeCompanyStatus(user, '株式会社サンプル', '選考中')
+
+    expect(server.requests.some((r) => r.method === 'PATCH')).toBe(false)
+  })
+
+  it('変更に失敗するとエラーを表示する', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if ((init?.method ?? 'GET') === 'PATCH') {
+          return Promise.resolve(jsonResponse(500, { detail: 'Internal Server Error' }))
+        }
+        return Promise.resolve(jsonResponse(200, [{ ...COMPANY_A, next_step: null }]))
+      }),
+    )
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    await changeCompanyStatus(user, '株式会社サンプル', 'お見送り')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('500')
+  })
+
+  it('企業詳細で選考状態が分かる', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_REJECTED], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    await user.click(finishedAccordionButton())
+    await user.click(screen.getByRole('button', { name: '企業「見送り商事」の詳細' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('見送り商事')).toBeInTheDocument()
+    expect(within(dialog).getByText('選考状態')).toBeInTheDocument()
+    expect(within(dialog).getByText('お見送り').closest('.MuiChip-root')).not.toBeNull()
+  })
+})
+
+describe('選考ステップの変更後の企業一覧の取り直し', () => {
+  it('選考ステップを追加すると企業一覧が取り直され、次回選考に反映される', async () => {
+    const server = setupFakeServer([COMPANY_A], [])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    expect(within(inProgressTable()).getByText('—')).toBeInTheDocument()
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('選考ステップは0件です。')
+
+    await user.click(screen.getByRole('button', { name: '選考ステップを追加' }))
+    await user.type(screen.getByLabelText('種別', { exact: false }), '二次面接')
+    fireEvent.change(screen.getByLabelText('予定日'), { target: { value: '2026-11-25' } })
+    await user.click(screen.getByRole('button', { name: '追加する' }))
+    await waitForDialogClosed()
+
+    await waitFor(() =>
+      expect(within(inProgressTable()).getByText('二次面接（11/25）')).toBeInTheDocument(),
+    )
+    const lastPost = server.requests.findIndex((r) => r.method === 'POST')
+    expect(
+      server.requests.slice(lastPost).some((r) => r.method === 'GET' && r.url === '/companies'),
+    ).toBe(true)
+  })
+
+  it('選考ステップの結果を不通過に更新すると、自動お見送りの結果として選考終了の表へ移る', async () => {
+    setupFakeServer([COMPANY_A, COMPANY_B], [STEP_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 2 件')
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('一次面接')
+
+    await user.click(screen.getByRole('button', { name: '選考ステップ「一次面接」を編集' }))
+    await selectOption(user, '結果', '不通過')
+    await user.click(screen.getByRole('button', { name: '更新する' }))
+    await waitForDialogClosed()
+
+    await waitFor(() =>
+      expect(within(inProgressTable()).queryByText('株式会社サンプル')).not.toBeInTheDocument(),
+    )
+    expect(finishedAccordionButton()).toHaveTextContent('（1 件）')
+    await user.click(finishedAccordionButton())
+    const finished = queryFinishedTable()!
+    const row = within(finished).getByText('株式会社サンプル').closest('tr')!
+    expect(statusChipOf(row)).toHaveTextContent('お見送り')
+  })
+
+  it('選考ステップを削除すると企業一覧が取り直され、次回選考が無くなったことが反映される', async () => {
+    setupFakeServer([COMPANY_A], [STEP_A])
+    const user = userEvent.setup()
+
+    renderPanel()
+    await screen.findByText('取得件数: 1 件')
+    expect(within(inProgressTable()).getByText('一次面接（3/1）')).toBeInTheDocument()
+    await selectCompanySteps(user, '株式会社サンプル')
+    await screen.findByText('一次面接')
+
+    await user.click(screen.getByRole('button', { name: '選考ステップ「一次面接」を削除' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '削除する' }))
+    await waitForDialogClosed()
+
+    await waitFor(() => expect(within(inProgressTable()).getByText('—')).toBeInTheDocument())
+    expect(within(inProgressTable()).queryByText('一次面接（3/1）')).not.toBeInTheDocument()
   })
 })

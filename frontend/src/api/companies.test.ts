@@ -1,15 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { API_KEY_HEADER } from './client'
-import { createCompany, deleteCompany, fetchCompanies, fetchCompany } from './companies'
-import type { Company, CompanyInput } from './types'
+import { createCompany, deleteCompany, fetchCompanies, fetchCompany, updateCompany } from './companies'
+import type { Company, CompanyInput, CompanyListItem } from './types'
 
 const BASE_URL = 'http://api.test.local:8000'
 
 const SAMPLE_COMPANY: Company = {
   id: 1,
   name: '株式会社サンプル',
+  status: '選考中',
   is_deleted: false,
+}
+
+const SAMPLE_LIST_ITEM: CompanyListItem = {
+  ...SAMPLE_COMPANY,
+  next_step: { id: 10, type: '二次面接', date: '2026-11-25' },
 }
 
 const SAMPLE_INPUT: CompanyInput = {
@@ -43,9 +49,9 @@ afterEach(() => {
 
 describe('企業のAPI呼び出し', () => {
   it('一覧は GET /companies を叩く', async () => {
-    stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_COMPANY])))
+    stubFetch(() => Promise.resolve(jsonResponse(200, [SAMPLE_LIST_ITEM])))
 
-    await expect(fetchCompanies('my-key')).resolves.toEqual([SAMPLE_COMPANY])
+    await expect(fetchCompanies('my-key')).resolves.toEqual([SAMPLE_LIST_ITEM])
 
     const { url, init } = lastCall()
     expect(url).toBe(`${BASE_URL}/companies`)
@@ -73,6 +79,20 @@ describe('企業のAPI呼び出し', () => {
     expect(JSON.parse(String(init?.body))).toEqual(SAMPLE_INPUT)
     const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers['Content-Type']).toBe('application/json')
+    expect(headers[API_KEY_HEADER]).toBe('my-key')
+  })
+
+  it('更新は PATCH /companies/{id} に選考状態だけを送り、warningを含むレスポンスを返す', async () => {
+    const response = { ...SAMPLE_COMPANY, warning: '内定 から 選考中 への変更です。' }
+    stubFetch(() => Promise.resolve(jsonResponse(200, response)))
+
+    await expect(updateCompany('my-key', 1, { status: '選考中' })).resolves.toEqual(response)
+
+    const { url, init } = lastCall()
+    expect(url).toBe(`${BASE_URL}/companies/1`)
+    expect(init?.method).toBe('PATCH')
+    expect(JSON.parse(String(init?.body))).toEqual({ status: '選考中' })
+    const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers[API_KEY_HEADER]).toBe('my-key')
   })
 
