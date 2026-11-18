@@ -81,7 +81,7 @@ export const TASK_STATUSES = ['未着手', '処理中', '完了'] as const
 export type TaskStatus = (typeof TASK_STATUSES)[number]
 
 /** Company.statusの取りうる値（バックエンドの状態遷移グラフのキーと同じ集合）。 */
-export const COMPANY_STATUSES = ['選考中', '内定', 'お見送り', '辞退'] as const
+export const COMPANY_STATUSES = ['選考中', 'インターン参加', '内定', 'お見送り', '辞退'] as const
 
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number]
 

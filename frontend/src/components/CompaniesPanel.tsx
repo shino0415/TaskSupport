@@ -71,6 +71,8 @@ const NO_SELECTION = '' as const
 
 const IN_PROGRESS_STATUS: CompanyStatus = '選考中'
 
+const INTERNSHIP_STATUS: CompanyStatus = 'インターン参加'
+
 const OFFER_STATUS: CompanyStatus = '内定'
 
 /**
@@ -300,7 +302,7 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
     setIsUpdatingCompanyStatus(true)
     try {
       const updated = await updateCompany(apiKey, company.id, { status })
-      // 選考中への逆行や辞退から内定へ戻す逆行はブロックされず、更新は成立したうえで警告が返る
+      // 選考中・インターン参加へ戻す逆行や辞退から内定へ戻す逆行はブロックされず、更新は成立したうえで警告が返る
       setNotice(
         updated.warning === null
           ? {
@@ -446,13 +448,19 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
   }
 
   const selectedCompany = companies?.find((company) => company.id === selectedCompanyId) ?? null
-  // 選考中・内定以外（お見送り・辞退、および未知の値）は「お見送り・辞退」の欄に出す
+  // 選考中・インターン参加・内定以外（お見送り・辞退、および未知の値）は「お見送り・辞退」の欄に出す
   const inProgressCompanies = (companies ?? []).filter(
     (company) => company.status === IN_PROGRESS_STATUS,
   )
+  const internshipCompanies = (companies ?? []).filter(
+    (company) => company.status === INTERNSHIP_STATUS,
+  )
   const offerCompanies = (companies ?? []).filter((company) => company.status === OFFER_STATUS)
   const closedCompanies = (companies ?? []).filter(
-    (company) => company.status !== IN_PROGRESS_STATUS && company.status !== OFFER_STATUS,
+    (company) =>
+      company.status !== IN_PROGRESS_STATUS &&
+      company.status !== INTERNSHIP_STATUS &&
+      company.status !== OFFER_STATUS,
   )
 
   const renderCompaniesTable = (rows: CompanyListItem[], showNextStep: boolean) => (
@@ -538,16 +546,18 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
     </TableContainer>
   )
 
-  const renderFinishedAccordion = ({
+  const renderCompaniesAccordion = ({
     idPrefix,
     title,
     rows,
     defaultExpanded,
+    showNextStep,
   }: {
     idPrefix: string
     title: string
     rows: CompanyListItem[]
     defaultExpanded: boolean
+    showNextStep: boolean
   }) => (
     <Accordion
       disableGutters
@@ -569,7 +579,7 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
         {rows.length === 0 ? (
           <Alert severity="info">{title}の企業は0件です。</Alert>
         ) : (
-          renderCompaniesTable(rows, false)
+          renderCompaniesTable(rows, showNextStep)
         )}
       </AccordionDetails>
     </Accordion>
@@ -629,17 +639,26 @@ export function CompaniesPanel({ apiKey, initialDetailCompanyId = null }: Props)
               ) : (
                 renderCompaniesTable(inProgressCompanies, true)
               )}
-              {renderFinishedAccordion({
+              {renderCompaniesAccordion({
+                idPrefix: 'internship-companies',
+                title: 'インターン参加',
+                rows: internshipCompanies,
+                defaultExpanded: true,
+                showNextStep: true,
+              })}
+              {renderCompaniesAccordion({
                 idPrefix: 'offer-companies',
                 title: '内定',
                 rows: offerCompanies,
                 defaultExpanded: true,
+                showNextStep: false,
               })}
-              {renderFinishedAccordion({
+              {renderCompaniesAccordion({
                 idPrefix: 'closed-companies',
                 title: 'お見送り・辞退',
                 rows: closedCompanies,
                 defaultExpanded: false,
+                showNextStep: false,
               })}
             </>
           )}
