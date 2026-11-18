@@ -6,8 +6,20 @@ from sqlalchemy.orm import Session
 from app import models
 from app.database import get_db
 from app.routers.ids import is_storable_id
-from app.schemas import CompanyCreate, CompanyPatchResponse, CompanyRead, CompanyUpdate
-from app.status_transitions import COMPANY_STATUS_GRAPH, check_backward_transition
+from app.routers.interview_steps import UPCOMING_ORDER
+from app.schemas import (
+    CompanyCreate,
+    CompanyListItem,
+    CompanyPatchResponse,
+    CompanyRead,
+    CompanyUpdate,
+    NextInterviewStepSummary,
+)
+from app.status_transitions import (
+    COMPANY_STATUS_GRAPH,
+    InterviewStepResult,
+    check_backward_transition,
+)
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -33,9 +45,38 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db)) -> mod
     return company
 
 
-@router.get("", response_model=list[CompanyRead])
-def list_companies(db: Session = Depends(get_db)) -> list[models.Company]:
-    return db.query(models.Company).filter(models.Company.is_deleted.is_(False)).all()
+@router.get("", response_model=list[CompanyListItem])
+def list_companies(db: Session = Depends(get_db)) -> list[CompanyListItem]:
+    companies = db.query(models.Company).filter(models.Company.is_deleted.is_(False)).all()
+
+    # 企業ごとに問い合わせないよう、候補のステップを1回でupcomingと同じ順に取得し、
+    # 各企業で最初に現れたものを次回選考とする。
+    candidates = (
+        db.query(models.InterviewStep)
+        .join(models.Company, models.InterviewStep.company_id == models.Company.id)
+        .filter(
+            models.InterviewStep.is_deleted.is_(False),
+            models.InterviewStep.result == InterviewStepResult.未定,
+            models.Company.is_deleted.is_(False),
+        )
+        .order_by(*UPCOMING_ORDER)
+        .all()
+    )
+    next_steps: dict[int, models.InterviewStep] = {}
+    for step in candidates:
+        next_steps.setdefault(step.company_id, step)
+
+    return [
+        CompanyListItem(
+            **CompanyRead.model_validate(company).model_dump(),
+            next_step=(
+                NextInterviewStepSummary.model_validate(next_steps[company.id])
+                if company.id in next_steps
+                else None
+            ),
+        )
+        for company in companies
+    ]
 
 
 @router.get("/{company_id}", response_model=CompanyRead)

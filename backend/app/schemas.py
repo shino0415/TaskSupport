@@ -190,6 +190,19 @@ class CompanyPatchResponse(CompanyRead):
     warning: str | None = None
 
 
+class NextInterviewStepSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    date: _Date | None = None
+
+
+# 企業一覧にだけ使う（企業詳細は子の情報を含めない方針のためCompanyReadのまま）。
+class CompanyListItem(CompanyRead):
+    next_step: NextInterviewStepSummary | None = None
+
+
 class InterviewStepCreate(BaseModel):
     type: NameStr
     # フィールド名が"date"のため、素の`date`型を直接注釈に使うと、クラス本体の

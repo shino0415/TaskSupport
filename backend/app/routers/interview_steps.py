@@ -22,6 +22,10 @@ from app.status_transitions import (
 
 router = APIRouter(tags=["interview-steps"])
 
+# 予定日の近い順で、予定日なしは末尾。同じ予定日同士の前後は問わない。
+# 企業一覧の次回選考（next_step）も同じ規則で選ぶため共有する。
+UPCOMING_ORDER = (models.InterviewStep.date.is_(None), models.InterviewStep.date.asc())
+
 
 def _get_active_company_or_404(db: Session, company_id: int) -> models.Company:
     company = None
@@ -110,7 +114,7 @@ def list_upcoming_interview_steps(db: Session = Depends(get_db)) -> list[models.
             models.InterviewStep.is_deleted.is_(False),
             models.Company.is_deleted.is_(False),
         )
-        .order_by(models.InterviewStep.date.is_(None), models.InterviewStep.date.asc())
+        .order_by(*UPCOMING_ORDER)
         .all()
     )
 

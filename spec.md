@@ -2970,7 +2970,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 企業一覧への次回選考ステップの要約の追加
-- status: 未着手
+- status: 完了
 - 概要: 「企業の選考状態の追加と企業更新エンドポイント」の完了後に着手し、企業一覧（`GET /companies`）の各企業に、次回の選考ステップの要約（`next_step`。ステップのid・種別・予定日）を付ける。企業詳細には付けない（「## 全体設計方針」の例外として一覧だけに付ける）。
 - 受け入れ条件:
   - [ ] 企業一覧の各企業の `next_step` が、その企業の選考ステップのうち結果が未定かつ論理削除されていないもので、予定日が最も早いものになる。予定日なしのステップは予定日ありのものより後に回り、並び順の規則（同じ予定日の扱いを含む）は選考ステップの横断一覧（upcoming）と同じ
@@ -2981,8 +2981,29 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] 一覧に論理削除済みの企業が含まれない等、既存の企業一覧の挙動は変わらない
   - [ ] 上記がテストで検証され、lint・テスト（warningなし）が通る
 - 実装メモ:
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - `GET /companies` のレスポンスを `CompanyListItem`（`CompanyRead` ＋ `next_step`）に変更した。`next_step` は `NextInterviewStepSummary`（`id`・`type`・`date`。`date` は予定日なしなら null）で、対象が無ければ null。企業詳細・作成・更新のレスポンスは従来どおり `CompanyRead`／`CompanyPatchResponse` で `next_step` を含まない
+  - 並び順は upcoming と共有するため、`backend/app/routers/interview_steps.py` に `UPCOMING_ORDER`（`date.is_(None), date.asc()`）を定義し、upcoming と企業一覧の両方で使う。同じ予定日同士の前後は upcoming と同じく問わない（タイブレークは追加していない）
+  - 問い合わせは企業一覧の取得1回と、候補ステップ（結果が未定・ステップ未削除・企業未削除）を `UPCOMING_ORDER` で並べて取得する1回の計2回。Python側で企業ごとに最初に現れたステップを次回選考とするので、企業数に比例して問い合わせは増えない
+  - テストは `backend/tests/test_company_next_step.py`（14件）。最早の未定ステップの選択、予定日なしが後に回ること、予定日なしだけのとき、過去日の包含、通過・不通過・削除済みの除外、該当なしで null、企業ごとの独立、同じ予定日を含めて upcoming の各企業の先頭の未定ステップと一致すること、削除済み企業の除外とレスポンスの項目、企業詳細に `next_step` が無いこと、SQLAlchemyの `before_cursor_execute` で数えた問い合わせ回数が企業1社と11社で同じ（2回以下）であることを検証
+  - 既存テストの変更なし。`uv run pytest` 570件pass（warningなし）、`uv run ruff check` 問題なし
+- セキュリティエバリュエーターのフィードバック: 合格（2026-11-18）。Critical/High/Medium/Lowいずれも指摘なし。
+  - 認証: `GET /companies` は既存ルーターのままで、`create_app` のグローバル依存関係 `Depends(verify_api_key)` の対象。新しいエンドポイントの追加・認証経路の変更はない
+  - 論理削除: 候補ステップの取得は `InterviewStep.is_deleted.is_(False)`・`result == 未定`・`Company.is_deleted.is_(False)`（JOIN）で絞り込んでおり、削除済みステップ・削除済み企業のステップは `next_step` に入らない。企業一覧自体も従来どおり `Company.is_deleted.is_(False)` で絞り込み、`next_step` は一覧に出る企業のidでだけ引くため、削除済み企業の情報は二重に出ない。`test_deleted_step_is_excluded`・`test_next_step_is_null_when_no_step_is_eligible`・`test_list_still_excludes_deleted_companies` で裏付け
+  - 子の情報の露出: `NextInterviewStepSummary` は `id`・`type`・`date` だけを持つ明示的な出力スキーマで、`memo`・`result`・`prep_status`・`is_deleted` 等は出ない。企業詳細 `GET /companies/{id}` は `response_model=CompanyRead` のままで `next_step` を含まず（`test_company_detail_does_not_include_next_step` でキー集合を確認）、作成・更新のレスポンスも変更なし
+  - インジェクション: ORMのクエリビルダのみで生SQLなし。ユーザー入力をログや外部コマンドに渡す箇所の追加なし
+  - mass assignment: 入力スキーマの変更なし（出力スキーマの追加のみ）
+  - エラーハンドリング・CORS・シークレット: 変更なし。テストのAPI Keyはテスト用の固定値で、本番の鍵ではない
+  - 確認: `uv run pytest -q tests/test_company_next_step.py` 14 passed
+- 性能エバリュエーターのフィードバック: 合格（2026-11-18）。指摘なし。
+  - 実行結果: `uv run pytest -v`（プロジェクトルート・backendの両方から、現在のファイル状態のまま）570 passed、warning 0件（`-W default` でも0件）。新規 `tests/test_company_next_step.py` は14件すべてpass。`uv run ruff check .` 違反なし。既存テストは無変更で回帰なし
+  - 最早の未定ステップ・予定日なしは後: `test_next_step_is_earliest_pending_step_summary`、`test_step_without_date_comes_after_dated_steps`、`test_step_without_date_is_next_step_when_no_dated_pending_step` で確認
+  - upcomingと同じ並び順: 実装は `UPCOMING_ORDER` を upcoming と共有しており、`test_next_step_matches_first_pending_step_in_upcoming` で同じ予定日・予定日なし同士の並びを含め、upcoming の各企業の先頭の未定ステップと一致することを確認
+  - 通過・不通過・削除済みの除外／null: `test_decided_steps_are_excluded`（通過・不通過）、`test_deleted_step_is_excluded`、`test_next_step_is_null_without_steps`、`test_next_step_is_null_when_no_step_is_eligible` で確認。企業ごとに独立することも `test_next_step_is_per_company` で確認
+  - 過去日の包含: `test_past_pending_step_is_included` で確認
+  - 企業詳細に子の情報なし: `test_company_detail_does_not_include_next_step`（キー集合が `id`・`name`・`status`・`is_deleted` のみ）で確認
+  - N+1にならない: `test_query_count_does_not_grow_with_number_of_companies` で、エンジンの `before_cursor_execute` で数えた問い合わせ回数が企業1社と11社（各社2ステップ）で同じかつ2回以下であることを確認。`CompanyRead` はリレーションを持たないため、変換時の遅延ロードも発生しない
+  - 既存挙動: `test_list_still_excludes_deleted_companies` で削除済み企業の除外とレスポンス項目を確認。既存の企業一覧テストも無変更でpass
+  - 参考（差し戻し対象外）: 同じ予定日同士の前後はタイブレークが無く、upcoming と企業一覧は別クエリ（WHERE条件が異なる）のため、DBの実行計画しだいで理論上は別のステップが選ばれうる。SQLiteでは両方とも同じ走査順になり一致を確認できた。仕様上「同じ予定日の前後は問わない」としているため不合格にはしないが、今後DBを変える場合や厳密に一致させたい場合は、両方に `InterviewStep.id` のタイブレークを追加すると確実になる
 - 差し戻し回数: 0
 
 ### タスク: フロントエンド 企業一覧の選考中・選考終了の分割と次回選考・選考状態の表示
