@@ -65,15 +65,15 @@ def test_run_reset_once_reseeds_the_database_and_returns_counts(tmp_path):
     assert counts == {
         "course": 4,
         "assignment": 7,
-        "company": 3,
-        "interview_step": 5,
+        "company": 6,
+        "interview_step": 10,
         "company_task": 4,
     }
 
     from app import models
 
     db = session_factory()
-    assert db.query(models.Company).count() == 3
+    assert db.query(models.Company).count() == 6
     db.close()
 
 
@@ -91,6 +91,73 @@ def test_run_reset_once_logs_execution_datetime(tmp_path, caplog):
     message = caplog.records[0].getMessage()
     assert date.today().isoformat() in message
     assert "自動リセット" in message
+
+
+def test_run_reset_once_restores_company_statuses_changed_via_api(tmp_path, monkeypatch):
+    from app import models
+    from app.auth import API_KEY_ENV_VAR
+    from app.database import get_db
+
+    engine = build_engine(f"sqlite:///{tmp_path / 'reset_company_status.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    demo_reset.run_reset_once(session_factory=session_factory)
+
+    def statuses() -> dict[str, str]:
+        db = session_factory()
+        try:
+            return {c.name: str(c.status) for c in db.query(models.Company)}
+        finally:
+            db.close()
+
+    seeded = statuses()
+
+    monkeypatch.setenv(API_KEY_ENV_VAR, "test-secret-key")
+    headers = {"X-API-Key": "test-secret-key"}
+
+    def override_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    fastapi_app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(fastapi_app) as client:
+            companies = {c["name"]: c for c in client.get("/companies", headers=headers).json()}
+            # 手動の変更（逆行を含む）
+            for name, new_status in [
+                ("例示ネットワークス株式会社", "選考中"),
+                ("仮想メディア株式会社", "内定"),
+                ("架空フーズ株式会社", "内定"),
+            ]:
+                response = client.patch(
+                    f"/companies/{companies[name]['id']}",
+                    json={"status": new_status},
+                    headers=headers,
+                )
+                assert response.status_code == 200
+            # 選考ステップの不通過による自動お見送り
+            target = companies["サンプルテクノロジーズ株式会社"]
+            steps = client.get(f"/companies/{target['id']}/interview-steps", headers=headers)
+            response = client.patch(
+                f"/interview-steps/{steps.json()[0]['id']}",
+                json={"result": "不通過"},
+                headers=headers,
+            )
+            assert response.status_code == 200
+    finally:
+        fastapi_app.dependency_overrides.clear()
+
+    changed = statuses()
+    assert changed["サンプルテクノロジーズ株式会社"] == "お見送り"
+    assert changed != seeded
+
+    demo_reset.run_reset_once(session_factory=session_factory)
+
+    assert statuses() == seeded
+    engine.dispose()
 
 
 # --- run_periodic_reset（周期的な自動実行） ---

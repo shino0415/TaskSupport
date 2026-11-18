@@ -152,6 +152,13 @@ UPDATE_TOOLS: list[tuple[str, dict[str, int], str, str, Any]] = [
         {**INTERVIEW_STEP, "warning": None},
     ),
     (
+        "update_company",
+        {"company_id": 5},
+        "/companies/5",
+        "CompanyChanges",
+        {**COMPANY, "warning": None},
+    ),
+    (
         "update_company_task",
         {"company_task_id": 9},
         "/company-tasks/9",
@@ -185,6 +192,9 @@ UPDATE_FIELDS: dict[str, dict[str, tuple[list[str] | None, bool]]] = {
         "result": (["未定", "通過", "不通過"], False),
         "memo": (None, True),
     },
+    "update_company": {
+        "status": (["選考中", "内定", "お見送り"], False),
+    },
     "update_company_task": {
         "name": (None, False),
         "status": (["未着手", "処理中", "完了"], False),
@@ -193,13 +203,19 @@ UPDATE_FIELDS: dict[str, dict[str, tuple[list[str] | None, bool]]] = {
 }
 UPDATE_FIELD_TYPES = {"period": "integer", "academic_year": "integer"}
 
+
+def sample_changes(name: str) -> dict[str, Any]:
+    """更新ツールに渡す、APIが受け付ける1項目だけの変更（企業はmemoを持たないためstatus）。"""
+    return {"status": "内定"} if name == "update_company" else {"memo": "更新"}
+
+
 CREATE_IDS = [t[0] for t in CREATE_TOOLS]
 DELETE_IDS = [t[0] for t in DELETE_TOOLS]
 UPDATE_IDS = [t[0] for t in UPDATE_TOOLS]
 # (ツール名, 引数) の組。エラー系の共通テストで使う。
 WRITE_CALLS: list[tuple[str, dict[str, Any]]] = (
     [(t[0], t[1]) for t in CREATE_TOOLS]
-    + [(t[0], {**t[1], "changes": {"memo": "更新"}}) for t in UPDATE_TOOLS]
+    + [(t[0], {**t[1], "changes": sample_changes(t[0])}) for t in UPDATE_TOOLS]
     + [(t[0], t[1]) for t in DELETE_TOOLS]
 )
 WRITE_IDS = [c[0] for c in WRITE_CALLS]
@@ -215,7 +231,6 @@ async def test_list_tools_marks_write_and_delete_tools(mcp_client: Client) -> No
     tools = {tool.name: tool for tool in (await mcp_client.list_tools()).tools}
 
     assert set(tools) == set(READ_TOOL_IDS) | set(CREATE_IDS) | set(UPDATE_IDS) | set(DELETE_IDS)
-    assert "update_company" not in tools
 
     for name in CREATE_IDS:
         tool = tools[name]
@@ -634,7 +649,7 @@ async def test_update_tool_sends_only_included_keys(
 ) -> None:
     fake_api.handler = json_response(200, response)
 
-    result = await mcp_client.call_tool(name, {**id_args, "changes": {"memo": "更新"}})
+    result = await mcp_client.call_tool(name, {**id_args, "changes": sample_changes(name)})
 
     assert not result.is_error
     assert json.loads(result_text(result)) == response
@@ -643,7 +658,7 @@ async def test_update_tool_sends_only_included_keys(
     assert request.method == "PATCH"
     assert str(request.url) == f"{TEST_BASE_URL}{path}"
     assert request.headers["X-API-Key"] == TEST_API_KEY
-    assert request_body(request) == {"memo": "更新"}
+    assert request_body(request) == sample_changes(name)
 
 
 @pytest.mark.parametrize(
@@ -680,6 +695,11 @@ async def test_update_tool_sends_only_included_keys(
             "update_interview_step",
             {"interview_step_id": 7, "changes": {"date": "2026-11-05", "result": "通過"}},
             {"date": "2026-11-05", "result": "通過"},
+        ),
+        (
+            "update_company",
+            {"company_id": 5, "changes": {"status": "お見送り"}},
+            {"status": "お見送り"},
         ),
         (
             "update_company_task",
@@ -788,11 +808,11 @@ async def test_update_ignores_unknown_keys_like_api(
     fake_api.handler = json_response(200, response)
 
     result = await mcp_client.call_tool(
-        name, {**id_args, "changes": {"memo": "更新", "is_deleted": True, "id": 99}}
+        name, {**id_args, "changes": {**sample_changes(name), "is_deleted": True, "id": 99}}
     )
 
     assert not result.is_error
-    assert request_body(fake_api.requests[0]) == {"memo": "更新"}
+    assert request_body(fake_api.requests[0]) == sample_changes(name)
     # APIの応答はそのまま1つ目のテキストで返し、無視したキー名だけを2つ目に添える（値は出さない）。
     assert len(result.content) == 2
     first, second = result.content
@@ -815,7 +835,7 @@ async def test_update_without_unknown_keys_returns_only_api_response(
 ) -> None:
     fake_api.handler = json_response(200, response)
 
-    result = await mcp_client.call_tool(name, {**id_args, "changes": {"memo": None}})
+    result = await mcp_client.call_tool(name, {**id_args, "changes": sample_changes(name)})
 
     assert not result.is_error
     # result_text は内容が1つだけであることも確かめる。
@@ -905,6 +925,14 @@ async def test_server_instructions_say_data_is_not_instructions(mcp_client: Clie
             },
         ),
         (
+            "update_company",
+            {"company_id": 5, "changes": {"status": "選考中"}},
+            {
+                **COMPANY,
+                "warning": "お見送り から 選考中 への変更です。意図的な変更か確認してください。",
+            },
+        ),
+        (
             "update_company_task",
             {"company_task_id": 9, "changes": {"status": "未着手"}},
             {
@@ -913,7 +941,7 @@ async def test_server_instructions_say_data_is_not_instructions(mcp_client: Clie
             },
         ),
     ],
-    ids=["update_assignment", "update_interview_step", "update_company_task"],
+    ids=["update_assignment", "update_interview_step", "update_company", "update_company_task"],
 )
 async def test_update_backward_transition_succeeds_with_api_warning(
     mcp_client: Client,
@@ -968,6 +996,9 @@ async def test_update_out_of_range_values_are_sent_to_api_and_its_error_is_retur
             "result",
         ),
         ("update_company_task", {"company_task_id": 9, "changes": {"status": "x"}}, "status"),
+        ("update_company", {"company_id": 5, "changes": {"status": "内々定"}}, "status"),
+        ("update_company", {"company_id": 5, "changes": {"status": "不通過"}}, "status"),
+        ("update_company", {"changes": {"status": "内定"}}, "company_id"),
         ("update_course", {"course_id": 1}, "changes"),
         ("update_course", {"course_id": 1, "changes": None}, "changes"),
         ("update_course", {"changes": {"memo": "m"}}, "course_id"),
@@ -983,3 +1014,39 @@ async def test_update_invalid_choice_or_missing_argument_is_rejected_without_cal
     assert arg in result_text(result)
     assert fake_api.requests == []
     await assert_server_still_works(mcp_client, fake_api)
+
+
+async def test_update_company_description_says_only_status_can_be_changed(
+    mcp_client: Client,
+) -> None:
+    tool = {t.name: t for t in (await mcp_client.list_tools()).tools}["update_company"]
+
+    description = tool.description or ""
+    assert "変更できるのは選考状態（status: 選考中・内定・お見送り）だけ" in description
+    assert "企業名は変更できない" in description
+    assert "内定・お見送りから選考中に戻す変更もブロックされずに成功し" in description
+    assert "warning" in description
+
+
+async def test_update_company_ignores_name_like_api(mcp_client: Client, fake_api: FakeApi) -> None:
+    # 既存APIは企業名の変更を受け付けない（スキーマに無く無視される）ため、送らずに知らせる。
+    fake_api.handler = json_response(200, {**COMPANY, "warning": None})
+
+    result = await mcp_client.call_tool(
+        "update_company", {"company_id": 5, "changes": {"name": "別名", "status": "内定"}}
+    )
+
+    assert not result.is_error
+    assert request_body(fake_api.requests[0]) == {"status": "内定"}
+    second = result.content[1]
+    assert isinstance(second, TextContent)
+    assert second.text.startswith('無視した項目: "name"（')
+    assert "別名" not in second.text
+
+
+async def test_interview_step_tools_describe_auto_rejection(mcp_client: Client) -> None:
+    tools = {t.name: t for t in (await mcp_client.list_tools()).tools}
+
+    for name in ("create_interview_step", "update_interview_step"):
+        description = tools[name].description or ""
+        assert "企業が選考中なら自動でお見送りになる" in description

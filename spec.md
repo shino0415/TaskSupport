@@ -3049,7 +3049,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: MCPサーバーとデモデータの企業選考状態への対応
-- status: 未着手
+- status: 完了
 - 概要: バックエンドの3タスクの完了後に着手し、MCPサーバーで企業の選考状態を扱えるようにし、企業の更新（新設の `PATCH /companies/{id}`）に対応するツールを追加する。あわせてデモデータに選考状態のばらつきを入れる。企業更新ツールで変更できるのは、既存APIと同じく選考状態だけとする（2026-11-18決定）。
 - 受け入れ条件:
   - [ ] MCPサーバーの企業一覧・企業詳細のツールの結果に、既存APIと同じく選考状態（一覧では次回選考の要約も）が含まれ、ツールの説明から選考状態の選択肢が分かる
@@ -3060,6 +3060,27 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] デモデータの自動リセットで、選考状態を変更された企業も元の状態に戻る
   - [ ] 実際のバックエンド・個人用VM・デモ環境に接続しない自動テストで上記が検証され、MCPサーバー・バックエンドのlint・テスト（warningなし）が通る
 - 実装メモ:
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - MCPサーバー（`mcp-server/src/tasksupport_mcp/server.py`）: 選択肢 `CompanyStatus = Literal["選考中", "内定", "お見送り"]` と、更新内容 `CompanyChanges`（`status` だけ。他の更新ツールと同じ `_Changes` 派生で、null可否の説明は「null は指定不可（APIが422で拒否する）」）を追加。`update_company`（`PATCH /companies/{company_id}`）は既存の `update_tool`（`read_only_hint=False`・`destructive_hint=True`・`idempotent_hint=True`、説明に「既存の値を上書き・消去する破壊的な操作」）で登録し、ボディは `model_dump(exclude_unset=True)`、未知のキー（`name` を含む）は送らずに「無視した項目」として結果に添える。404・401・タイムアウト・接続失敗の扱いは共通の `ApiClient` のままで既存の更新ツールと同じ。説明に「変更できるのは選考状態（status: 選考中・内定・お見送り）だけで、企業名は変更できない」と、内定・お見送り→選考中の逆行が成功して `warning` が入ることを書いた
+  - 読み取り: `list_companies`・`get_company` の説明に選考状態の選択肢を書き、`list_companies` には `next_step`（id・type・date、結果が未定で予定日が最も早いもの、予定日なしは最後、無ければ null）、`get_company` には次回選考の要約を含まないことを書いた。結果は従来どおりAPIの応答JSONそのまま。`create_company` の説明に選考中で作られることを追記。`create_interview_step`・`update_interview_step` の説明に、不通過にすると企業が選考中なら自動でお見送りになること（内定は変わらない）を追記した（API側の挙動の説明だけで、ツールの動作は変えていない）
+  - 文書: `mcp-server/README.md` のツール数を25個、更新ツールの一覧に `update_company` を追加し、企業の `status`・一覧の `next_step`、企業更新で変えられるのは `status` だけであること、自動お見送りを追記。「企業の更新は既存APIに無い」の記述は「企業名の変更は既存APIに無い」に改めた。`permissions.ask` の例は `mcp__tasksupport__update_*` のワイルドカードで新ツールも含まれるため変更なし
+  - デモデータ（`backend/app/seed_demo_data.py`）: 企業を3社→6社、選考ステップを5件→10件にした。既存3社は選考中のまま（次回選考が予定日ありの2社、日付未定の1社）。追加は、書類選考が通過済みで結果未定のステップが無い選考中の企業（次回選考が「—」）、全ステップ通過の内定の企業、一次面接が不通過のお見送りの企業。不通過のステップを持つのはお見送りの企業だけ。企業タスクは変更なし。`status` を明示して投入するので、自動リセット（`seed()` は全件を物理削除して再投入）で手動・自動で変わった選考状態も元に戻る
+  - テスト（MCP）: `tests/test_write_tools.py` の更新ツールの共通パラメータ（`UPDATE_TOOLS`・`UPDATE_FIELDS`）に `update_company` を加え、属性・スキーマ（`status` の選択肢、null不可）・含めたキーだけ送る・空の changes・未知のキーの無視・必須項目へのnullでAPIの422・404・401（API Keyが結果・ログに出ない）・タイムアウト（読み取り系で確認する案内）・接続失敗を既存の更新ツールと同じテストで検証。企業はmemoを持たないため、共通テストで送る変更は `sample_changes()`（企業は `{"status": "内定"}`、他は従来どおり `{"memo": "更新"}`）にした。個別に、逆行（お見送り→選考中）がAPIの warning 付きで成功すること、選択肢外（`内々定`・`不通過`）とid欠けがAPIを呼ばずに拒否されること、`name` が無視されること、説明の内容を追加。`tests/test_tools.py` は企業の応答に `status`、一覧に `next_step` を加え、企業の読み取りツールの説明に選択肢と `next_step` があることを検証。`assert "update_company" not in tools` は削除
+  - テスト（バックエンド）: `test_seed_demo_data.py` に、全状態の企業があり不通過のステップを持つのがお見送りの企業だけであること、`GET /companies` で選考中の企業に次回選考あり（予定日あり・日付未定）となし（null）の両方があることを追加。冪等性のスナップショットに企業の状態を加え、荒らしの再現テストで全社を内定に改ざんしても再投入で元の状態に戻ることを確認。`test_demo_reset.py` に、APIで状態を手動変更（逆行を含む）し、選考ステップの不通過で自動お見送りにした後、`run_reset_once` で全社の状態が投入時に戻るテストを追加。件数の期待値（企業6・選考ステップ10）を更新。テストDBはすべて `tmp_path` の一時ファイルで、実際のバックエンド・個人用VM・デモ環境には接続していない
+  - セルフチェック: ルート `uv run ruff check` 違反なし、`uv run pytest -W error` 573 passed（warningなし）。mcp-server `uv run ruff check`・`uv run ruff format --check` 違反なし、`uv run pytest -W error` 297 passed（warningなし）
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Lowの指摘なし）。レビュー対象は未commitの差分（`mcp-server/src/tasksupport_mcp/server.py`・`mcp-server/README.md`・`mcp-server/tests/test_tools.py`・`mcp-server/tests/test_write_tools.py`・`backend/app/seed_demo_data.py`・`backend/tests/test_seed_demo_data.py`・`backend/tests/test_demo_reset.py`）。
+  - **mass assignment（update_company が status 以外を送らない）**: `CompanyChanges` は `status: CompanyStatus | None` の1フィールドだけで、ボディは `_changed()` = `model_dump(exclude_unset=True)` により `model_fields` に定義されたキーしか出力されない。`name`・`id`・`is_deleted` 等の未知キーは `_Changes` の wrap validator でキー名だけ控えられ、ボディには入らない（値も結果に出さない）。`test_update_company_ignores_name_like_api`（`{"name": "別名", "status": "内定"}` → 送信ボディが `{"status": "内定"}` のみ、結果に「別名」を含まない）と、共通テスト `test_update_ignores_unknown_keys_like_api`（`is_deleted`・`id` を混ぜても送信されない）で確認。選択肢外の値（`内々定`・`不通過`）は `Literal` によりAPIを呼ばずに拒否される。API側の `CompanyUpdate` も `status` のみ（Pydantic既定の extra="ignore"）で、MCP側とAPI側の二重で防御されている。
+  - **API Key の秘匿**: `update_company` は共通の `ApiClient` を使い、API Key はリクエストヘッダー（`X-API-Key`）にのみ載る。`Config.api_key` は `repr=False`、401時のエラー文も設定値を含まない。MCPサーバーにロガー出力は無く（`print` は設定エラーのstderr出力のみで値は含まない）、401・404・タイムアウト・接続失敗の共通テスト（`WRITE_CALLS` に `update_company` を含む）で `TEST_API_KEY not in text` と `not in caplog.text`（DEBUGレベル）を確認。`uv run pytest -W error -k update_company` 32 passed を実地確認。
+  - **文書の秘密情報**: `mcp-server/README.md` の差分はツール数・ツール一覧・選考状態の説明のみで、個人用VMのIP・ホスト名・URL・API Key 等は含まれない。テストの接続先は `https://api.example.invalid`・ダミーキーで、実環境には接続しない。`.gitignore` で `.env` は除外済み。
+  - **論理削除の方針との整合**: `seed()` の全件物理削除（`query(...).delete()`）は既存の承認済み設計（HTTP非公開のデモ専用リセット、`DEMO_AUTO_RESET_ENABLED` によるfail closed）のままで、本差分では削除処理・削除対象を変更していない（追加はダミーの企業3社・選考ステップ5件と `status` の明示のみ）。API・MCPのDELETE系は従来どおり論理削除で、MCPに物理削除経路は追加されていない。デモデータの企業名・メモは架空のもので、実在の人物・企業を想起させる情報は含まれない。
+  - **インジェクション・エラー漏洩**: パスは `f"/companies/{company_id}"` で `company_id` は `int` 型に検証済みのためパス注入の余地はない。生SQL・外部コマンド・ログ出力への入力受け渡しは無い。APIのエラーは既存の `ApiClient` の共通処理のままで、新たな漏洩経路は無い。
+- 性能エバリュエーターのフィードバック: 合格（2026-11-18）。
+  - **実行結果**: ルート `uv run pytest -v` 573 passed（warningなし。`-W default`・`-W error` でも同じ）、`uv run ruff check` 違反なし。mcp-server `uv run pytest -v` 297 passed（warningなし。`-W error` でも同じ）、`uv run ruff check`・`uv run ruff format --check` 違反なし。なお、ルートの `.venv` を指す `VIRTUAL_ENV` が残ったシェルから mcp-server で `uv run` すると、uvが「VIRTUAL_ENV does not match」というwarningを出す。これは評価用シェルの環境によるもので、pytestのwarningではなく、コード起因でもない（`env -u VIRTUAL_ENV` で再実行すると出ない）。差し戻しの対象外とした
+  - **読み取りツールの選考状態・next_step**: `test_tools.py` の `COMPANY_LIST_ITEMS`（3状態、next_stepあり・null）がAPIの応答のまま返ること、`test_company_read_tools_describe_status_choices_and_next_step` で説明に選択肢・`next_step`・詳細には要約を含まないことが書かれていることを確認。合格
+  - **update_company の項目・逆行・選択肢外**: 共通テスト（スキーマ・含めたキーだけ送る・指定値をそのまま送る・空のchanges・必須項目へのnullでAPIの422）、逆行（お見送り→選考中）がwarning付きで成功、`内々定`・`不通過`・id欠けがAPIを呼ばずに拒否されることを確認。合格
+  - **破壊的属性・未知キー・404/401/タイムアウト・API Key**: `UPDATE_TOOLS`/`WRITE_CALLS` に入ったことで、annotations、未知キーの無視（`name` の個別テストを含む）、404・401・タイムアウト・接続失敗、API Keyが結果・ログに出ないことが既存ツールと同じテストで検証されている。合格
+  - **文書**: `mcp-server/README.md` のツール数25・更新ツール一覧・status/next_step・自動お見送りの記述が更新されていることを差分で確認。合格
+  - **デモデータの3状態・自動お見送りとの整合・次回選考あり/なし**: `test_seed_companies_cover_all_statuses_consistent_with_auto_rejection`（全状態がそろい、不通過のステップを持つ ⇔ お見送り）と `test_seed_companies_list_shows_in_progress_with_and_without_next_step`（`GET /companies` で、選考中の企業に次回選考あり（予定日あり・日付未定）とnullの両方がある）で確認。合格
+  - **自動リセットでの状態の復元**: `test_run_reset_once_restores_company_statuses_changed_via_api`（APIで逆行を含む手動変更と、不通過による自動お見送りの後、`run_reset_once` で全社が投入時の状態に戻る）、および荒らし再現テスト・冪等性スナップショットへの状態の追加で確認。合格
+  - **外部接続なし**: テストDBは `tmp_path`、MCPは `api.example.invalid` のフェイクAPIで、実環境に接続していないことを確認
+  - 補足（指摘ではない）: `test_update_without_unknown_keys_returns_only_api_response` で送る変更が `{"memo": None}` から `sample_changes()` に変わったが、null送信による値の消去は `test_update_tool_sends_explicit_null_to_clear_field` などで引き続き検証されているため、カバレッジの低下はない
 - 差し戻し回数: 0

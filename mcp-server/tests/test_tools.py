@@ -31,7 +31,13 @@ ASSIGNMENT = {
     "memo": None,
     "is_deleted": False,
 }
-COMPANY = {"id": 5, "name": "株式会社サンプル", "is_deleted": False}
+COMPANY = {"id": 5, "name": "株式会社サンプル", "status": "選考中", "is_deleted": False}
+COMPANY_LIST_ITEMS = [
+    {**COMPANY, "next_step": {"id": 7, "type": "一次面接", "date": "2026-11-02"}},
+    {**COMPANY, "id": 6, "next_step": None},
+    {**COMPANY, "id": 8, "status": "内定", "next_step": None},
+    {**COMPANY, "id": 10, "status": "お見送り", "next_step": None},
+]
 INTERVIEW_STEP = {
     "id": 7,
     "company_id": 5,
@@ -63,7 +69,7 @@ READ_TOOLS: list[tuple[str, dict[str, Any], str, Any]] = [
         "/assignments/upcoming",
         [{**ASSIGNMENT, "course_name": "線形代数"}],
     ),
-    ("list_companies", {}, "/companies", [COMPANY]),
+    ("list_companies", {}, "/companies", COMPANY_LIST_ITEMS),
     ("get_company", {"company_id": 5}, "/companies/5", COMPANY),
     (
         "list_interview_steps",
@@ -113,6 +119,19 @@ async def test_list_tools_exposes_read_tools_with_schema_and_read_only_hint(
         assert set(tool.input_schema.get("required", [])) == set(args)
         for arg in args:
             assert tool.input_schema["properties"][arg]["type"] == "integer"
+
+
+async def test_company_read_tools_describe_status_choices_and_next_step(
+    mcp_client: Client,
+) -> None:
+    tools = {tool.name: tool for tool in (await mcp_client.list_tools()).tools}
+
+    for name in ("list_companies", "get_company"):
+        description = tools[name].description or ""
+        assert "選考状態" in description
+        assert "選考中・内定・お見送り" in description
+    assert "next_step" in (tools["list_companies"].description or "")
+    assert "次回選考の要約は含まない" in (tools["get_company"].description or "")
 
 
 @pytest.mark.parametrize(("name", "args", "path", "body"), READ_TOOLS, ids=TOOL_IDS)

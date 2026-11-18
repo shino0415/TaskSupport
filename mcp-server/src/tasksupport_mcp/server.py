@@ -37,6 +37,7 @@ AssignmentStatus = Literal["未着手", "取組中", "未提出", "提出済み"
 CompanyTaskStatus = Literal["未着手", "処理中", "完了"]
 PrepStatus = Literal["準備中", "準備万端", "完了"]
 StepResult = Literal["未定", "通過", "不通過"]
+CompanyStatus = Literal["選考中", "内定", "お見送り"]
 
 NAME_DESC = "名前（必須。32文字以内、空白のみ不可）"
 LOOSE_NAME_DESC = "名前（必須。32文字以内）"
@@ -46,6 +47,11 @@ DEADLINE_DESC = (
     "タイムゾーン付き（Z・+09:00等）はAPIが422で拒否する"
 )
 DATE_DESC = "予定日（例: 2026-11-02）"
+COMPANY_STATUS_NOTE = "企業の status は選考状態で、選考中・内定・お見送りのいずれか。"
+AUTO_REJECTION_NOTE = (
+    "結果を不通過にすると（作成時、または不通過以外から不通過への更新時）、"
+    "企業が選考中なら自動でお見送りになる（内定の企業は変わらない）。"
+)
 
 # --- 更新内容（changes） ---
 # 既存APIのUpdateスキーマと同じキー・型・選択肢・null可否にする。null可否はAPIのJSONスキーマと
@@ -97,6 +103,12 @@ class InterviewStepChanges(_Changes):
     prep_status: PrepStatus | None = Field(None, description="準備状況" + _NOT_NULLABLE)
     result: StepResult | None = Field(None, description="結果" + _NOT_NULLABLE)
     memo: str | None = Field(None, description=MEMO_DESC + _CLEARABLE)
+
+
+class CompanyChanges(_Changes):
+    """企業の更新内容。含めたキーだけが変更される。変更できるのは選考状態だけ。"""
+
+    status: CompanyStatus | None = Field(None, description="選考状態" + _NOT_NULLABLE)
 
 
 class CompanyTaskChanges(_Changes):
@@ -233,7 +245,10 @@ def build_server(api: ApiClient) -> MCPServer:
     @read_tool(
         "list_companies",
         "企業一覧",
-        "企業の一覧を取得する（GET /companies）。",
+        "企業の一覧を取得する（GET /companies）。"
+        + COMPANY_STATUS_NOTE
+        + "各企業の next_step は次回の選考ステップの要約（id・type・date）で、"
+        "結果が未定のステップのうち予定日が最も早いもの（予定日なしは最後）。無ければ null。",
     )
     async def list_companies() -> str:
         return _to_text(await api.get("/companies"))
@@ -242,7 +257,8 @@ def build_server(api: ApiClient) -> MCPServer:
         "get_company",
         "企業詳細",
         "指定したidの企業を取得する（GET /companies/{company_id}）。"
-        "選考ステップ・企業タスクは含まない。",
+        + COMPANY_STATUS_NOTE
+        + "選考ステップ・企業タスク・次回選考の要約は含まない。",
     )
     async def get_company(company_id: int) -> str:
         return _to_text(await api.get(f"/companies/{company_id}"))
@@ -356,7 +372,7 @@ def build_server(api: ApiClient) -> MCPServer:
         "create_company",
         "企業の作成",
         "企業を作成し、作成された企業を返す（POST /companies）。"
-        "企業名を後から変更するツールは無い（APIに無いため）。",
+        "選考状態は選考中で作られる。企業名を後から変更するツールは無い（APIに無いため）。",
     )
     async def create_company(
         name: Annotated[str, Field(description="企業名（必須。32文字以内）")],
@@ -368,7 +384,7 @@ def build_server(api: ApiClient) -> MCPServer:
         "選考ステップの作成",
         "指定した企業に選考ステップを作成し、作成された選考ステップを返す"
         "（POST /companies/{company_id}/interview-steps）。"
-        "準備状況を省略すると「準備中」、結果を省略すると「未定」になる。",
+        "準備状況を省略すると「準備中」、結果を省略すると「未定」になる。" + AUTO_REJECTION_NOTE,
     )
     async def create_interview_step(
         company_id: int,
@@ -429,13 +445,32 @@ def build_server(api: ApiClient) -> MCPServer:
         "update_interview_step",
         "選考ステップの更新",
         "指定したidの選考ステップを部分更新し、更新後の選考ステップを返す"
-        "（PATCH /interview-steps/{interview_step_id}）。" + _UPDATE_NOTE + _STATUS_WARNING_NOTE,
+        "（PATCH /interview-steps/{interview_step_id}）。"
+        + _UPDATE_NOTE
+        + _STATUS_WARNING_NOTE
+        + AUTO_REJECTION_NOTE,
     )
     async def update_interview_step(
         interview_step_id: int,
         changes: Annotated[InterviewStepChanges, Field(description=CHANGES_DESC)],
     ) -> str | list[str]:
         data = await api.patch(f"/interview-steps/{interview_step_id}", _changed(changes))
+        return _update_result(data, changes)
+
+    @update_tool(
+        "update_company",
+        "企業の更新",
+        "指定したidの企業を部分更新し、更新後の企業を返す（PATCH /companies/{company_id}）。"
+        "変更できるのは選考状態（status: 選考中・内定・お見送り）だけで、企業名は変更できない。"
+        + _UPDATE_NOTE
+        + "内定・お見送りから選考中に戻す変更もブロックされずに成功し、"
+        "その場合は結果の warning に警告文が入る（逆行でなければ null）。",
+    )
+    async def update_company(
+        company_id: int,
+        changes: Annotated[CompanyChanges, Field(description=CHANGES_DESC)],
+    ) -> str | list[str]:
+        data = await api.patch(f"/companies/{company_id}", _changed(changes))
         return _update_result(data, changes)
 
     @update_tool(

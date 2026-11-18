@@ -19,15 +19,15 @@ from app.auth import API_KEY_ENV_VAR
 from app.database import Base, build_engine, get_db
 from app.main import app as fastapi_app
 from app.seed_demo_data import seed
-from app.status_transitions import AssignmentStatus
+from app.status_transitions import AssignmentStatus, CompanyStatus, InterviewStepResult
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 EXPECTED_COUNTS = {
     "course": 4,
     "assignment": 7,
-    "company": 3,
-    "interview_step": 5,
+    "company": 6,
+    "interview_step": 10,
     "company_task": 4,
 }
 
@@ -169,6 +169,71 @@ def test_seed_produces_assignments_visible_via_upcoming_endpoint(tmp_path, monke
     assert any(d >= now for d in deadlines)
 
 
+# --- 企業の選考状態のばらつき（自動お見送りの規則と矛盾しない） ---
+
+
+def test_seed_companies_cover_all_statuses_consistent_with_auto_rejection(tmp_path):
+    session, _ = make_session(tmp_path, "seed_company_status.db")
+    seed(session)
+    session.commit()
+
+    companies = session.query(models.Company).all()
+    assert {c.status for c in companies} == set(CompanyStatus)
+
+    for company in companies:
+        results = {
+            s.result
+            for s in session.query(models.InterviewStep).filter(
+                models.InterviewStep.company_id == company.id
+            )
+        }
+        has_rejection = InterviewStepResult.不通過 in results
+        # 不通過のステップがあるのはお見送りの企業だけで、お見送りの企業には不通過がある
+        assert has_rejection == (company.status == CompanyStatus.お見送り), company.name
+
+    session.close()
+
+
+def test_seed_companies_list_shows_in_progress_with_and_without_next_step(tmp_path, monkeypatch):
+    engine = build_engine(f"sqlite:///{tmp_path / 'seed_companies_api.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = session_factory()
+    seed(session)
+    session.commit()
+    session.close()
+
+    monkeypatch.setenv(API_KEY_ENV_VAR, "test-secret-key")
+
+    def override_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    fastapi_app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(fastapi_app) as client:
+            response = client.get("/companies", headers={"X-API-Key": "test-secret-key"})
+    finally:
+        fastapi_app.dependency_overrides.clear()
+        engine.dispose()
+
+    assert response.status_code == 200
+    body = response.json()
+    statuses = [item["status"] for item in body]
+    assert all(statuses.count(s) >= 1 for s in CompanyStatus)
+
+    in_progress = [item for item in body if item["status"] == CompanyStatus.選考中]
+    assert any(item["next_step"] is not None for item in in_progress)
+    assert any(item["next_step"] is None for item in in_progress)
+    # 予定日あり・日付未定の次回選考がどちらも表示される
+    next_steps = [item["next_step"] for item in in_progress if item["next_step"] is not None]
+    assert any(step["date"] is not None for step in next_steps)
+    assert any(step["date"] is None for step in next_steps)
+
+
 # --- 実在の人物・企業を想起させる個人情報が含まれない（簡易チェック） ---
 
 
@@ -225,7 +290,7 @@ def test_seed_is_idempotent_when_run_repeatedly(tmp_path):
                 )
                 for a in session.query(models.Assignment)
             ),
-            "company": sorted(c.name for c in session.query(models.Company)),
+            "company": sorted((c.name, str(c.status)) for c in session.query(models.Company)),
             "interview_step": sorted(
                 (company_names[s.company_id], s.type, s.date, str(s.prep_status), str(s.result))
                 for s in session.query(models.InterviewStep)
@@ -251,6 +316,7 @@ def test_seed_reruns_to_same_state_even_after_vandalism(tmp_path):
 
     seed(session)
     session.commit()
+    original_statuses = {c.name: c.status for c in session.query(models.Company)}
 
     # 荒らしを模して、勝手にデータを追加・変更・削除する
     session.add(models.Company(name="荒らしにより追加された企業"))
@@ -264,6 +330,8 @@ def test_seed_reruns_to_same_state_even_after_vandalism(tmp_path):
     )
     step = session.query(models.InterviewStep).first()
     step.type = "改ざんされた選考種別"
+    for company in session.query(models.Company):
+        company.status = CompanyStatus.内定
     tampered_assignment = session.query(models.Assignment).first()
     tampered_assignment.name = "改ざんされた課題名"
     tampered_assignment.is_deleted = True
@@ -294,8 +362,12 @@ def test_seed_reruns_to_same_state_even_after_vandalism(tmp_path):
         "架空フーズ株式会社",
         "サンプルテクノロジーズ株式会社",
         "デモ商事合同会社",
+        "見本ソリューションズ株式会社",
+        "例示ネットワークス株式会社",
+        "仮想メディア株式会社",
     }
     assert "改ざんされた選考種別" not in {s.type for s in session.query(models.InterviewStep)}
+    assert {c.name: c.status for c in session.query(models.Company)} == original_statuses
 
     session.close()
 

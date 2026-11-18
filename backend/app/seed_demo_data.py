@@ -22,6 +22,7 @@ from app import models
 from app.database import SessionLocal, init_db
 from app.status_transitions import (
     AssignmentStatus,
+    CompanyStatus,
     CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
@@ -155,10 +156,15 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
     ]
     db.add_all(assignments)
 
+    # 選考状態は、選考ステップの結果からの自動お見送り（不通過ならお見送り）と矛盾しないようにする。
     companies = [
-        models.Company(name="架空フーズ株式会社"),
-        models.Company(name="サンプルテクノロジーズ株式会社"),
-        models.Company(name="デモ商事合同会社"),
+        models.Company(name="架空フーズ株式会社", status=CompanyStatus.選考中),
+        models.Company(name="サンプルテクノロジーズ株式会社", status=CompanyStatus.選考中),
+        models.Company(name="デモ商事合同会社", status=CompanyStatus.選考中),
+        # 結果待ちのステップが無く、次回選考が「—」になる選考中の企業
+        models.Company(name="見本ソリューションズ株式会社", status=CompanyStatus.選考中),
+        models.Company(name="例示ネットワークス株式会社", status=CompanyStatus.内定),
+        models.Company(name="仮想メディア株式会社", status=CompanyStatus.お見送り),
     ]
     db.add_all(companies)
     db.flush()
@@ -203,6 +209,46 @@ def seed(db: Session, today: date | None = None) -> dict[str, int]:
             prep_status=InterviewStepPrepStatus.準備中,
             result=InterviewStepResult.未定,
             memo="日程調整中",
+        ),
+        models.InterviewStep(
+            company_id=companies[3].id,
+            type="書類選考",
+            date=today - timedelta(days=2),
+            prep_status=InterviewStepPrepStatus.完了,
+            result=InterviewStepResult.通過,
+            memo="次の面接の案内待ち",
+        ),
+        models.InterviewStep(
+            company_id=companies[4].id,
+            type="一次面接",
+            date=today - timedelta(days=20),
+            prep_status=InterviewStepPrepStatus.完了,
+            result=InterviewStepResult.通過,
+            memo=None,
+        ),
+        models.InterviewStep(
+            company_id=companies[4].id,
+            type="最終面接",
+            date=today - timedelta(days=8),
+            prep_status=InterviewStepPrepStatus.完了,
+            result=InterviewStepResult.通過,
+            memo="内定の連絡あり",
+        ),
+        models.InterviewStep(
+            company_id=companies[5].id,
+            type="書類選考",
+            date=today - timedelta(days=14),
+            prep_status=InterviewStepPrepStatus.完了,
+            result=InterviewStepResult.通過,
+            memo=None,
+        ),
+        models.InterviewStep(
+            company_id=companies[5].id,
+            type="一次面接",
+            date=today - timedelta(days=6),
+            prep_status=InterviewStepPrepStatus.完了,
+            result=InterviewStepResult.不通過,
+            memo="お見送りの連絡あり",
         ),
     ]
     db.add_all(interview_steps)

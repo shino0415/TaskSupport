@@ -9,7 +9,7 @@ Claude Code などのMCPクライアントから、**個人利用環境（Comput
 
 設計の経緯は [`spec.md`](../spec.md) の「決定事項」→「MCPサーバー」を参照。
 
-## 提供するツール（24個）
+## 提供するツール（25個）
 
 既存のエンドポイントとほぼ1対1。リソース・プロンプトは提供しない。
 
@@ -17,19 +17,22 @@ Claude Code などのMCPクライアントから、**個人利用環境（Comput
 |---|---|---|
 | 読み取り（10） | `list_courses`・`get_course`・`list_assignments`・`get_assignment`・`list_upcoming_assignments`・`list_companies`・`get_company`・`list_interview_steps`・`list_upcoming_interview_steps`・`list_company_tasks` | 各 `GET` |
 | 作成（5） | `create_course`・`create_assignment`・`create_company`・`create_interview_step`・`create_company_task` | 各 `POST` |
-| 更新（4） | `update_course`・`update_assignment`・`update_interview_step`・`update_company_task` | 各 `PATCH` |
+| 更新（5） | `update_course`・`update_assignment`・`update_company`・`update_interview_step`・`update_company_task` | 各 `PATCH` |
 | 削除（5） | `delete_course`・`delete_assignment`・`delete_company`・`delete_interview_step`・`delete_company_task` | 各 `DELETE`（論理削除） |
 
 - **読み取り**: データを変更しない。論理削除済みのデータは含まれない。結果はAPIの応答JSONそのまま
+  - 企業には選考状態 `status`（`選考中`・`内定`・`お見送り`）がある。企業一覧（`list_companies`）の各企業には、次回の選考ステップの要約 `next_step`（結果が未定のステップのうち予定日が最も早いもの。予定日なしは最後。無ければ `null`）も付く。企業詳細（`get_company`）には付かない
 - **作成**: 作成されたデータを返す。省略した項目はAPIの既定値になる
 - **更新**: 更新内容は、APIの更新リクエスト本文と同じ形のオブジェクト `changes` で渡す
   - `changes` に**含めたキーだけ**が変更される。残したい項目は `changes` に含めない
   - 値を `null` にした項目は**空に戻る**（メモ・締切・予定日など空にできる項目のみ。名前・ステータスなどの必須項目に `null` を送るとAPIが422で拒否する）
   - 未知のキーはAPIに送らずに無視し、結果に「無視した項目」として知らせる
-  - ステータスを前の段階に戻す更新も成功し、結果の `warning` に警告文が入る
+  - ステータスを前の段階に戻す更新も成功し、結果の `warning` に警告文が入る（企業の選考状態を `内定`・`お見送り` から `選考中` に戻す場合も同じ）
+  - 企業の更新（`update_company`）で変えられるのは選考状態 `status` だけ（APIと同じ）。企業名は変更できず、`changes` に `name` を入れても無視した項目として知らせる
+  - 選考ステップの結果を `不通過` にすると（作成時、または `不通過` 以外から `不通過` への更新時）、企業が `選考中` ならAPIが自動で `お見送り` にする。`内定` の企業は変わらず、`不通過` を取り消しても `選考中` には戻らない
 - **削除**: APIと同じ論理削除。画面・APIからは見えなくなり、復元する手段は無い
 - **更新と削除は破壊的な操作**（上書き・消去・削除は元に戻せない）。ツールの annotations にも `destructiveHint` を付けている
-- 企業の更新（名前の変更）は既存APIに無いため、ツールも無い
+- 企業名の変更は既存APIに無いため、ツールも無い
 - APIのエラー（401・404・422等）、タイムアウト（10秒）、接続失敗はツールのエラー結果として返り、サーバーは落ちない。API Keyはエラー文・ログに出ない
 
 ## 前提
