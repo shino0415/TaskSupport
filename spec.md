@@ -3164,7 +3164,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: MCPサーバー・デモデータの企業選考状態「辞退」への対応
-- status: 未着手
+- status: 完了
 - 概要: 「企業の選考状態への「辞退」の追加（バックエンド）」の完了後に着手し、MCPサーバーの選考状態の選択肢と説明、MCPサーバーのREADMEを辞退に対応させ、デモデータに辞退の企業を加える（2026-11-18決定）。
 - 受け入れ条件:
   - [ ] MCPサーバーの企業を更新するツールで状態を辞退に変更でき、結果が既存APIで操作した場合と同じになる。選択肢外の値は従来どおりAPIを呼ばずに拒否される
@@ -3173,6 +3173,20 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] デモデータの投入後に、選考中・内定・お見送り・辞退の企業がそれぞれ1社以上あり、自動お見送りの規則と矛盾しない（不通過の選考ステップを持つ企業はお見送りの企業に限る等、既存のデモデータの整合性は保たれる）
   - [ ] デモデータの自動リセットで、辞退に変更された企業や辞退から変更された企業も投入時の状態に戻る
   - [ ] 実際のバックエンド・個人用VM・デモ環境に接続しない自動テストで上記が検証され、MCPサーバー・バックエンドのlint・テスト（warningなし）が通る
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High/Medium/Lowの指摘なし。2026-11-18）
+  - レビュー範囲: 未commitの差分（mcp-server/src/tasksupport_mcp/server.py、mcp-server/README.md、mcp-server/tests/test_tools.py・test_write_tools.py、backend/app/seed_demo_data.py、backend/tests/test_seed_demo_data.py・test_demo_reset.py）。api_client.py・config.py は差分なしで、関連部分だけ読んだ
+  - mass assignment: `update_company` は `CompanyChanges`（`status: CompanyStatus | None` だけを持ち、未知のキーは extra="ignore" で捨てる）を `_changed()`（`model_dump(exclude_unset=True)`）で送る。このため、本文に入るのは `status` だけ。`name`・`id`・`is_deleted` などは送られない。`CompanyStatus` の Literal に辞退を加えただけで、検証は緩んでいない（`内定辞退` などの選択肢外の値はAPIを呼ばずに拒否され、テストもある）。サーバー側の `CompanyUpdate` も status だけを持つ（前のタスクで確認済み）
+  - API Keyの露出: 今回の差分は API Key の扱いに触れていない。API Key は `httpx2.AsyncClient` の既定ヘッダーにだけ入る。`Config.api_key` は `repr=False`。`ApiClient.__repr__` は base_url だけを出す。リダイレクトには追従しない。エラーの文言（`_format_error`）は、ステータス、APIの detail、401のときの案内だけで、キーの値を含まない。ツールの結果はAPIの応答JSONと「無視した項目」だけ。追加したツール説明の定数（`COMPANY_STATUS_NOTE`・`COMPANY_STATUS_WARNING_NOTE`）は固定の文言
+  - 文書・テストの秘密情報: READMEの差分は選考状態と警告範囲の説明だけで、URL・ホスト名・IP・キー・設定値は含まない。テストのキーは従来どおりのダミー値（`test-secret-key`）で、MCPのテストは FakeApi・TEST_BASE_URL を使い実環境に接続しない
+  - デモデータ: 追加した企業名とメモは架空で、個人情報や実在企業を含まない。seed の出力（print）は件数だけ。デモの自動リセットのログにも新しい出力はない。ORMだけを使い、生SQLの追加はない。論理削除・物理削除の扱いは変わっていない（seed がテーブルを作り直すのは従来どおりで、デモ環境専用）
+- 性能エバリュエーターのフィードバック: 合格（2026-11-18）
+  - backend（ルート）: `uv run pytest` 600 passed、warning 0件（`-W default` でも0件）。`uv run ruff check` All checks passed
+  - mcp-server（VIRTUAL_ENVを外して実行）: `uv run pytest` 300 passed、warning 0件（`-W default` でも0件）。`uv run ruff check` All checks passed
+  - 辞退への変更と選択肢外の拒否: `test_update_company_to_declined_returns_api_response_as_is`（PATCHの本文が `{"status": "辞退"}` で、APIの応答がそのまま返る）、`UPDATE_FIELDS` の選択肢に辞退を追加。`内定辞退`・`内々定`・`不通過` はAPIを呼ばずに拒否される → 合格
+  - ツール説明: `list_companies`・`get_company`・`create_company`・`update_company` の説明に「選考中・内定・お見送り・辞退」があることを `test_company_read_tools_describe_status_choices_and_next_step` で確認。警告の範囲（内定・お見送り・辞退→選考中、辞退→内定だけが警告になる。選考中→各状態、内定→辞退、お見送りと内定・辞退の間は null）は「## ステータス遷移の警告ロジック」の `Company.status` の確定内容と一致し、`test_update_company_description_says_only_status_can_be_changed` で検証されている。辞退→内定の警告がそのまま返ることも `test_update_backward_transition_succeeds_with_api_warning[update_company_declined_to_offer]` で確認。選考ステップの作成・更新の説明に「内定・お見送り・辞退の企業は変わらない」があることを `test_interview_step_tools_describe_auto_rejection` で確認 → 合格
+  - README: 選考状態の選択肢、警告の範囲（spec と一致）、`update_company` で変えられる値、自動お見送りで変わらない企業に辞退が含まれている → 合格
+  - デモデータ: 辞退の企業（試作エンジニアリング株式会社、通過の選考ステップのみ）を追加。前タスクで記録した一時除外 `SEEDED_COMPANY_STATUSES` は削除され、`set(CompanyStatus)` との比較に戻っている（`test_seed_companies_cover_all_statuses_consistent_with_auto_rejection`、API経由の一覧でも `CompanyStatus` の全値が1件以上）。不通過のステップがあるのはお見送りの企業だけ、という整合性のチェックも同じテストで全企業に通る → 合格
+  - 自動リセット: `test_run_reset_once_restores_company_statuses_changed_via_api` で、選考中→辞退と辞退→内定をAPIで変更し、変更されたことを確認した後のリセットで、全企業の状態が投入時に戻る（`statuses() == seeded`） → 合格
+  - 外部接続なし: MCPのテストは FakeApi・TEST_BASE_URL、バックエンドのテストは tmp_path のSQLiteを使い、実環境に接続しない → 合格
+  - バグ・テスト不足: なし
 - 差し戻し回数: 0

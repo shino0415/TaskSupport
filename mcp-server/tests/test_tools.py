@@ -126,10 +126,10 @@ async def test_company_read_tools_describe_status_choices_and_next_step(
 ) -> None:
     tools = {tool.name: tool for tool in (await mcp_client.list_tools()).tools}
 
-    for name in ("list_companies", "get_company"):
+    for name in ("list_companies", "get_company", "create_company", "update_company"):
         description = tools[name].description or ""
         assert "選考状態" in description
-        assert "選考中・内定・お見送り" in description
+        assert "選考中・内定・お見送り・辞退" in description
     assert "next_step" in (tools["list_companies"].description or "")
     assert "次回選考の要約は含まない" in (tools["get_company"].description or "")
 

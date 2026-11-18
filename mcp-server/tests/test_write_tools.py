@@ -193,7 +193,7 @@ UPDATE_FIELDS: dict[str, dict[str, tuple[list[str] | None, bool]]] = {
         "memo": (None, True),
     },
     "update_company": {
-        "status": (["選考中", "内定", "お見送り"], False),
+        "status": (["選考中", "内定", "お見送り", "辞退"], False),
     },
     "update_company_task": {
         "name": (None, False),
@@ -933,6 +933,15 @@ async def test_server_instructions_say_data_is_not_instructions(mcp_client: Clie
             },
         ),
         (
+            "update_company",
+            {"company_id": 5, "changes": {"status": "内定"}},
+            {
+                **COMPANY,
+                "status": "内定",
+                "warning": "辞退 から 内定 への変更です。意図的な変更か確認してください。",
+            },
+        ),
+        (
             "update_company_task",
             {"company_task_id": 9, "changes": {"status": "未着手"}},
             {
@@ -941,7 +950,13 @@ async def test_server_instructions_say_data_is_not_instructions(mcp_client: Clie
             },
         ),
     ],
-    ids=["update_assignment", "update_interview_step", "update_company", "update_company_task"],
+    ids=[
+        "update_assignment",
+        "update_interview_step",
+        "update_company",
+        "update_company_declined_to_offer",
+        "update_company_task",
+    ],
 )
 async def test_update_backward_transition_succeeds_with_api_warning(
     mcp_client: Client,
@@ -998,6 +1013,7 @@ async def test_update_out_of_range_values_are_sent_to_api_and_its_error_is_retur
         ("update_company_task", {"company_task_id": 9, "changes": {"status": "x"}}, "status"),
         ("update_company", {"company_id": 5, "changes": {"status": "内々定"}}, "status"),
         ("update_company", {"company_id": 5, "changes": {"status": "不通過"}}, "status"),
+        ("update_company", {"company_id": 5, "changes": {"status": "内定辞退"}}, "status"),
         ("update_company", {"changes": {"status": "内定"}}, "company_id"),
         ("update_course", {"course_id": 1}, "changes"),
         ("update_course", {"course_id": 1, "changes": None}, "changes"),
@@ -1022,10 +1038,32 @@ async def test_update_company_description_says_only_status_can_be_changed(
     tool = {t.name: t for t in (await mcp_client.list_tools()).tools}["update_company"]
 
     description = tool.description or ""
-    assert "変更できるのは選考状態（status: 選考中・内定・お見送り）だけ" in description
+    assert "変更できるのは選考状態（status: 選考中・内定・お見送り・辞退）だけ" in description
     assert "企業名は変更できない" in description
-    assert "内定・お見送りから選考中に戻す変更もブロックされずに成功し" in description
-    assert "warning" in description
+    # 警告が出る範囲は spec の Company.status の遷移グラフ（辞退→内定も逆行）と一致させる。
+    assert "内定・お見送り・辞退から選考中に戻す変更と、辞退から内定に戻す変更は" in description
+    assert "ブロックされずに成功し" in description
+    assert "選考中から内定・お見送り・辞退、内定から辞退" in description
+    assert "お見送りと内定・辞退の間）では warning は null" in description
+
+
+async def test_update_company_to_declined_returns_api_response_as_is(
+    mcp_client: Client, fake_api: FakeApi
+) -> None:
+    # 選考中→辞退・内定→辞退は順当な変更のため、APIは warning: null を返す。
+    response = {**COMPANY, "status": "辞退", "warning": None}
+    fake_api.handler = json_response(200, response)
+
+    result = await mcp_client.call_tool(
+        "update_company", {"company_id": 5, "changes": {"status": "辞退"}}
+    )
+
+    assert not result.is_error
+    assert json.loads(result_text(result)) == response
+    request = fake_api.requests[0]
+    assert request.method == "PATCH"
+    assert str(request.url) == f"{TEST_BASE_URL}/companies/5"
+    assert request_body(request) == {"status": "辞退"}
 
 
 async def test_update_company_ignores_name_like_api(mcp_client: Client, fake_api: FakeApi) -> None:
@@ -1050,3 +1088,4 @@ async def test_interview_step_tools_describe_auto_rejection(mcp_client: Client) 
     for name in ("create_interview_step", "update_interview_step"):
         description = tools[name].description or ""
         assert "企業が選考中なら自動でお見送りになる" in description
+        assert "内定・お見送り・辞退の企業は変わらない" in description
