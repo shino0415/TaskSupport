@@ -46,6 +46,7 @@ class CompanyStatus(StrEnum):
     選考中 = "選考中"
     内定 = "内定"
     お見送り = "お見送り"
+    辞退 = "辞退"
 
 
 # --- 適用箇所ごとの状態遷移グラフ（確定） ---
@@ -76,9 +77,10 @@ INTERVIEW_STEP_RESULT_GRAPH: dict[InterviewStepResult, list[InterviewStepResult]
 }
 
 COMPANY_STATUS_GRAPH: dict[CompanyStatus, list[CompanyStatus]] = {
-    CompanyStatus.選考中: [CompanyStatus.内定, CompanyStatus.お見送り],
-    CompanyStatus.内定: [],
+    CompanyStatus.選考中: [CompanyStatus.内定, CompanyStatus.お見送り, CompanyStatus.辞退],
+    CompanyStatus.内定: [CompanyStatus.辞退],
     CompanyStatus.お見送り: [],
+    CompanyStatus.辞退: [],
 }
 
 

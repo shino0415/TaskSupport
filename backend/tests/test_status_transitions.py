@@ -8,9 +8,13 @@ InterviewStep.result, Company.status）
 
 - Assignment.status / CompanyTask.status / InterviewStep.prep_status は分岐のない線形グラフのため、
   「枝分かれ先同士の遷移」パターンは対象外。
-- InterviewStep.result / Company.status は深さ2（未定→通過/不通過で終端）の浅いグラフのため、
+- InterviewStep.result は深さ2（未定→通過/不通過で終端）の浅いグラフのため、
   「複数段飛び越え遷移」は隣接遷移と区別がつかず対象外。
+- Company.status は選考中→辞退が直接の辺と内定経由の両方で到達できるため、
+  飛び越え遷移は順当な変更の中で検証する。
 """
+
+import pytest
 
 from app.status_transitions import (
     ASSIGNMENT_STATUS_GRAPH,
@@ -18,6 +22,7 @@ from app.status_transitions import (
     COMPANY_TASK_STATUS_GRAPH,
     INTERVIEW_STEP_PREP_STATUS_GRAPH,
     INTERVIEW_STEP_RESULT_GRAPH,
+    CompanyStatus,
     check_backward_transition,
 )
 
@@ -128,7 +133,11 @@ def test_result_unrelated_branch_no_warning():
     assert check_backward_transition(INTERVIEW_STEP_RESULT_GRAPH, "不通過", "通過") is None
 
 
-# --- Company.status（選考中から内定/お見送りへ分岐） ---
+# --- Company.status（選考中から内定/お見送り/辞退へ分岐、内定から辞退へ） ---
+
+
+def test_company_status_graph_covers_all_statuses():
+    assert set(COMPANY_STATUS_GRAPH) == set(CompanyStatus)
 
 
 def test_company_status_same_status_no_warning():
@@ -136,22 +145,32 @@ def test_company_status_same_status_no_warning():
         assert check_backward_transition(COMPANY_STATUS_GRAPH, status, status) is None
 
 
-def test_company_status_forward_no_warning():
-    assert check_backward_transition(COMPANY_STATUS_GRAPH, "選考中", "内定") is None
-    assert check_backward_transition(COMPANY_STATUS_GRAPH, "選考中", "お見送り") is None
+@pytest.mark.parametrize(
+    ("from_status", "to_status"),
+    [("選考中", "内定"), ("選考中", "お見送り"), ("選考中", "辞退"), ("内定", "辞退")],
+)
+def test_company_status_forward_no_warning(from_status, to_status):
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, from_status, to_status) is None
 
 
-def test_company_status_backward_transition_returns_warning():
+@pytest.mark.parametrize("from_status", ["内定", "お見送り", "辞退"])
+def test_company_status_backward_to_in_progress_returns_warning(from_status):
     assert (
-        check_backward_transition(COMPANY_STATUS_GRAPH, "内定", "選考中")
-        == "内定 から 選考中 への変更です。意図的な変更か確認してください。"
+        check_backward_transition(COMPANY_STATUS_GRAPH, from_status, "選考中")
+        == f"{from_status} から 選考中 への変更です。意図的な変更か確認してください。"
     )
+
+
+def test_company_status_declined_to_offer_returns_warning():
     assert (
-        check_backward_transition(COMPANY_STATUS_GRAPH, "お見送り", "選考中")
-        == "お見送り から 選考中 への変更です。意図的な変更か確認してください。"
+        check_backward_transition(COMPANY_STATUS_GRAPH, "辞退", "内定")
+        == "辞退 から 内定 への変更です。意図的な変更か確認してください。"
     )
 
 
-def test_company_status_unrelated_branch_no_warning():
-    assert check_backward_transition(COMPANY_STATUS_GRAPH, "内定", "お見送り") is None
-    assert check_backward_transition(COMPANY_STATUS_GRAPH, "お見送り", "内定") is None
+@pytest.mark.parametrize(
+    ("from_status", "to_status"),
+    [("内定", "お見送り"), ("お見送り", "内定"), ("お見送り", "辞退"), ("辞退", "お見送り")],
+)
+def test_company_status_unrelated_branch_no_warning(from_status, to_status):
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, from_status, to_status) is None

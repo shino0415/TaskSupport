@@ -672,3 +672,19 @@ def test_company_status_update_works_against_migrated_db(migrated_client):
     assert response.status_code == 200
     assert response.json()["status"] == "お見送り"
     assert response.json()["warning"] is None
+
+
+def test_company_declined_status_works_against_migrated_db(migrated_client):
+    client = migrated_client
+    company_id = client.post(
+        "/companies", json={"name": "テスト株式会社"}, headers=AUTH_HEADERS
+    ).json()["id"]
+
+    response = client.patch(
+        f"/companies/{company_id}", json={"status": "辞退"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "辞退"
+    assert response.json()["warning"] is None
+    detail = client.get(f"/companies/{company_id}", headers=AUTH_HEADERS).json()
+    assert detail["status"] == "辞退"

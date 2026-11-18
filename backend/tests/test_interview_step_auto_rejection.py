@@ -105,7 +105,7 @@ def test_create_non_rejected_step_keeps_company_in_progress(client, result):
     assert company_status(client, company_id) == "選考中"
 
 
-@pytest.mark.parametrize("company_state", ["内定", "お見送り"])
+@pytest.mark.parametrize("company_state", ["内定", "お見送り", "辞退"])
 def test_create_rejected_step_does_not_change_finished_company(client, company_state):
     company_id = create_company(client, status=company_state)
 
@@ -146,7 +146,7 @@ def test_update_already_rejected_step_keeps_manually_restored_company(client):
     assert company_status(client, company_id) == "選考中"
 
 
-@pytest.mark.parametrize("company_state", ["内定", "お見送り"])
+@pytest.mark.parametrize("company_state", ["内定", "お見送り", "辞退"])
 def test_update_to_rejected_does_not_change_finished_company(client, company_state):
     company_id = create_company(client, status=company_state)
     step_id = post_step(client, company_id).json()["id"]

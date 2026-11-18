@@ -191,7 +191,7 @@ def test_get_company_detail_does_not_include_next_step(client):
 # --- PATCH /companies/{id} ---
 
 
-@pytest.mark.parametrize("new_status", ["内定", "お見送り"])
+@pytest.mark.parametrize("new_status", ["内定", "お見送り", "辞退"])
 def test_patch_company_status_forward_has_no_warning(client, new_status):
     company_id = create_company(client)
 
@@ -204,7 +204,7 @@ def test_patch_company_status_forward_has_no_warning(client, new_status):
     assert get_company_body(client, company_id)["status"] == new_status
 
 
-@pytest.mark.parametrize("from_status", ["内定", "お見送り"])
+@pytest.mark.parametrize("from_status", ["内定", "お見送り", "辞退"])
 def test_patch_company_status_backward_returns_warning_without_blocking(client, from_status):
     company_id = create_company(client)
     patch_company(client, company_id, {"status": from_status})
@@ -219,7 +219,10 @@ def test_patch_company_status_backward_returns_warning_without_blocking(client, 
     assert get_company_body(client, company_id)["status"] == "選考中"
 
 
-@pytest.mark.parametrize(("from_status", "to_status"), [("内定", "お見送り"), ("お見送り", "内定")])
+@pytest.mark.parametrize(
+    ("from_status", "to_status"),
+    [("内定", "お見送り"), ("お見送り", "内定"), ("お見送り", "辞退"), ("辞退", "お見送り")],
+)
 def test_patch_company_status_between_branches_has_no_warning(client, from_status, to_status):
     company_id = create_company(client)
     patch_company(client, company_id, {"status": from_status})
@@ -230,6 +233,40 @@ def test_patch_company_status_between_branches_has_no_warning(client, from_statu
     assert response.json()["warning"] is None
 
 
+def test_patch_company_offer_to_declined_has_no_warning(client):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": "内定"})
+
+    response = patch_company(client, company_id, {"status": "辞退"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "辞退"
+    assert response.json()["warning"] is None
+    assert get_company_body(client, company_id)["status"] == "辞退"
+
+
+def test_patch_company_declined_to_offer_returns_warning_without_blocking(client):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": "辞退"})
+
+    response = patch_company(client, company_id, {"status": "内定"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "内定"
+    assert (
+        response.json()["warning"]
+        == "辞退 から 内定 への変更です。意図的な変更か確認してください。"
+    )
+    assert get_company_body(client, company_id)["status"] == "内定"
+
+
+def test_list_and_detail_return_declined_status(client):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": "辞退"})
+
+    listed = client.get("/companies", headers=AUTH_HEADERS).json()
+    assert [c["status"] for c in listed if c["id"] == company_id] == ["辞退"]
+    assert get_company_body(client, company_id)["status"] == "辞退"
+
+
 def test_patch_company_same_status_has_no_warning(client):
     company_id = create_company(client)
     response = patch_company(client, company_id, {"status": "選考中"})
@@ -237,14 +274,15 @@ def test_patch_company_same_status_has_no_warning(client):
     assert response.json()["warning"] is None
 
 
-@pytest.mark.parametrize("bad_status", ["内々定", "", "不通過", None, 1])
-def test_patch_company_rejects_invalid_or_null_status(client, bad_status):
+@pytest.mark.parametrize("current_status", ["内定", "辞退"])
+@pytest.mark.parametrize("bad_status", ["内々定", "", "不通過", "内定辞退", None, 1])
+def test_patch_company_rejects_invalid_or_null_status(client, bad_status, current_status):
     company_id = create_company(client)
-    patch_company(client, company_id, {"status": "内定"})
+    patch_company(client, company_id, {"status": current_status})
 
     response = patch_company(client, company_id, {"status": bad_status})
     assert response.status_code == 422
-    assert get_company_body(client, company_id)["status"] == "内定"
+    assert get_company_body(client, company_id)["status"] == current_status
 
 
 def test_patch_company_ignores_fields_other_than_status(client):
