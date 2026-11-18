@@ -16,6 +16,7 @@ from app.status_transitions import (
     INTERVIEW_STEP_PREP_STATUS_GRAPH,
     INTERVIEW_STEP_RESULT_GRAPH,
     CompanyStatus,
+    InterviewStepPrepStatus,
     InterviewStepResult,
     check_backward_transition,
 )
@@ -107,12 +108,17 @@ def list_upcoming_interview_steps(db: Session = Depends(get_db)) -> list[models.
     # NULLかどうかを第一キー、dateを第二キーにして昇順ソートする）。
     # 親企業が論理削除済みの場合、企業経由(GET /companies/{id}/interview-steps)では
     # 404となり参照不能になるため、一貫性のため本エンドポイントでも除外する。
+    # 結果が出た・準備が完了した・選考が終わった企業のステップは「予定」ではないため外す。
+    # 予定日が過ぎていても結果が未定なら残す。next_stepにはこの絞り込みを入れない。
     return (
         db.query(models.InterviewStep)
         .join(models.Company, models.InterviewStep.company_id == models.Company.id)
         .filter(
             models.InterviewStep.is_deleted.is_(False),
             models.Company.is_deleted.is_(False),
+            models.InterviewStep.result == InterviewStepResult.未定,
+            models.InterviewStep.prep_status != InterviewStepPrepStatus.完了,
+            models.Company.status.in_((CompanyStatus.選考中, CompanyStatus.インターン参加)),
         )
         .order_by(*UPCOMING_ORDER)
         .all()

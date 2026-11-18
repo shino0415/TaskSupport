@@ -169,6 +169,41 @@ def test_seed_produces_assignments_visible_via_upcoming_endpoint(tmp_path, monke
     assert any(d >= now for d in deadlines)
 
 
+def test_seed_produces_interview_steps_visible_via_upcoming_endpoint(tmp_path, monkeypatch):
+    engine = build_engine(f"sqlite:///{tmp_path / 'seed_upcoming_steps_api.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = session_factory()
+    seed(session)
+    session.commit()
+    session.close()
+
+    monkeypatch.setenv(API_KEY_ENV_VAR, "test-secret-key")
+
+    def override_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    fastapi_app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(fastapi_app) as client:
+            response = client.get(
+                "/interview-steps/upcoming", headers={"X-API-Key": "test-secret-key"}
+            )
+    finally:
+        fastapi_app.dependency_overrides.clear()
+        engine.dispose()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) >= 1
+    assert all(item["result"] == "未定" for item in body)
+    assert all(item["prep_status"] != "完了" for item in body)
+
+
 # --- 企業の選考状態のばらつき（自動お見送りの規則と矛盾しない） ---
 
 

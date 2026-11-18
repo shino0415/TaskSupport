@@ -245,6 +245,90 @@ def test_upcoming_interview_steps_excludes_steps_of_deleted_company(client):
     assert id_active in ids
 
 
+def list_upcoming_ids(client):
+    response = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    return [s["id"] for s in response.json()]
+
+
+def set_company_status(client, company_id, company_status):
+    response = client.patch(
+        f"/companies/{company_id}", json={"status": company_status}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("result", ["通過", "不通過"])
+def test_upcoming_interview_steps_excludes_steps_with_decided_result(client, result):
+    company_id = create_company(client)
+    id_decided = create_interview_step(client, company_id, date="2026-03-01", result=result)
+    other_company_id = create_company(client, name="別社")
+    id_pending = create_interview_step(client, other_company_id, date="2026-03-02")
+
+    ids = list_upcoming_ids(client)
+    assert id_decided not in ids
+    assert id_pending in ids
+
+
+def test_upcoming_interview_steps_excludes_steps_with_completed_prep(client):
+    company_id = create_company(client)
+    id_completed = create_interview_step(client, company_id, prep_status="完了")
+    id_preparing = create_interview_step(client, company_id, prep_status="準備中")
+    id_ready = create_interview_step(client, company_id, prep_status="準備万端")
+
+    ids = list_upcoming_ids(client)
+    assert id_completed not in ids
+    assert id_preparing in ids
+    assert id_ready in ids
+
+
+@pytest.mark.parametrize("company_status", ["内定", "お見送り", "辞退"])
+def test_upcoming_interview_steps_excludes_steps_of_finished_company(client, company_status):
+    company_id = create_company(client)
+    id_finished = create_interview_step(client, company_id)
+    set_company_status(client, company_id, company_status)
+
+    ids = list_upcoming_ids(client)
+    assert id_finished not in ids
+
+
+@pytest.mark.parametrize("company_status", ["選考中", "インターン参加"])
+def test_upcoming_interview_steps_includes_pending_steps_of_ongoing_company(
+    client, company_status
+):
+    company_id = create_company(client)
+    if company_status != "選考中":
+        set_company_status(client, company_id, company_status)
+    id_pending = create_interview_step(client, company_id, prep_status="準備万端")
+
+    assert list_upcoming_ids(client) == [id_pending]
+
+
+def test_upcoming_interview_steps_includes_past_pending_steps(client):
+    company_id = create_company(client)
+    id_past = create_interview_step(client, company_id, date="2000-01-01")
+    id_future = create_interview_step(client, company_id, date="2999-01-01")
+
+    assert list_upcoming_ids(client) == [id_past, id_future]
+
+
+def test_upcoming_interview_steps_returns_only_matching_steps_in_order(client):
+    ongoing = create_company(client, name="選考中社")
+    intern = create_company(client, name="インターン社")
+    set_company_status(client, intern, "インターン参加")
+    finished = create_company(client, name="内定社")
+
+    id_no_date = create_interview_step(client, ongoing, date=None)
+    id_late = create_interview_step(client, intern, date="2026-05-01")
+    id_early = create_interview_step(client, ongoing, date="2026-03-01")
+    create_interview_step(client, ongoing, date="2026-02-01", result="通過")
+    create_interview_step(client, intern, date="2026-02-02", prep_status="完了")
+    create_interview_step(client, finished, date="2026-02-03")
+    set_company_status(client, finished, "内定")
+
+    assert list_upcoming_ids(client) == [id_early, id_late, id_no_date]
+
+
 def test_upcoming_interview_steps_requires_api_key(client):
     response = client.get("/interview-steps/upcoming")
     assert response.status_code == 401

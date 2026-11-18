@@ -179,6 +179,21 @@ def test_next_step_matches_first_pending_step_in_upcoming(client):
     assert listed == expected
 
 
+def test_next_step_ignores_upcoming_filters_on_prep_status_and_company_status(client):
+    # upcomingの絞り込み（準備状況が完了・選考が終わった企業を外す）はnext_stepには入れない
+    company_id = create_company(client)
+    completed_id = create_step(client, company_id, date="2026-11-01", prep_status="完了")
+    create_step(client, company_id, date="2026-11-02")
+    response = client.patch(
+        f"/companies/{company_id}", json={"status": "内定"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+
+    upcoming = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS).json()
+    assert upcoming == []
+    assert next_step_of(client, company_id)["id"] == completed_id
+
+
 def test_list_still_excludes_deleted_companies(client):
     deleted_id = create_company(client, name="削除社")
     create_step(client, deleted_id, date="2026-11-01")

@@ -134,6 +134,24 @@ async def test_company_read_tools_describe_status_choices_and_next_step(
     assert "次回選考の要約は含まない" in (tools["get_company"].description or "")
 
 
+async def test_upcoming_interview_steps_tool_describes_filter_rules(
+    mcp_client: Client,
+) -> None:
+    tools = {tool.name: tool for tool in (await mcp_client.list_tools()).tools}
+    description = tools["list_upcoming_interview_steps"].description or ""
+
+    for phrase in (
+        "結果が未定",
+        "準備状況が完了でなく",
+        "選考中またはインターン参加",
+        "結果が通過・不通過のもの、準備状況が完了のもの、内定・お見送り・辞退の企業のものは外れる",
+        "予定日が過ぎていても結果が未定なら含まれる",
+        "予定日の早い順",
+        "末尾",
+    ):
+        assert phrase in description
+
+
 @pytest.mark.parametrize(("name", "args", "path", "body"), READ_TOOLS, ids=TOOL_IDS)
 async def test_read_tool_calls_api_and_returns_response(
     mcp_client: Client, fake_api: FakeApi, name: str, args: dict[str, Any], path: str, body: Any

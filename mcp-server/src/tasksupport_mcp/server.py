@@ -285,8 +285,11 @@ def build_server(api: ApiClient) -> MCPServer:
     @read_tool(
         "list_upcoming_interview_steps",
         "直近の選考ステップ",
-        "全企業の選考ステップを予定日の早い順に取得する。予定日が未設定のものは末尾に含まれる"
-        "（GET /interview-steps/upcoming）。",
+        "全企業の選考ステップのうち、まだ終わっていないものを予定日の早い順に取得する"
+        "（GET /interview-steps/upcoming）。返るのは、結果が未定で、準備状況が完了でなく、"
+        "企業の選考状態が選考中またはインターン参加のステップだけ。"
+        "結果が通過・不通過のもの、準備状況が完了のもの、内定・お見送り・辞退の企業のものは外れる。"
+        "予定日が過ぎていても結果が未定なら含まれる。予定日が未設定のものは末尾に含まれる。",
     )
     async def list_upcoming_interview_steps() -> str:
         return _to_text(await api.get("/interview-steps/upcoming"))
