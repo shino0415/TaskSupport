@@ -144,3 +144,156 @@ def test_delete_company_is_idempotent_not_found_on_second_call(client):
 def test_endpoints_require_api_key(client):
     response = client.get("/companies")
     assert response.status_code == 401
+
+
+# --- 選考状態（status） ---
+
+
+def patch_company(client, company_id, body, headers=AUTH_HEADERS):
+    return client.patch(f"/companies/{company_id}", json=body, headers=headers)
+
+
+def get_company_body(client, company_id):
+    return client.get(f"/companies/{company_id}", headers=AUTH_HEADERS).json()
+
+
+def test_create_company_defaults_status_to_in_progress(client):
+    response = client.post("/companies", json=make_company_payload(), headers=AUTH_HEADERS)
+    assert response.status_code == 201
+    assert response.json()["status"] == "選考中"
+
+
+def test_create_company_ignores_status_in_payload(client):
+    response = client.post(
+        "/companies", json=make_company_payload(status="内定"), headers=AUTH_HEADERS
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "選考中"
+
+
+def test_list_and_detail_include_status(client):
+    company_id = create_company(client)
+
+    listed = client.get("/companies", headers=AUTH_HEADERS).json()
+    assert [c["status"] for c in listed if c["id"] == company_id] == ["選考中"]
+    assert get_company_body(client, company_id)["status"] == "選考中"
+
+
+def test_get_company_detail_does_not_include_next_step(client):
+    company_id = create_company(client)
+    client.post(
+        f"/companies/{company_id}/interview-steps", json={"type": "一次面接"}, headers=AUTH_HEADERS
+    )
+    body = get_company_body(client, company_id)
+    assert set(body) == {"id", "name", "status", "is_deleted"}
+
+
+# --- PATCH /companies/{id} ---
+
+
+@pytest.mark.parametrize("new_status", ["内定", "お見送り"])
+def test_patch_company_status_forward_has_no_warning(client, new_status):
+    company_id = create_company(client)
+
+    response = patch_company(client, company_id, {"status": new_status})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == company_id
+    assert body["status"] == new_status
+    assert body["warning"] is None
+    assert get_company_body(client, company_id)["status"] == new_status
+
+
+@pytest.mark.parametrize("from_status", ["内定", "お見送り"])
+def test_patch_company_status_backward_returns_warning_without_blocking(client, from_status):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": from_status})
+
+    response = patch_company(client, company_id, {"status": "選考中"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "選考中"
+    assert (
+        response.json()["warning"]
+        == f"{from_status} から 選考中 への変更です。意図的な変更か確認してください。"
+    )
+    assert get_company_body(client, company_id)["status"] == "選考中"
+
+
+@pytest.mark.parametrize(("from_status", "to_status"), [("内定", "お見送り"), ("お見送り", "内定")])
+def test_patch_company_status_between_branches_has_no_warning(client, from_status, to_status):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": from_status})
+
+    response = patch_company(client, company_id, {"status": to_status})
+    assert response.status_code == 200
+    assert response.json()["status"] == to_status
+    assert response.json()["warning"] is None
+
+
+def test_patch_company_same_status_has_no_warning(client):
+    company_id = create_company(client)
+    response = patch_company(client, company_id, {"status": "選考中"})
+    assert response.status_code == 200
+    assert response.json()["warning"] is None
+
+
+@pytest.mark.parametrize("bad_status", ["内々定", "", "不通過", None, 1])
+def test_patch_company_rejects_invalid_or_null_status(client, bad_status):
+    company_id = create_company(client)
+    patch_company(client, company_id, {"status": "内定"})
+
+    response = patch_company(client, company_id, {"status": bad_status})
+    assert response.status_code == 422
+    assert get_company_body(client, company_id)["status"] == "内定"
+
+
+def test_patch_company_ignores_fields_other_than_status(client):
+    company_id = create_company(client, name="元の企業名")
+
+    response = patch_company(
+        client,
+        company_id,
+        {"status": "内定", "name": "変更後", "id": company_id + 100, "is_deleted": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "id": company_id,
+        "name": "元の企業名",
+        "status": "内定",
+        "is_deleted": False,
+        "warning": None,
+    }
+    assert get_company_body(client, company_id)["name"] == "元の企業名"
+    assert company_id in [c["id"] for c in client.get("/companies", headers=AUTH_HEADERS).json()]
+
+
+def test_patch_company_without_status_changes_nothing(client):
+    company_id = create_company(client)
+    response = patch_company(client, company_id, {"name": "変更後"})
+    assert response.status_code == 200
+    assert response.json()["name"] == "テスト株式会社"
+    assert response.json()["status"] == "選考中"
+    assert response.json()["warning"] is None
+
+
+def test_patch_company_not_found_for_unknown_id(client):
+    assert patch_company(client, 99999, {"status": "内定"}).status_code == 404
+
+
+def test_patch_company_not_found_after_deletion(client):
+    company_id = create_company(client)
+    client.delete(f"/companies/{company_id}", headers=AUTH_HEADERS)
+    assert patch_company(client, company_id, {"status": "内定"}).status_code == 404
+
+
+def test_patch_company_not_found_for_out_of_range_id(client):
+    assert patch_company(client, 2**63, {"status": "内定"}).status_code == 404
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong-key"}])
+def test_patch_company_requires_valid_api_key(client, headers):
+    company_id = create_company(client)
+    response = patch_company(client, company_id, {"status": "内定"}, headers=headers)
+    assert response.status_code == 401
+    assert get_company_body(client, company_id)["status"] == "選考中"

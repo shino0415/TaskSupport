@@ -1,19 +1,20 @@
 """ステータス遷移警告ロジック（check_backward_transition）の単体テスト。
 
-適用箇所4種（Assignment.status, CompanyTask.status, InterviewStep.prep_status,
-InterviewStep.result）
+適用箇所5種（Assignment.status, CompanyTask.status, InterviewStep.prep_status,
+InterviewStep.result, Company.status）
 それぞれについて、境界値（同一ステータス、隣接遷移、
 複数段飛び越え遷移、明確な逆行遷移、枝分かれ先同士の無関係な遷移）を、
 各グラフの構造上該当するパターンのみ網羅する。
 
 - Assignment.status / CompanyTask.status / InterviewStep.prep_status は分岐のない線形グラフのため、
   「枝分かれ先同士の遷移」パターンは対象外。
-- InterviewStep.result は深さ2（未定→通過/不通過で終端）の浅いグラフのため、
+- InterviewStep.result / Company.status は深さ2（未定→通過/不通過で終端）の浅いグラフのため、
   「複数段飛び越え遷移」は隣接遷移と区別がつかず対象外。
 """
 
 from app.status_transitions import (
     ASSIGNMENT_STATUS_GRAPH,
+    COMPANY_STATUS_GRAPH,
     COMPANY_TASK_STATUS_GRAPH,
     INTERVIEW_STEP_PREP_STATUS_GRAPH,
     INTERVIEW_STEP_RESULT_GRAPH,
@@ -125,3 +126,32 @@ def test_result_backward_transition_returns_warning():
 def test_result_unrelated_branch_no_warning():
     assert check_backward_transition(INTERVIEW_STEP_RESULT_GRAPH, "通過", "不通過") is None
     assert check_backward_transition(INTERVIEW_STEP_RESULT_GRAPH, "不通過", "通過") is None
+
+
+# --- Company.status（選考中から内定/お見送りへ分岐） ---
+
+
+def test_company_status_same_status_no_warning():
+    for status in COMPANY_STATUS_GRAPH:
+        assert check_backward_transition(COMPANY_STATUS_GRAPH, status, status) is None
+
+
+def test_company_status_forward_no_warning():
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, "選考中", "内定") is None
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, "選考中", "お見送り") is None
+
+
+def test_company_status_backward_transition_returns_warning():
+    assert (
+        check_backward_transition(COMPANY_STATUS_GRAPH, "内定", "選考中")
+        == "内定 から 選考中 への変更です。意図的な変更か確認してください。"
+    )
+    assert (
+        check_backward_transition(COMPANY_STATUS_GRAPH, "お見送り", "選考中")
+        == "お見送り から 選考中 への変更です。意図的な変更か確認してください。"
+    )
+
+
+def test_company_status_unrelated_branch_no_warning():
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, "内定", "お見送り") is None
+    assert check_backward_transition(COMPANY_STATUS_GRAPH, "お見送り", "内定") is None

@@ -106,6 +106,8 @@ def test_company_columns_match_spec():
     assert isinstance(columns["id"]["type"], INTEGER)
     assert columns["name"]["nullable"] is False
     assert isinstance(columns["name"]["type"], VARCHAR)
+    assert columns["status"]["nullable"] is False
+    assert isinstance(columns["status"]["type"], VARCHAR)
     assert columns["is_deleted"]["nullable"] is False
     assert isinstance(columns["is_deleted"]["type"], BOOLEAN)
 

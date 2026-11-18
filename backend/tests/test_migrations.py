@@ -16,6 +16,8 @@
 - 案件系→授業系置き換えリビジョンが、案件系・選考系のデータ入りDBに対して
   案件系3テーブルを削除して course/assignment を作成し、選考系データを一切変えないこと。
   巻き戻すと案件系3テーブルが元のスキーマの空テーブルとして復元されること
+- 企業の選考状態追加リビジョンが、既存の企業をすべて選考中にし、企業以外のテーブルと
+  データを変えないこと。巻き戻すと状態の列だけが消え、ほかは元に戻ること
 - この仕組み（alembic upgrade head）で準備したDBに対しても、既存のFastAPIアプリ
   （選考系の全3リソース）が問題なく動作すること
 """
@@ -75,7 +77,7 @@ EXPECTED_COLUMNS = {
         "memo",
         "is_deleted",
     },
-    "company": {"id", "name", "is_deleted"},
+    "company": {"id", "name", "is_deleted", "status"},
     "interview_step": {
         "id",
         "company_id",
@@ -105,6 +107,7 @@ def get_current_revision(engine: sa.Engine) -> str | None:
 INITIAL_REVISION = "522c9ff7a611"
 COMPANY_TASK_REVISION = "974953724e96"
 COURSE_REVISION = "b7c3e1a9d4f2"
+COMPANY_STATUS_REVISION = "c4d8f2a6e1b3"
 
 
 def table_names(engine: sa.Engine) -> set[str]:
@@ -213,10 +216,11 @@ def test_downgrade_and_reupgrade_roundtrip(tmp_path):
     command.upgrade(cfg, "head")
     assert EXPECTED_TABLES.issubset(set(inspect(engine).get_table_names()))
 
-    # 直前の変更単位（案件系→授業系の置き換え）のみを巻き戻す。それより前の変更単位
-    # （company/interview_step/company_task）のテーブルには影響しない。
+    # 直前の変更単位（企業の選考状態の追加）のみを巻き戻す。テーブル構成は変わらない。
     command.downgrade(cfg, "-1")
-    assert table_names(engine) == PROJECT_SYSTEM_TABLES | set(SELECTION_TABLES)
+    assert get_current_revision(engine) == COURSE_REVISION
+    assert table_names(engine) == EXPECTED_TABLES
+    assert "status" not in {c["name"] for c in inspect(engine).get_columns("company")}
 
     command.upgrade(cfg, "head")
     assert EXPECTED_TABLES.issubset(set(inspect(engine).get_table_names()))
@@ -274,6 +278,14 @@ def insert_legacy_project(conn: sa.Connection, name: str) -> int:
     return result.lastrowid
 
 
+def insert_legacy_company(conn: sa.Connection, name: str) -> int:
+    """選考状態の列が無い旧スキーマのcompanyテーブルへは、ORMのテーブル定義（statusの
+    既定値を含む）を使わず素のSQLで投入する。"""
+    return conn.execute(
+        sa.text("INSERT INTO company (name) VALUES (:name)"), {"name": name}
+    ).lastrowid
+
+
 def test_company_task_migration_adds_table_without_affecting_existing_data(tmp_path):
     """既存DB（開発用DBを想定）を模し、初期リビジョンまで適用済み・かつ
     既存5テーブルにデータが入った状態から company_task 追加リビジョンを適用しても、
@@ -289,7 +301,7 @@ def test_company_task_migration_adds_table_without_affecting_existing_data(tmp_p
     assert "company_task" not in table_names(engine)
 
     with engine.begin() as conn:
-        conn.execute(sa.insert(models.Company.__table__).values(name="既存企業"))
+        insert_legacy_company(conn, "既存企業")
         insert_legacy_project(conn, "既存案件")
     before = snapshot_rows(engine, ["company", "project"])
 
@@ -338,14 +350,9 @@ def seed_pre_course_db(engine: sa.Engine) -> None:
             {"tid": task_id},
         )
 
-        company_ids = [
-            conn.execute(sa.insert(models.Company.__table__).values(name=name)).lastrowid
-            for name in ("既存企業A", "既存企業B")
-        ]
+        company_ids = [insert_legacy_company(conn, name) for name in ("既存企業A", "既存企業B")]
         conn.execute(
-            sa.update(models.Company.__table__)
-            .where(models.Company.__table__.c.id == company_ids[1])
-            .values(is_deleted=True)
+            sa.text("UPDATE company SET is_deleted = 1 WHERE id = :id"), {"id": company_ids[1]}
         )
         conn.execute(
             sa.insert(models.InterviewStep.__table__),
@@ -393,7 +400,7 @@ def test_course_migration_replaces_project_tables_and_keeps_selection_data(tmp_p
     selection_before = snapshot_rows(engine, SELECTION_TABLES)
     selection_schema_before = {t: describe_table(engine, t) for t in SELECTION_TABLES}
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, COURSE_REVISION)
 
     assert get_current_revision(engine) == COURSE_REVISION
     assert table_names(engine) == EXPECTED_TABLES
@@ -455,10 +462,10 @@ def test_course_migration_downgrade_restores_empty_project_tables(tmp_path):
     seed_pre_course_db(engine)
     selection_before = snapshot_rows(engine, SELECTION_TABLES)
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, COURSE_REVISION)
     with engine.begin() as conn:
         conn.execute(sa.insert(models.Course.__table__).values(name="消える授業"))
-    command.downgrade(cfg, "-1")
+    command.downgrade(cfg, COMPANY_TASK_REVISION)
 
     assert get_current_revision(engine) == COMPANY_TASK_REVISION
     assert table_names(engine) == PROJECT_SYSTEM_TABLES | set(SELECTION_TABLES)
@@ -472,9 +479,109 @@ def test_course_migration_downgrade_restores_empty_project_tables(tmp_path):
         insert_legacy_project(conn, "復元後の案件")
 
     # 再適用も可能
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, COURSE_REVISION)
     assert table_names(engine) == EXPECTED_TABLES
     assert snapshot_rows(engine, SELECTION_TABLES) == selection_before
+
+
+# --- 企業の選考状態追加リビジョン ---
+
+NON_COMPANY_TABLES = ("course", "assignment", "interview_step", "company_task")
+
+
+def seed_pre_company_status_db(engine: sa.Engine) -> None:
+    """選考状態追加の直前のリビジョンに、企業（論理削除済みを含む）と企業以外の全テーブルの
+    データを入れる。"""
+    with engine.begin() as conn:
+        company_ids = [insert_legacy_company(conn, name) for name in ("既存企業A", "既存企業B")]
+        conn.execute(
+            sa.text("UPDATE company SET is_deleted = 1 WHERE id = :id"), {"id": company_ids[1]}
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO interview_step (company_id, type, date, prep_status, result) "
+                "VALUES (:cid, '一次面接', '2026-03-01', '準備中', '不通過')"
+            ),
+            {"cid": company_ids[0]},
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO company_task (company_id, name, status) "
+                "VALUES (:cid, '企業タスク', '処理中')"
+            ),
+            {"cid": company_ids[0]},
+        )
+        course_id = conn.execute(sa.text("INSERT INTO course (name) VALUES ('授業')")).lastrowid
+        conn.execute(
+            sa.text(
+                "INSERT INTO assignment (course_id, name, status, deadline) "
+                "VALUES (:cid, '課題', '取組中', '2026-05-01 23:59:00')"
+            ),
+            {"cid": course_id},
+        )
+
+
+def test_company_status_migration_sets_existing_companies_to_in_progress(tmp_path):
+    db_path = tmp_path / "migration_company_status.db"
+    cfg = make_alembic_config(f"sqlite:///{db_path}")
+    engine = build_engine(f"sqlite:///{db_path}")
+
+    command.upgrade(cfg, COURSE_REVISION)
+    seed_pre_company_status_db(engine)
+    others_before = snapshot_rows(engine, NON_COMPANY_TABLES)
+    others_schema_before = {t: describe_table(engine, t) for t in NON_COMPANY_TABLES}
+    companies_before = snapshot_rows(engine, ["company"])["company"]
+
+    command.upgrade(cfg, COMPANY_STATUS_REVISION)
+
+    assert get_current_revision(engine) == COMPANY_STATUS_REVISION
+    assert table_names(engine) == EXPECTED_TABLES
+    with engine.connect() as conn:
+        companies_after = [
+            tuple(row)
+            for row in conn.execute(
+                sa.text("SELECT id, name, is_deleted, status FROM company ORDER BY id")
+            )
+        ]
+    # 論理削除済みを含む既存の企業がすべて選考中になり、ほかの列は変わらない
+    assert companies_after == [(*row, "選考中") for row in companies_before]
+    assert snapshot_rows(engine, NON_COMPANY_TABLES) == others_before
+    assert {t: describe_table(engine, t) for t in NON_COMPANY_TABLES} == others_schema_before
+
+    # 新しく作る企業も、状態を指定しなければDB側の既定で選考中になる
+    with engine.begin() as conn:
+        new_id = insert_legacy_company(conn, "新規企業")
+        new_status = conn.execute(
+            sa.text("SELECT status FROM company WHERE id = :id"), {"id": new_id}
+        ).scalar_one()
+    assert new_status == "選考中"
+
+
+def test_company_status_migration_downgrade_removes_only_status_column(tmp_path):
+    db_path = tmp_path / "migration_company_status_downgrade.db"
+    cfg = make_alembic_config(f"sqlite:///{db_path}")
+    engine = build_engine(f"sqlite:///{db_path}")
+
+    command.upgrade(cfg, COURSE_REVISION)
+    company_schema_before = describe_table(engine, "company")
+    seed_pre_company_status_db(engine)
+    all_before = snapshot_rows(engine, (*NON_COMPANY_TABLES, "company"))
+
+    command.upgrade(cfg, COMPANY_STATUS_REVISION)
+    with engine.begin() as conn:
+        conn.execute(sa.text("UPDATE company SET status = '内定'"))
+    command.downgrade(cfg, COURSE_REVISION)
+
+    assert get_current_revision(engine) == COURSE_REVISION
+    assert table_names(engine) == EXPECTED_TABLES
+    assert describe_table(engine, "company") == company_schema_before
+    assert snapshot_rows(engine, (*NON_COMPANY_TABLES, "company")) == all_before
+
+    # 再適用すると既存の企業は再び選考中になる
+    command.upgrade(cfg, COMPANY_STATUS_REVISION)
+    with engine.connect() as conn:
+        statuses = conn.execute(sa.text("SELECT DISTINCT status FROM company")).scalars().all()
+    assert statuses == ["選考中"]
 
 
 # --- この仕組みで準備したDBに対して既存のアプリ機能が全て通過する ---
@@ -552,3 +659,16 @@ def test_company_task_status_warning_works_against_migrated_db(migrated_client):
     assert backward.status_code == 200
     assert backward.json()["status"] == "処理中"
     assert backward.json()["warning"] is not None
+
+
+def test_company_status_update_works_against_migrated_db(migrated_client):
+    client = migrated_client
+    company = client.post("/companies", json={"name": "テスト株式会社"}, headers=AUTH_HEADERS)
+    assert company.json()["status"] == "選考中"
+
+    response = client.patch(
+        f"/companies/{company.json()['id']}", json={"status": "お見送り"}, headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "お見送り"
+    assert response.json()["warning"] is None

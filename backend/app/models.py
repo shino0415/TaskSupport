@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 from app.status_transitions import (
     AssignmentStatus,
+    CompanyStatus,
     CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
@@ -56,6 +57,14 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
+    )
+    # マイグレーションで後から末尾に追加した列のため、create_allで作るスキーマと
+    # 列順を揃えるようis_deletedの後に置く。server_defaultは既存の行を選考中にする。
+    status: Mapped[CompanyStatus] = mapped_column(
+        String,
+        nullable=False,
+        default=CompanyStatus.選考中,
+        server_default=CompanyStatus.選考中.value,
     )
 
 

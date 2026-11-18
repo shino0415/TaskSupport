@@ -42,6 +42,12 @@ class InterviewStepResult(StrEnum):
     不通過 = "不通過"
 
 
+class CompanyStatus(StrEnum):
+    選考中 = "選考中"
+    内定 = "内定"
+    お見送り = "お見送り"
+
+
 # --- 適用箇所ごとの状態遷移グラフ（確定） ---
 
 ASSIGNMENT_STATUS_GRAPH: dict[AssignmentStatus, list[AssignmentStatus]] = {
@@ -67,6 +73,12 @@ INTERVIEW_STEP_RESULT_GRAPH: dict[InterviewStepResult, list[InterviewStepResult]
     InterviewStepResult.未定: [InterviewStepResult.通過, InterviewStepResult.不通過],
     InterviewStepResult.通過: [],
     InterviewStepResult.不通過: [],
+}
+
+COMPANY_STATUS_GRAPH: dict[CompanyStatus, list[CompanyStatus]] = {
+    CompanyStatus.選考中: [CompanyStatus.内定, CompanyStatus.お見送り],
+    CompanyStatus.内定: [],
+    CompanyStatus.お見送り: [],
 }
 
 

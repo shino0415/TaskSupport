@@ -244,6 +244,7 @@ OUT_OF_RANGE_ID_REQUESTS = [
     ("patch", "/assignments/{id}", {"memo": "x"}),
     ("delete", "/assignments/{id}", None),
     ("get", "/companies/{id}", None),
+    ("patch", "/companies/{id}", {"status": "内定"}),
     ("delete", "/companies/{id}", None),
     ("post", "/companies/{id}/interview-steps", {"type": "一次面接"}),
     ("get", "/companies/{id}/interview-steps", None),

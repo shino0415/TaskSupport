@@ -21,6 +21,7 @@ from pydantic import (
 # （ここで独自に列挙すると、Enum側だけ更新された際に不整合が起きるため）。
 from app.status_transitions import (
     AssignmentStatus,
+    CompanyStatus,
     CompanyTaskStatus,
     InterviewStepPrepStatus,
     InterviewStepResult,
@@ -169,7 +170,24 @@ class CompanyRead(BaseModel):
 
     name: str
     id: int
+    status: str
     is_deleted: bool
+
+
+# 変更できるのは選考状態だけ（決定事項「企業の選考状態と次回選考の表示」）。
+# name等の他の項目はスキーマに持たないため、送られても無視される。
+class CompanyUpdate(BaseModel):
+    status: CompanyStatus | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_null_for_required_fields(self) -> Self:
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("次のフィールドにnullは指定できません: status")
+        return self
+
+
+class CompanyPatchResponse(CompanyRead):
+    warning: str | None = None
 
 
 class InterviewStepCreate(BaseModel):
