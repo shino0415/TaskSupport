@@ -2934,7 +2934,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - 差し戻し回数: 0
 
 ### タスク: 選考ステップの結果が不通過になったときの企業の自動お見送り
-- status: 未着手
+- status: 完了
 - 概要: 「企業の選考状態の追加と企業更新エンドポイント」の完了後に着手し、選考ステップの結果が「不通過」で作成されたとき、または不通過以外から不通過に更新されたとき、企業が選考中であれば自動でお見送りにする（2026-11-18決定）。
 - 受け入れ条件:
   - [ ] 選考中の企業に結果「不通過」の選考ステップを作成すると、企業の状態がお見送りになる
@@ -2945,8 +2945,28 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - [ ] 選考ステップの作成・更新と企業の状態の変更は一体で行われ、どちらか一方だけが反映された状態にならない。選考ステップの作成・更新のレスポンスの形と、既存の逆行警告の挙動は変わらない
   - [ ] 上記がテストで検証され、lint・テスト（warningなし）が通る
 - 実装メモ:
-- セキュリティエバリュエーターのフィードバック: (未評価)
-- 性能エバリュエーターのフィードバック: (未評価)
+  - `backend/app/routers/interview_steps.py` に、企業が選考中のときだけお見送りにする `_reject_company_if_in_progress` を追加した。作成（`POST /companies/{id}/interview-steps`）では結果が不通過なら常に呼び、更新（`PATCH /interview-steps/{id}`）では送られた `result` が不通過で、更新前の結果が不通過以外のときだけ呼ぶ
+  - 企業の状態の変更は選考ステップの作成・更新と同じセッションで行い、`db.commit()` は1回だけにしたので、どちらか一方だけが反映されることはない
+  - 選考ステップのレスポンスの形（作成は `InterviewStepRead`、更新は `InterviewStepPatchResponse`）と逆行警告の判定は変えていない。不通過を未定・通過に戻したときは、従来どおり警告が出て、企業の状態は変わらない
+  - 更新では、親企業が論理削除済みかどうかで分けていない（従来どおり選考ステップの更新は親企業の削除状態を確認しない。削除済みの企業はAPIから見えないので、外から分かる違いはない）
+  - テストは `backend/tests/test_interview_step_auto_rejection.py`。一体性は、企業の更新時に失敗させるイベントリスナーを入れて、選考ステップの作成・更新も反映されないことを確認している
+- セキュリティエバリュエーターのフィードバック: 合格（Critical/High なし。2026-11-18）
+  - [Low] `PATCH /interview-steps/{id}` で親企業が論理削除済みでも、`db.get_one(models.Company, interview_step.company_id)` は `is_deleted` を見ずに企業を取るので、削除済み企業の `status` が選考中からお見送りに書き換わる。もともと企業を削除しても選考ステップは連鎖削除されず、ID を指定すれば更新できる（今回より前からの仕様）。削除済み企業を参照・復元するAPIは無く、レスポンスにも企業の状態は含まれないので、外から観測できる情報漏洩や権限の問題にはならない。ただ「論理削除済みのデータは変更しない」という方針から外れるので、将来復元機能を足すときは、自動お見送りの対象を `is_deleted=False` の企業に絞ることを勧める（例: `_get_active_company_or_404` を使うか、削除済みならスキップする）。今回は差し戻さない
+  - [確認済み・問題なし] 他企業への影響: 作成は URL の `company_id` で取った企業オブジェクトだけを、更新は選考ステップ自身の `company_id` の企業だけを変更する。クライアントは `company_id` を指定できない（`InterviewStepCreate`/`InterviewStepUpdate` にこのフィールドが無い）ので、別の企業の状態を書き換える経路は無い。`test_auto_rejection_affects_only_the_step_company` でも検証している
+  - [確認済み・問題なし] トランザクションの一体性: 企業の状態変更と選考ステップの追加・更新は同じ Session に入り、`db.commit()` は1回だけ。commit が失敗すると `get_db` の `close()` で暗黙にロールバックされ、どちらも反映されない。両方の失敗系テストで検証している（22件 pass を確認）
+  - [確認済み・問題なし] 認証: ルーターは変えておらず、アプリ全体の `dependencies=[Depends(verify_api_key)]` が引き続き効いている
+  - [確認済み・問題なし] mass assignment: 入力スキーマは変えていない。企業の状態はサーバー側の判定でしか変わらず、選考ステップの API から `status` や `is_deleted` を直接指定できない
+  - [確認済み・問題なし] インジェクション、物理削除、エラー情報の漏洩、CORS、シークレット: 今回の差分には生SQL、`DELETE`、新しい例外メッセージ、ログ出力、CORS変更、シークレットのいずれも含まれていない
+- 性能エバリュエーターのフィードバック: 合格（2026-11-18）。指摘なし。
+  - 実行結果: `uv run pytest -v`（backend、現在のファイル状態のまま）556 passed、warning 0件。新規 `tests/test_interview_step_auto_rejection.py` は22件すべてpass。`uv run ruff check` 違反なし。既存テストの回帰なし
+  - 不通過での作成でお見送りになる: `test_create_rejected_step_marks_in_progress_company_as_rejected` で確認
+  - 不通過への更新でお見送りになる／不通過のまま更新では変わらない: `test_update_result_to_rejected_marks_in_progress_company_as_rejected`（未定・通過から）、`test_update_already_rejected_step_keeps_manually_restored_company`（手動で選考中に戻したあと、不通過のままメモを修正しても選考中のまま）で確認
+  - 内定・お見送りの企業は変わらない: `test_create_rejected_step_does_not_change_finished_company`、`test_update_to_rejected_does_not_change_finished_company`（どちらも内定・お見送りの2パターン）で確認
+  - 未定・通過・結果なしでは変わらない: `test_create_non_rejected_step_keeps_company_in_progress`（未定・通過・省略）、`test_update_without_rejection_keeps_company_in_progress`（未定・通過・memoだけ・prep_statusだけ）で確認
+  - 不通過から戻しても選考中に戻らない: `test_reverting_rejected_result_does_not_restore_company`（未定・通過）で確認
+  - 一体性: `test_create_is_not_persisted_when_company_update_fails`、`test_update_is_not_persisted_when_company_update_fails` で、企業の更新を失敗させると選考ステップの作成・更新も反映されないことを確認。他企業に影響しないことも `test_auto_rejection_affects_only_the_step_company` で確認
+  - レスポンスの形と逆行警告: 作成・更新のレスポンスのキー集合が従来どおりであること、不通過への更新では warning が無いこと、不通過→未定で既存と同じ文言の警告が出ることを確認。既存の `test_interview_steps.py` の警告テストも無変更でpass
+  - 参考（差し戻し対象外）: `uv run ruff format --check` では新規テストを含む13ファイルが「整形が必要」と出る（新規テストでは `list_steps` の折り返しのみ）。CIは `ruff check` だけを実行しており、ほかの既存テストにも同じ差分があるため、今回の合否には含めない
 - 差し戻し回数: 0
 
 ### タスク: 企業一覧への次回選考ステップの要約の追加

@@ -15,6 +15,8 @@ from app.schemas import (
 from app.status_transitions import (
     INTERVIEW_STEP_PREP_STATUS_GRAPH,
     INTERVIEW_STEP_RESULT_GRAPH,
+    CompanyStatus,
+    InterviewStepResult,
     check_backward_transition,
 )
 
@@ -52,6 +54,13 @@ def _get_active_interview_step_or_404(db: Session, interview_step_id: int) -> mo
     return interview_step
 
 
+def _reject_company_if_in_progress(company: models.Company) -> None:
+    # 内定・お見送りの企業は上書きしない。commitは呼び出し元で選考ステップの
+    # 変更と一緒に行い、どちらか一方だけが反映されないようにする。
+    if company.status == CompanyStatus.選考中:
+        company.status = CompanyStatus.お見送り
+
+
 @router.post(
     "/companies/{company_id}/interview-steps",
     response_model=InterviewStepRead,
@@ -60,9 +69,11 @@ def _get_active_interview_step_or_404(db: Session, interview_step_id: int) -> mo
 def create_interview_step(
     company_id: int, payload: InterviewStepCreate, db: Session = Depends(get_db)
 ) -> models.InterviewStep:
-    _get_active_company_or_404(db, company_id)
+    company = _get_active_company_or_404(db, company_id)
     interview_step = models.InterviewStep(company_id=company_id, **payload.model_dump())
     db.add(interview_step)
+    if payload.result == InterviewStepResult.不通過:
+        _reject_company_if_in_progress(company)
     db.commit()
     return interview_step
 
@@ -135,6 +146,13 @@ def update_interview_step(
         if result_warning is not None:
             warnings.append(result_warning)
     warning = " / ".join(warnings) if warnings else None
+
+    # 不通過のまま更新した場合は対象外（手動で選考中に戻した企業を再びお見送りにしない）
+    if (
+        update_data.get("result") == InterviewStepResult.不通過
+        and interview_step.result != InterviewStepResult.不通過
+    ):
+        _reject_company_if_in_progress(db.get_one(models.Company, interview_step.company_id))
 
     for field, value in update_data.items():
         setattr(interview_step, field, value)
