@@ -11,7 +11,7 @@ const BASE_URL = 'http://api.test.local:8000'
 const API_KEY = 'valid-key'
 
 const COMPANY_A: Company = { id: 1, name: '株式会社サンプル', status: '選考中', is_deleted: false }
-const COMPANY_B: Company = { id: 2, name: '合同会社テスト', status: '選考中', is_deleted: false }
+const COMPANY_B: Company = { id: 2, name: '合同会社テスト', status: 'インターン参加', is_deleted: false }
 
 const STEP_A: InterviewStep = {
   id: 101,
@@ -29,8 +29,8 @@ const STEP_B: InterviewStep = {
   company_id: 2,
   type: '書類選考',
   date: null,
-  prep_status: '完了',
-  result: '通過',
+  prep_status: '準備万端',
+  result: '未定',
   memo: null,
   is_deleted: false,
 }
@@ -73,12 +73,30 @@ type FakeServer = {
   requests: { method: string; url: string }[]
 }
 
+const UPCOMING_COMPANY_STATUSES: readonly Company['status'][] = ['選考中', 'インターン参加']
+
+/** テストデータが GET /interview-steps/upcoming の絞り込み規則と食い違っていないことを保証する。 */
+function assertMatchesUpcomingRule(companies: Company[], steps: InterviewStep[]) {
+  for (const step of steps) {
+    const company = companies.find((c) => c.id === step.company_id)
+    if (
+      step.result !== '未定' ||
+      step.prep_status === '完了' ||
+      company === undefined ||
+      !UPCOMING_COMPANY_STATUSES.includes(company.status)
+    ) {
+      throw new Error(`step ${String(step.id)} は upcoming の規則に合わないテストデータです`)
+    }
+  }
+}
+
 /** upcoming選考ステップ・企業一覧・upcoming課題を模した簡易APIサーバー。 */
 function setupFakeServer(
   companies: Company[],
   upcomingSteps: InterviewStep[],
   upcomingAssignments: UpcomingAssignment[] = [],
 ): FakeServer {
+  assertMatchesUpcomingRule(companies, upcomingSteps)
   const server: FakeServer = {
     companies: companies.map((c) => ({ ...c })),
     upcomingSteps: upcomingSteps.map((s) => ({ ...s })),
@@ -172,9 +190,15 @@ describe('予定の近い選考ステップ', () => {
     expect(within(stepsSection()).getByText('2026-03-01')).toBeInTheDocument()
     expect(within(stepsSection()).getByText('合同会社テスト')).toBeInTheDocument()
     expect(within(stepsSection()).getByText('書類選考')).toBeInTheDocument()
-    // STEP_Bは予定日が未設定のため「未定」と表示される（行に絞って確認）
-    const stepBRow = within(stepsSection()).getByText('書類選考').closest('tr')!
-    expect(within(stepBRow).getByText('未定')).toBeInTheDocument()
+    // APIが返した順（予定日なしは末尾）のまま並ぶ
+    const rows = within(stepsSection()).getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('一次面接')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('書類選考')).toBeInTheDocument()
+    // STEP_Bは予定日が未設定のため予定日の列に「未定」と表示される（結果の列も「未定」なので列で絞る）
+    const stepBCells = within(rows[1]).getAllByRole('cell')
+    expect(stepBCells[2]).toHaveTextContent(/^未定$/)
+    expect(within(rows[0]).getAllByRole('cell')[2]).toHaveTextContent(/^2026-03-01$/)
   })
 
   it('0件の場合も表示が破綻せず、0件であることが分かる', async () => {
