@@ -258,7 +258,9 @@ def build_server(api: ApiClient) -> MCPServer:
         "企業の一覧を取得する（GET /companies）。"
         + COMPANY_STATUS_NOTE
         + "各企業の next_step は次回の選考ステップの要約（id・type・date）で、"
-        "結果が未定のステップのうち予定日が最も早いもの（予定日なしは最後）。無ければ null。",
+        "結果が未定で準備状況が完了でないステップのうち予定日が最も早いもの"
+        "（予定日なしは最後）。準備状況が完了のものは外れる。予定日が過ぎていても含まれる。"
+        "企業の選考状態では絞らない（内定・お見送り・辞退の企業にも付く）。無ければ null。",
     )
     async def list_companies() -> str:
         return _to_text(await api.get("/companies"))

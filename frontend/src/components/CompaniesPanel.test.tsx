@@ -122,10 +122,16 @@ function setupFakeServer(
     return messages.length === 0 ? null : messages.join(' / ')
   }
 
-  /** バックエンドの next_step と同じ規則（結果が未定・未削除のうち予定日が最も早いもの、予定日なしは最後）。 */
+  /** バックエンドの next_step と同じ規則（結果が未定・準備状況が完了でない・未削除のうち予定日が最も早いもの、予定日なしは最後）。 */
   function nextStepOf(companyId: number) {
     const candidates = server.steps
-      .filter((s) => s.company_id === companyId && !s.is_deleted && s.result === '未定')
+      .filter(
+        (s) =>
+          s.company_id === companyId &&
+          !s.is_deleted &&
+          s.result === '未定' &&
+          s.prep_status !== '完了',
+      )
       .sort((a, b) => {
         if (a.date === b.date) {
           return a.id - b.id

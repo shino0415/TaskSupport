@@ -179,19 +179,67 @@ def test_next_step_matches_first_pending_step_in_upcoming(client):
     assert listed == expected
 
 
-def test_next_step_ignores_upcoming_filters_on_prep_status_and_company_status(client):
-    # upcomingの絞り込み（準備状況が完了・選考が終わった企業を外す）はnext_stepには入れない
+def test_completed_prep_step_is_excluded_and_later_pending_step_is_next(client):
     company_id = create_company(client)
-    completed_id = create_step(client, company_id, date="2026-11-01", prep_status="完了")
+    create_step(client, company_id, date="2026-11-01", prep_status="完了")
+    later_id = create_step(client, company_id, type="二次面接", date="2026-11-02")
+
+    assert next_step_of(client, company_id) == {
+        "id": later_id,
+        "type": "二次面接",
+        "date": "2026-11-02",
+    }
+
+
+def test_completed_prep_dated_step_is_skipped_for_undated_pending_step(client):
+    company_id = create_company(client)
+    create_step(client, company_id, date="2026-11-01", prep_status="完了")
+    undated_id = create_step(client, company_id, type="日付未定の面接")
+
+    assert next_step_of(client, company_id)["id"] == undated_id
+
+
+def test_next_step_is_null_when_only_completed_prep_steps_are_pending(client):
+    company_id = create_company(client)
+    create_step(client, company_id, date="2026-11-01", prep_status="完了")
+    create_step(client, company_id, prep_status="完了")
+    create_step(client, company_id, date="2026-10-01", result="通過")
+
+    assert next_step_of(client, company_id) is None
+
+
+@pytest.mark.parametrize("prep_status", ["準備中", "準備万端"])
+def test_not_completed_prep_step_is_candidate(client, prep_status):
+    company_id = create_company(client)
+    step_id = create_step(client, company_id, date="2026-11-01", prep_status=prep_status)
     create_step(client, company_id, date="2026-11-02")
+
+    assert next_step_of(client, company_id)["id"] == step_id
+
+
+def test_past_completed_prep_step_is_excluded_but_past_pending_step_is_included(client):
+    company_id = create_company(client)
+    create_step(client, company_id, date="2000-01-01", prep_status="完了")
+    past_id = create_step(client, company_id, date="2000-01-02", prep_status="準備万端")
+    create_step(client, company_id, date="2099-01-01")
+
+    assert next_step_of(client, company_id)["id"] == past_id
+
+
+@pytest.mark.parametrize("company_status", ["内定", "お見送り", "辞退"])
+def test_next_step_does_not_filter_by_company_status(client, company_status):
+    # upcomingの絞り込みのうち、企業の状態による絞り込みはnext_stepには入れない
+    company_id = create_company(client)
+    create_step(client, company_id, date="2026-11-01", prep_status="完了")
+    pending_id = create_step(client, company_id, date="2026-11-02")
     response = client.patch(
-        f"/companies/{company_id}", json={"status": "内定"}, headers=AUTH_HEADERS
+        f"/companies/{company_id}", json={"status": company_status}, headers=AUTH_HEADERS
     )
     assert response.status_code == 200
 
     upcoming = client.get("/interview-steps/upcoming", headers=AUTH_HEADERS).json()
     assert upcoming == []
-    assert next_step_of(client, company_id)["id"] == completed_id
+    assert next_step_of(client, company_id)["id"] == pending_id
 
 
 def test_list_still_excludes_deleted_companies(client):

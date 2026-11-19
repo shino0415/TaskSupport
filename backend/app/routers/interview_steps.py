@@ -109,7 +109,8 @@ def list_upcoming_interview_steps(db: Session = Depends(get_db)) -> list[models.
     # 親企業が論理削除済みの場合、企業経由(GET /companies/{id}/interview-steps)では
     # 404となり参照不能になるため、一貫性のため本エンドポイントでも除外する。
     # 結果が出た・準備が完了した・選考が終わった企業のステップは「予定」ではないため外す。
-    # 予定日が過ぎていても結果が未定なら残す。next_stepにはこの絞り込みを入れない。
+    # 予定日が過ぎていても結果が未定なら残す。
+    # next_stepには準備状況の絞り込みだけを入れ、企業の状態では絞らない。
     return (
         db.query(models.InterviewStep)
         .join(models.Company, models.InterviewStep.company_id == models.Company.id)

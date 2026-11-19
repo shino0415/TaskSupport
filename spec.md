@@ -380,6 +380,7 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **MCPサーバー・デモデータ**: MCPサーバーの企業の情報に状態を加え、企業の状態を更新するツールを追加する（「MCPサーバー」の決定にある「企業のPATCHは既存APIに無いので企業名の変更ツールも作らない」は、本決定でPATCHが新設されたことに伴い、新設したPATCHに対応するツールを作る形に読み替える）。デモデータには選考中・内定・お見送りの企業を混ぜる。
 - **辞退の追加**: 本決定の選考状態に「辞退」を加える拡張を、同日に下記「企業の選考状態への「辞退」の追加」で確定した。本節の「選考中／内定／お見送り」「選考終了（内定・お見送り）」等の記述は、同節の内容で読み替える。
 - **インターン参加の追加**: 本決定の選考状態に「インターン参加」を加える拡張を、同日に下記「企業の選考状態への「インターン参加」の追加」で確定した。本節の選考状態・状態遷移・自動お見送りの対象（「企業が選考中のときに限り」）・画面の欄構成の記述は、同節の内容で読み替える。
+- **次回選考からの準備完了ステップの除外**: 本節の「次回選考」の対象に「準備状況が完了でないもの」という条件を加える変更を、2026-11-19に下記「企業一覧の次回選考からの準備状況が完了のステップの除外」で確定した。本節の「次回選考」の記述のうち、「upcoming に2026-11-18に加えた絞り込み（準備状況が完了のもの・選考が終わった企業のものを外す）は `next_step` には適用しない」は、同節の内容で読み替える（準備状況の絞り込みは適用し、企業の状態の絞り込みは引き続き適用しない）。
 
 ### 企業の選考状態への「辞退」の追加（確定: 2026-11-18）
 
@@ -424,6 +425,25 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
 - **MCPサーバー・README**: MCPサーバーの `list_upcoming_interview_steps` の説明とMCPサーバーのREADMEに、絞り込みの規則を書く。
 - **マイグレーション**: 列の追加・変更は無いため不要。
 - **既存の記述の読み替え**: 「案件系の廃止と授業系への置き換え」の「「直近の選考ステップ」はそのまま残す」、および過去のタスク（「選考ステップ横断一覧エンドポイント（upcoming）」の「全企業の選考ステップが、予定日の近い順に並んで返る」、横断一覧画面・デモデータ・MCPサーバーの各タスクで upcoming の対象を「削除されていない全選考ステップ」としている記述）は、本決定の絞り込みを加えた対象に読み替える。過去のタスクの記録自体は書き換えない。
+- **企業一覧の次回選考の変更**: 本節の「企業一覧の次回選考（`next_step`）: 変えない」「本決定の絞り込み（準備状況・企業の状態）は `next_step` には入れない」は、2026-11-19に下記「企業一覧の次回選考からの準備状況が完了のステップの除外」で準備状況の絞り込みだけを `next_step` にも入れることになったため、同節の内容で読み替える。企業の状態の絞り込みは引き続き `next_step` には入れない。
+
+### 企業一覧の次回選考からの準備状況が完了のステップの除外（確定: 2026-11-19）
+
+企業一覧（`GET /companies`）の各企業に付く次回選考（`next_step`）は、準備状況が「完了」のステップも候補にしているため、準備を終えたステップが次回選考として表示される。ユーザーの依頼を受け、上記「企業の選考状態と次回選考の表示」の次回選考の対象を次のとおり変更する。
+
+- **次回選考の対象**: 結果が未定で、準備状況が「完了」でなく、削除されていないステップのうち、予定日が最も早いもの（予定日なしは最後）とする。準備状況が「完了」のステップは、結果が未定でも次回選考の候補から外す。
+- **変えないこと**:
+  - 結果が未定のステップだけを対象にすること
+  - 予定日が過ぎたステップも対象に含めること
+  - 並び順（選考ステップの横断一覧（upcoming）と同じ規則。予定日の早い順、予定日なしは末尾）
+  - 企業の状態では絞らないこと（内定・お見送り・辞退の企業にも、対象のステップがあれば `next_step` が付く）
+  - 該当するステップが無ければ null にすること
+  - 削除済みのステップを外すこと、企業詳細（`GET /companies/{id}`）には `next_step` を含めないこと
+- **upcoming との関係**: upcoming に2026-11-18に加えた絞り込みのうち、準備状況の絞り込みだけが `next_step` にも入る。企業の状態の絞り込みは `next_step` には入らない。
+- **画面**: 画面はAPIが返す `next_step` をそのまま表示し、画面側で絞り込みはしない。表示の形式・文言は変えない。
+- **MCPサーバー・README**: MCPサーバーの `list_companies` の説明とMCPサーバーのREADMEの `next_step` の説明に、準備状況が「完了」のステップは外れることを書く。READMEの「この絞り込みは企業一覧の `next_step` には入らない」等の記述も、本決定に合わせて直す。
+- **マイグレーション**: 列の追加・変更は無いため不要。
+- **既存の記述の読み替え**: 過去のタスク（「企業一覧への次回選考ステップの要約の追加」の次回選考の対象、「予定の近い選考ステップからの終わったステップの除外（バックエンド・MCPサーバー）」の「企業一覧の次回選考（`next_step`）の挙動は変わらない」など）は、本決定を加えた対象に読み替える。過去のタスクの記録自体は書き換えない。
 
 ## 未決定事項（要ユーザー判断）
 
@@ -3402,4 +3422,47 @@ CompanyTaskは稼働時間の計測（WorkLog相当の仕組み）・時給換�
   - テストデータの規則適合: `STEP_A`（選考中・未定・準備中）、`STEP_B`（インターン参加・未定・準備万端・予定日なし）とも新しい規則に合う。`setupFakeServer` 冒頭の `assertMatchesUpcomingRule` で、規則に合わないデータを渡すとテストが失敗するようになっている。`fetch` を直接差し替えるテストは `STEP_A` のみ（または401）を返しており、`App.test.tsx` の `SAMPLE_STEP`（選考中・未定・準備中）も規則に合っている
   - 既存の挙動: APIが返した順のまま行が並ぶこと、予定日ありの列が `2026-03-01`・予定日なしの列が「未定」であること、企業名の表示、0件の表示、企業一覧の取得失敗時の企業ID表示、取得失敗時のエラー表示（401）、企業詳細への移動のテストがすべてpass
   - 指摘事項なし
+- 差し戻し回数: 0
+
+### タスク: 企業一覧の次回選考からの準備状況が完了のステップの除外
+- status: 完了
+- 概要: 「## 決定事項」の「企業一覧の次回選考からの準備状況が完了のステップの除外」に基づき、企業一覧（`GET /companies`）の各企業の次回選考（`next_step`）の候補から準備状況が「完了」のステップを外し、MCPサーバーの `list_companies` の説明とMCPサーバーのREADMEをこれに合わせる。既存のテストで新しい規則と食い違う期待値（例: 準備状況が完了のステップを `next_step` として指す企業一覧のテスト）も直す（2026-11-19決定）。マイグレーションは不要。
+- 受け入れ条件:
+  - [ ] 準備状況が「完了」のステップは、結果が未定でも `next_step` にならない。準備状況が「完了」のステップより後に、結果が未定で準備状況が完了でないステップがあれば、そちらが `next_step` になる
+  - [ ] 結果が未定のステップが準備状況「完了」のものしか無い企業は、`next_step` が null になる
+  - [ ] 準備状況が「準備中」「準備万端」の、結果が未定のステップは従来どおり `next_step` の候補になる
+  - [ ] 予定日が過ぎた未定のステップが対象に含まれること、並び順（予定日の早い順、予定日なしは末尾。upcoming と同じ規則）、結果が通過・不通過のステップと削除済みのステップが外れること、該当なしで null になること、企業詳細に `next_step` が含まれないこと、企業数に比例してDBへの問い合わせ回数が増えないことは従来どおり
+  - [ ] 企業の状態では絞らない: 内定・お見送り・辞退の企業でも、結果が未定で準備状況が完了でないステップがあれば `next_step` が付く
+  - [ ] `GET /interview-steps/upcoming` の挙動は変わらない
+  - [ ] MCPサーバーの `list_companies` の説明から、`next_step` の対象（結果が未定で準備状況が完了でないもの、予定日が過ぎても含む、予定日なしは最後、企業の状態では絞らない、無ければ null）が分かる。MCPサーバーのREADMEの `next_step` の説明も同じ規則になっており、「upcoming の絞り込みは `next_step` には入らない」旨の記述は本決定に合わせて直されている（準備状況の絞り込みは入り、企業の状態の絞り込みは入らない）
+  - [ ] 既存のテストで新しい規則と食い違う期待値（準備状況が完了のステップを `next_step` として期待するもの等）は新しい規則に合わせて直されている。デモデータやフロントエンドのテスト用データ・テスト用の簡易サーバーが再現する `next_step` の規則が新しい規則と食い違う場合は、それも合わせる（フロントエンドの画面の表示・絞り込みは変えない。食い違いが無ければフロントエンドは変更しない）
+  - [ ] 上記の除外・残す条件がそれぞれAPIのテストで検証され、実際のバックエンド・個人用VM・デモ環境に接続しない自動テストで検証される。バックエンドとMCPサーバーのlint・テスト（warningなし）が通り、フロントエンドを変更した場合は型チェック・lint（warningなし）・テスト・本番ビルドも通る
+- 実装メモ:
+  - バックエンド: `backend/app/routers/companies.py` の `list_companies` の候補の問い合わせに `prep_status != 完了` を足しただけ。結果が未定のみ・過去日を含む・`UPCOMING_ORDER` による並び・企業の状態で絞らない・該当なしで null・1回の問い合わせで全企業分を取る形は変えていない。`GET /interview-steps/upcoming` の処理は変えておらず、`interview_steps.py` のコメント（next_step にはこの絞り込みを入れない）だけを新しい規則に合わせて直した
+  - バックエンドのテスト（`backend/tests/test_company_next_step.py`）: 新しい規則と食い違う `test_next_step_ignores_upcoming_filters_on_prep_status_and_company_status`（準備状況が完了のステップを next_step として期待）を削除し、次を追加した。完了のステップを飛ばして後の未定ステップが next_step になる／完了の予定日ありを飛ばして予定日なしの未定ステップになる／未定が完了のものしか無ければ null／準備中・準備万端は候補になる（パラメータ化）／過去日の完了は外れ過去日の未定は含まれる／内定・お見送り・辞退の企業でも next_step が付き、同時に upcoming は空（パラメータ化）。既存の並び・通過不通過・削除済みの除外・null・企業詳細に含まれない・問い合わせ回数のテストはそのまま通る。デモデータのテストも変更なしで通る
+  - MCPサーバー: `list_companies` の説明に、結果が未定で準備状況が完了でないもの・完了は外れる・予定日が過ぎても含む・予定日なしは最後・企業の選考状態では絞らない・無ければ null を書いた。README の `next_step` の説明を同じ規則にし、upcoming の節の「この絞り込みは企業一覧の next_step には入らない」を「準備状況の絞り込みは入り、企業の選考状態の絞り込みは入らない」に直した。説明文の各文言を確かめるテスト `test_list_companies_tool_describes_next_step_rules` を追加
+  - フロントエンド: `frontend/src/components/CompaniesPanel.test.tsx` の簡易サーバーの `nextStepOf` が準備状況で絞っておらず規則と食い違っていたため、`prep_status !== '完了'` の条件を足した（コメントも更新）。画面のコードは変えていない
+  - セルフチェック: ルート ruff check・pytest 666 passed（warningなし）、mcp-server（VIRTUAL_ENV を外して実行）ruff check・pytest 305 passed（warningなし）、フロントエンド typecheck・lint（--deny-warnings）・test 290 passed・build が通った。テストは一時ファイルDB・フェイクAPI・フロントの簡易サーバーのみを使い、外部環境には接続していない
+- セキュリティエバリュエーターのフィードバック:
+  - 合格（Critical/High/Medium/Low いずれも指摘なし）
+  - 変更範囲: `backend/app/routers/companies.py`（`list_companies` の候補の問い合わせに `prep_status != 完了` を追加）、`backend/app/routers/interview_steps.py`（コメントのみ）、バックエンド・MCPサーバー・フロントエンドのテスト、MCPサーバーのツール説明文とREADME
+  - 認証: 新規エンドポイントは無い。`GET /companies` は従来どおり `create_app` のグローバル依存関係 `verify_api_key` の対象で、変更による影響は無い
+  - インジェクション: 追加した条件はSQLAlchemyの式（列と列挙型の定数の比較）で、ユーザー入力も生SQLの文字列結合も含まない。ユーザー入力のログ出力・外部コマンドへの受け渡しの追加も無い
+  - 論理削除: 候補の問い合わせの `InterviewStep.is_deleted.is_(False)`・`Company.is_deleted.is_(False)`、企業一覧本体の `is_deleted` の絞り込みは維持されている。条件は絞り込みを足す方向だけで、削除済みデータの露出経路は増えていない。物理削除の追加も無い。`prep_status` は `nullable=False` のため、`!=` 比較でNULLの扱いが変わって想定外の行が漏れる・消えることも無い
+  - mass assignment・スキーマ: 入出力スキーマ（`CompanyListItem`・`NextInterviewStepSummary`）に変更は無く、応答に新しい項目は増えていない
+  - エラーハンドリング・CORS・シークレット: 変更なし。テストは一時DB・フェイクAPI・簡易サーバーのみを使い、APIキー等のハードコードの追加も無い（テストの `AUTH_HEADERS` は既存のテスト用の値）
+  - MCPサーバー: 変更はツールの説明文とREADME・テストのみで、APIの呼び出し先・認証の扱いは変わっていない
+- 性能エバリュエーターのフィードバック:
+  - 合格（2026-11-19）。バグ・テスト不足の指摘なし
+  - 実行結果（warningはすべて0件）: ルート `uv run pytest` 666 passed・`uv run ruff check` All checks passed／mcp-server（VIRTUAL_ENV を外して実行）`uv run pytest` 305 passed・`uv run ruff check` All checks passed／frontend `npm run typecheck` 成功・`npm run lint`（oxlint --deny-warnings）成功・`npm test` 20ファイル 290 passed・`npm run build` 成功（出力にwarningなし）
+  - 完了のステップを飛ばして次の未定ステップが繰り上がる: `test_completed_prep_step_is_excluded_and_later_pending_step_is_next`（予定日ありへの繰り上がり）・`test_completed_prep_dated_step_is_skipped_for_undated_pending_step`（予定日なしへの繰り上がり）で確認
+  - 完了しか無い場合に null: `test_next_step_is_null_when_only_completed_prep_steps_are_pending`（完了の予定日あり・なし＋通過のステップの組み合わせ）で確認
+  - 準備中・準備万端は候補: `test_not_completed_prep_step_is_candidate`（パラメータ化）で確認
+  - 過去日: 既存の `test_past_pending_step_is_included` に加え、`test_past_completed_prep_step_is_excluded_but_past_pending_step_is_included` で過去日の完了は外れ過去日の未定は残ることを確認
+  - 並び順・通過不通過/削除済みの除外・null・企業詳細に含まれない・問い合わせ回数: 既存テスト（`test_next_step_is_earliest_pending_step_summary`・`test_step_without_date_comes_after_dated_steps`・`test_decided_steps_are_excluded`・`test_deleted_step_is_excluded`・`test_next_step_is_null_when_no_step_is_eligible`・`test_company_detail_does_not_include_next_step`・`test_query_count_does_not_grow_with_number_of_companies`）が変更なしで通過。問い合わせ回数のテストは完了のステップを含まないが、変更は既存の1本の問い合わせへの条件追加のみで回数への影響は無いと判断
+  - 企業の状態で絞らない: `test_next_step_does_not_filter_by_company_status`（内定・お見送り・辞退のパラメータ化、同時に upcoming が空であることも確認）で確認
+  - upcoming の挙動不変: `backend/app/routers/interview_steps.py` の差分はコメントのみ。`backend/tests/test_interview_steps.py` の upcoming 系テストは無変更で全件通過
+  - MCPサーバー: `test_list_companies_tool_describes_next_step_rules` で説明文の各規則の文言を確認。README の記述も新しい規則と一致
+  - フロントエンド: 簡易サーバーの `nextStepOf` に `prep_status !== '完了'` が足され、バックエンドの規則と一致。画面のコードは変更なし
+  - テストはすべて一時DB・フェイクAPI・簡易サーバーのみを使い、外部環境への接続は無い
 - 差し戻し回数: 0

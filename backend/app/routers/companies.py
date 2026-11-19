@@ -15,7 +15,11 @@ from app.schemas import (
     CompanyUpdate,
     NextInterviewStepSummary,
 )
-from app.status_transitions import InterviewStepResult, check_company_status_transition
+from app.status_transitions import (
+    InterviewStepPrepStatus,
+    InterviewStepResult,
+    check_company_status_transition,
+)
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -53,6 +57,7 @@ def list_companies(db: Session = Depends(get_db)) -> list[CompanyListItem]:
         .filter(
             models.InterviewStep.is_deleted.is_(False),
             models.InterviewStep.result == InterviewStepResult.未定,
+            models.InterviewStep.prep_status != InterviewStepPrepStatus.完了,
             models.Company.is_deleted.is_(False),
         )
         .order_by(*UPCOMING_ORDER)

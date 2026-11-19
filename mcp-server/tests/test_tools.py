@@ -134,6 +134,21 @@ async def test_company_read_tools_describe_status_choices_and_next_step(
     assert "次回選考の要約は含まない" in (tools["get_company"].description or "")
 
 
+async def test_list_companies_tool_describes_next_step_rules(mcp_client: Client) -> None:
+    tools = {tool.name: tool for tool in (await mcp_client.list_tools()).tools}
+    description = tools["list_companies"].description or ""
+
+    for phrase in (
+        "結果が未定で準備状況が完了でない",
+        "準備状況が完了のものは外れる",
+        "予定日が過ぎていても含まれる",
+        "予定日なしは最後",
+        "企業の選考状態では絞らない",
+        "無ければ null",
+    ):
+        assert phrase in description
+
+
 async def test_upcoming_interview_steps_tool_describes_filter_rules(
     mcp_client: Client,
 ) -> None:
